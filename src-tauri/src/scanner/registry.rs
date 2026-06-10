@@ -13,6 +13,7 @@ pub struct InstalledApp {
     pub install_location: Option<String>,
     pub install_date: Option<String>,
     pub display_icon: Option<String>,
+    pub icon_base64: Option<String>,
     pub estimated_size: Option<u64>,
     pub registry_path: String,
     pub hive: String,
@@ -100,6 +101,27 @@ fn scan_uninstall_key(
         let install_date: Option<String> = subkey.get_value("InstallDate").ok();
         let display_icon: Option<String> = subkey.get_value("DisplayIcon").ok();
         
+        let mut icon_base64 = None;
+        if let Some(ref icon_path) = display_icon {
+            let clean_path = icon_path.trim().trim_matches('"');
+            let clean_path = if let Some(comma_pos) = clean_path.rfind(',') {
+                let suffix = &clean_path[comma_pos + 1..];
+                if suffix.chars().all(|c| c.is_ascii_digit()) {
+                    &clean_path[..comma_pos]
+                } else {
+                    clean_path
+                }
+            } else {
+                clean_path
+            };
+
+            if !clean_path.is_empty() {
+                if let Ok(base64_str) = windows_icons::get_icon_base64_by_path(clean_path) {
+                    icon_base64 = Some(base64_str);
+                }
+            }
+        }
+        
         let estimated_size: Option<u64> = subkey.get_value("EstimatedSize")
             .map(|val: u32| val as u64)
             .ok()
@@ -132,6 +154,7 @@ fn scan_uninstall_key(
             install_location,
             install_date,
             display_icon,
+            icon_base64,
             estimated_size,
             registry_path,
             hive: hive_name.to_string(),

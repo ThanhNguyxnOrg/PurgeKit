@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 use std::os::windows::process::CommandExt;
+use std::fs;
+use std::path::Path;
 use super::registry::InstalledApp;
 
 // Hiding console window flag for Windows process execution
@@ -82,6 +84,8 @@ pub fn scan_uwp_apps() -> Vec<InstalledApp> {
         // UWP Uninstall command: Remove-AppxPackage -Package <PackageFullName>
         let uninstall_string = format!("powershell -NoProfile -Command \"Remove-AppxPackage -Package {}\"", package_full);
 
+        let icon_base64 = get_uwp_icon_base64(&loc);
+
         apps.push(InstalledApp {
             id: package_family.clone(),
             display_name,
@@ -92,6 +96,7 @@ pub fn scan_uwp_apps() -> Vec<InstalledApp> {
             install_location: Some(loc),
             install_date: None, // PowerShell Get-AppxPackage does not easily return install date without slower commands
             display_icon: None, // Store app icons are resolved using AppxManifest.xml, which we can implement later
+            icon_base64,
             estimated_size: None, // Can calculate size from directory later
             registry_path: format!(r"UWP\{}", package_family),
             hive: "UWP".to_string(),
@@ -119,4 +124,78 @@ fn clean_uwp_display_name(name: &str) -> String {
     }
     
     spaced
+}
+
+fn get_uwp_icon_base64(install_location: &str) -> Option<String> {
+    let path = Path::new(install_location);
+    if !path.exists() {
+        return None;
+    }
+    
+    // Check Assets folder first, then root folder
+    let assets_path = path.join("Assets");
+    let search_dir = if assets_path.exists() {
+        assets_path
+    } else {
+        path.to_path_buf()
+    };
+    
+    if let Ok(entries) = fs::read_dir(search_dir) {
+        let mut candidates = Vec::new();
+        for entry in entries.filter_map(|e| e.ok()) {
+            let p = entry.path();
+            if p.is_file() && p.extension().map_or(false, |ext| ext == "png") {
+                if let Some(name) = p.file_name().and_then(|n| n.to_str()).map(|n| n.to_lowercase()) {
+                    let score = if name.contains("storelogo") || name.contains("store_logo") {
+                        10
+                    } else if name.contains("square44x44logo") || name.contains("targetsize-44") {
+                        8
+                    } else if name.contains("square150x150logo") {
+                        6
+                    } else if name.contains("logo") || name.contains("icon") {
+                        4
+                    } else {
+                        1
+                    };
+                    candidates.push((score, p));
+                }
+            }
+        }
+        
+        candidates.sort_by(|a, b| b.0.cmp(&a.0));
+        if let Some((_, best_path)) = candidates.first() {
+            if let Ok(bytes) = fs::read(best_path) {
+                return Some(base64_encode(&bytes));
+            }
+        }
+    }
+    None
+}
+
+fn base64_encode(input: &[u8]) -> String {
+    const CHARSET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut result = String::with_capacity((input.len() + 2) / 3 * 4);
+    let mut chunks = input.chunks_exact(3);
+    while let Some(chunk) = chunks.next() {
+        let n = ((chunk[0] as u32) << 16) | ((chunk[1] as u32) << 8) | (chunk[2] as u32);
+        result.push(CHARSET[((n >> 18) & 63) as usize] as char);
+        result.push(CHARSET[((n >> 12) & 63) as usize] as char);
+        result.push(CHARSET[((n >> 6) & 63) as usize] as char);
+        result.push(CHARSET[(n & 63) as usize] as char);
+    }
+    let remainder = chunks.remainder();
+    if remainder.len() == 1 {
+        let n = (remainder[0] as u32) << 16;
+        result.push(CHARSET[((n >> 18) & 63) as usize] as char);
+        result.push(CHARSET[((n >> 12) & 63) as usize] as char);
+        result.push('=');
+        result.push('=');
+    } else if remainder.len() == 2 {
+        let n = ((remainder[0] as u32) << 16) | ((remainder[1] as u32) << 8);
+        result.push(CHARSET[((n >> 18) & 63) as usize] as char);
+        result.push(CHARSET[((n >> 12) & 63) as usize] as char);
+        result.push(CHARSET[((n >> 6) & 63) as usize] as char);
+        result.push('=');
+    }
+    result
 }

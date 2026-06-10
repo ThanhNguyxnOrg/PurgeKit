@@ -370,15 +370,28 @@
           <div class="divide-y divide-border-default">
             {#each globalPackages as pkg}
               <div class="flex items-center justify-between py-3.5 first:pt-0 last:pb-0 gap-4 group">
-                <div class="flex-1 min-w-0">
-                   <div class="flex items-center gap-2">
-                     <span class="font-bold text-xs font-mono text-text-primary truncate" title={pkg.name}>{pkg.name}</span>
-                     <span class="text-[10px] font-mono text-text-muted bg-app-bg px-1.5 py-0.5 rounded border border-border-default">v{pkg.version}</span>
-                   </div>
-                   {#if pkg.description}
-                     <p class="text-[11px] text-text-muted font-sans mt-1 truncate" title={pkg.description}>{pkg.description}</p>
-                   {/if}
-                   <div class="text-[9px] text-text-disabled font-mono mt-0.5 truncate" title={pkg.path}>{pkg.path}</div>
+                <div class="flex items-center gap-3 flex-1 min-w-0">
+                  <div class="w-8 h-8 rounded-lg border flex items-center justify-center overflow-hidden transition-colors shadow-sm bg-surface-bg border-border-default flex-shrink-0 relative">
+                    <!-- Try loading the NPM package logo from unavatar.io, fallback to initials otherwise -->
+                    <img src="https://unavatar.io/npm/{pkg.name}" 
+                         onload={(e) => e.currentTarget.style.opacity = '1'}
+                         class="w-6 h-6 object-contain opacity-0 transition-opacity duration-150 relative z-10" 
+                         alt="" />
+                    <div class="absolute inset-0 flex items-center justify-center font-mono text-[10px] bg-red-950/20 text-red-400 border border-red-800/20 w-full h-full">
+                      {pkg.name.charAt(0).toUpperCase()}
+                    </div>
+                  </div>
+
+                  <div class="flex-1 min-w-0 font-sans">
+                     <div class="flex items-center gap-2">
+                       <span class="font-bold text-xs font-mono text-text-primary truncate" title={pkg.name}>{pkg.name}</span>
+                       <span class="text-[10px] font-mono text-text-muted bg-app-bg px-1.5 py-0.5 rounded border border-border-default">v{pkg.version}</span>
+                     </div>
+                     {#if pkg.description}
+                       <p class="text-[11px] text-text-muted mt-1 truncate" title={pkg.description}>{pkg.description}</p>
+                     {/if}
+                     <div class="text-[9px] text-text-disabled font-mono mt-0.5 truncate" title={pkg.path}>{pkg.path}</div>
+                  </div>
                 </div>
 
                 <div class="flex items-center gap-4">

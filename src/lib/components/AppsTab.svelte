@@ -90,29 +90,34 @@
     return colors[charCode % colors.length];
   }
 
-  // Handle standard uninstall
-  async function handleUninstall(app: InstalledApp) {
-    if (!app.uninstall_string) {
-      alert("No uninstall string available for this application.");
-      return;
-    }
-    
-    try {
-      // Execute the uninstaller
-      await invoke("run_uninstall_command", { uninstallString: app.uninstall_string });
-    } catch (e: any) {
-      alert(`Error starting uninstaller: ${e.toString()}`);
-    }
-  }
+  let uninstallStep = $state("idle");
+  let uninstallStatusText = $state("");
 
-  // Open remnants scan modal
-  async function handleOpenRemnantsScan(app: InstalledApp) {
+  // Handle standard uninstall and leftovers scanning flow
+  async function startUninstallFlow(app: InstalledApp) {
     activeApp = app;
     remnants = [];
     selectedRemnants = {};
     purgeResult = null;
-    isScanningRemnants = true;
+    isScanningRemnants = false;
+    
+    // Step 1: Run official uninstaller (if present)
+    if (app.uninstall_string) {
+      uninstallStep = "uninstalling";
+      uninstallStatusText = "Executing the official uninstaller. Please follow the uninstallation GUI prompts on your screen...";
+      try {
+        await invoke("run_uninstall_command", { uninstallString: app.uninstall_string });
+      } catch (e: any) {
+        console.error("Official uninstaller failed or was closed:", e);
+        // Continue to remnant scanning anyway since registry/files might be partially deleted
+      }
+    }
 
+    // Step 2: Scan for remnants
+    uninstallStep = "scanning";
+    uninstallStatusText = "Scanning system directories and registry paths for leftover traces...";
+    isScanningRemnants = true;
+    
     try {
       remnants = await invoke<RemnantItem[]>("get_app_remnants", {
         appName: app.display_name,
@@ -128,6 +133,7 @@
       console.error("Failed to scan remnants:", e);
     } finally {
       isScanningRemnants = false;
+      uninstallStep = "remnants_list";
     }
   }
 
@@ -171,6 +177,7 @@
     remnants = [];
     selectedRemnants = {};
     purgeResult = null;
+    uninstallStep = "idle";
   }
 </script>
 
@@ -264,8 +271,14 @@
               <tr class="hover:bg-elevated-bg/50 transition-colors duration-150 group">
                 <!-- Name -->
                 <td class="py-4 px-5 font-sans font-medium flex items-center gap-3">
-                  <div class="w-8 h-8 rounded-lg border flex items-center justify-center font-mono text-xs transition-colors shadow-sm {getAvatarStyle(app.display_name)}">
-                    {app.display_name.charAt(0).toUpperCase()}
+                  <div class="w-8 h-8 rounded-lg border flex items-center justify-center overflow-hidden transition-colors shadow-sm bg-surface-bg border-border-default flex-shrink-0">
+                    {#if app.icon_base64}
+                      <img src="data:image/png;base64,{app.icon_base64}" class="w-6 h-6 object-contain" alt="" />
+                    {:else}
+                      <div class="w-full h-full flex items-center justify-center font-mono text-xs {getAvatarStyle(app.display_name)}">
+                        {app.display_name.charAt(0).toUpperCase()}
+                      </div>
+                    {/if}
                   </div>
                   <div class="flex flex-col">
                     <span class="text-text-primary group-hover:text-white transition-colors">{app.display_name}</span>
@@ -279,17 +292,17 @@
                 <td class="py-4 px-5 text-text-secondary max-w-[150px] truncate">
                   {app.publisher || "Unknown"}
                 </td>
-
+ 
                 <!-- Version -->
                 <td class="py-4 px-5 text-text-secondary font-mono text-xs">
                   {app.display_version || "—"}
                 </td>
-
+ 
                 <!-- Size -->
                 <td class="py-4 px-5 text-text-secondary font-mono text-xs">
                   {formatSize(app.estimated_size)}
                 </td>
-
+ 
                 <!-- Hive / Type -->
                 <td class="py-4 px-5">
                   <span class="px-2 py-0.5 rounded text-[10px] font-mono border
@@ -301,23 +314,17 @@
                     {app.is_uwp ? "STORE" : app.hive}
                   </span>
                 </td>
-
+ 
                 <!-- Actions -->
-                <td class="py-4 px-5 text-right">
+                <td class="py-4 px-5 text-right font-sans">
                   <div class="flex items-center justify-end gap-2">
                     <button
-                      onclick={() => handleUninstall(app)}
-                      title="Run official uninstaller"
-                      class="p-2 rounded-lg bg-surface-bg hover:bg-elevated-bg text-text-secondary hover:text-text-primary transition-all border border-border-default"
+                      onclick={() => startUninstallFlow(app)}
+                      title="Uninstall and Deep Clean Remnants"
+                      class="px-2.5 py-1.5 rounded-lg bg-danger/10 hover:bg-danger text-danger hover:text-white transition-all border border-danger/20 flex items-center gap-1.5 text-xs font-semibold active:scale-95 cursor-pointer"
                     >
-                      <Eye class="w-4 h-4" />
-                    </button>
-                    <button
-                      onclick={() => handleOpenRemnantsScan(app)}
-                      title="Deep clean remnants (Purge)"
-                      class="p-2 rounded-lg bg-danger/10 hover:bg-danger/20 text-danger transition-all border border-transparent"
-                    >
-                      <Trash2 class="w-4 h-4" />
+                      <Trash2 class="w-3.5 h-3.5" />
+                      Uninstall
                     </button>
                   </div>
                 </td>
@@ -351,10 +358,23 @@
 
         <!-- Body -->
         <div class="flex-1 overflow-y-auto p-6 space-y-4">
-          {#if isScanningRemnants}
-            <div class="flex flex-col items-center justify-center py-12 gap-3">
-              <RefreshCw class="w-7 h-7 text-accent animate-spin" />
-              <span class="text-xs text-text-muted font-mono">Analyzing directories & registry paths...</span>
+          {#if uninstallStep === "uninstalling"}
+            <div class="flex flex-col items-center justify-center py-12 gap-4 text-center animate-fade-in">
+              <div class="w-12 h-12 rounded-full border-2 border-accent/20 border-t-accent animate-spin flex items-center justify-center">
+                <Trash2 class="w-5 h-5 text-accent animate-pulse" />
+              </div>
+              <div>
+                <h4 class="text-sm font-bold text-text-primary">Official Uninstaller Running</h4>
+                <p class="text-xs text-text-muted mt-2 max-w-sm leading-relaxed font-sans">{uninstallStatusText}</p>
+              </div>
+            </div>
+          {:else if uninstallStep === "scanning"}
+            <div class="flex flex-col items-center justify-center py-12 gap-4 text-center animate-fade-in">
+              <RefreshCw class="w-8 h-8 text-accent animate-spin" />
+              <div>
+                <h4 class="text-sm font-bold text-text-primary">Scanning Leftover Traces</h4>
+                <p class="text-xs text-text-muted mt-2 max-w-sm leading-relaxed font-sans">{uninstallStatusText}</p>
+              </div>
             </div>
           {:else}
             {#if purgeResult}

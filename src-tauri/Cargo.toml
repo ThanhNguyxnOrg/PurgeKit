@@ -29,4 +29,5 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 anyhow = "1.0"
 thiserror = "1.0"
 uuid = { version = "1", features = ["v4"] }
+windows-icons = "0.2.1"
 
