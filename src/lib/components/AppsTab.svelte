@@ -99,7 +99,7 @@
     
     try {
       // Execute the uninstaller
-      await invoke("run_uninstall_command", { uninstall_string: app.uninstall_string });
+      await invoke("run_uninstall_command", { uninstallString: app.uninstall_string });
     } catch (e: any) {
       alert(`Error starting uninstaller: ${e.toString()}`);
     }

@@ -19,11 +19,23 @@
     scope: string;
   }
 
+  interface GlobalCliPackage {
+    name: string;
+    version: string;
+    size_bytes: number;
+    path: string;
+    description: string | null;
+  }
+
   let tools = $state<DevToolInfo[]>([]);
   let pathIssuesCount = $state(0);
   let isLoading = $state(true);
   let cleaningStates = $state<Record<string, boolean>>({});
   let message = $state<{ type: "success" | "error"; text: string } | null>(null);
+
+  let globalPackages = $state<GlobalCliPackage[]>([]);
+  let isPackagesLoading = $state(false);
+  let uninstallingStates = $state<Record<string, boolean>>({});
 
   async function loadDevTools() {
     isLoading = true;
@@ -40,8 +52,46 @@
     }
   }
 
+  async function loadGlobalPackages() {
+    isPackagesLoading = true;
+    try {
+      globalPackages = await invoke<GlobalCliPackage[]>("get_global_npm_packages");
+      globalPackages.sort((a, b) => a.name.localeCompare(b.name));
+    } catch (e) {
+      console.error("Failed to load global packages:", e);
+    } finally {
+      isPackagesLoading = false;
+    }
+  }
+
+  function refreshAll() {
+    loadDevTools();
+    loadGlobalPackages();
+  }
+
+  async function uninstallPackage(name: string) {
+    uninstallingStates[name] = true;
+    message = null;
+    try {
+      await invoke("uninstall_global_npm_package", { name });
+      message = {
+        type: "success",
+        text: `Successfully uninstalled global package ${name}!`,
+      };
+      await loadGlobalPackages();
+    } catch (err: any) {
+      message = {
+        type: "error",
+        text: `Failed to uninstall ${name}: ${err.toString()}`,
+      };
+    } finally {
+      uninstallingStates[name] = false;
+    }
+  }
+
   onMount(() => {
     loadDevTools();
+    loadGlobalPackages();
   });
 
   // Helper to format file size
@@ -146,11 +196,11 @@
       </button>
 
       <button
-        onclick={loadDevTools}
-        disabled={isLoading}
+        onclick={refreshAll}
+        disabled={isLoading || isPackagesLoading}
         class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-bg border border-border-default hover:bg-elevated-bg active:scale-95 disabled:opacity-50 transition-all text-text-primary"
       >
-        <RefreshCw class="w-3.5 h-3.5 {isLoading ? 'animate-spin' : ''}" />
+        <RefreshCw class="w-3.5 h-3.5 {isLoading || isPackagesLoading ? 'animate-spin' : ''}" />
         Refresh
       </button>
     </div>
@@ -289,6 +339,68 @@
             {/if}
           </div>
         {/each}
+      </div>
+
+      <!-- Global Packages Section -->
+      <div class="border border-border-default rounded-lg bg-surface-bg/30 p-5 space-y-4">
+        <div class="flex items-center justify-between border-b border-border-default pb-3">
+          <div>
+            <h3 class="text-sm font-bold text-text-primary flex items-center gap-2">
+              <Terminal class="w-4 h-4 text-accent" />
+              Globally Installed CLI Packages (NPM)
+            </h3>
+            <span class="text-[10px] text-text-muted">Detected packages under %AppData%\npm\node_modules</span>
+          </div>
+          
+          <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-accent/10 text-accent border border-accent/20">
+            {globalPackages.length} Packages
+          </span>
+        </div>
+
+        {#if isPackagesLoading}
+          <div class="flex items-center justify-center py-6 gap-2">
+            <RefreshCw class="w-4 h-4 text-accent animate-spin" />
+            <span class="text-xs text-text-muted font-mono">Scanning global npm directory...</span>
+          </div>
+        {:else if globalPackages.length === 0}
+          <p class="text-xs text-text-muted italic py-4 text-center font-sans">
+            No globally installed packages detected in your NPM directory.
+          </p>
+        {:else}
+          <div class="divide-y divide-border-default">
+            {#each globalPackages as pkg}
+              <div class="flex items-center justify-between py-3.5 first:pt-0 last:pb-0 gap-4 group">
+                <div class="flex-1 min-w-0">
+                   <div class="flex items-center gap-2">
+                     <span class="font-bold text-xs font-mono text-text-primary truncate" title={pkg.name}>{pkg.name}</span>
+                     <span class="text-[10px] font-mono text-text-muted bg-app-bg px-1.5 py-0.5 rounded border border-border-default">v{pkg.version}</span>
+                   </div>
+                   {#if pkg.description}
+                     <p class="text-[11px] text-text-muted font-sans mt-1 truncate" title={pkg.description}>{pkg.description}</p>
+                   {/if}
+                   <div class="text-[9px] text-text-disabled font-mono mt-0.5 truncate" title={pkg.path}>{pkg.path}</div>
+                </div>
+
+                <div class="flex items-center gap-4">
+                  <span class="text-xs font-bold font-mono text-text-secondary whitespace-nowrap">{formatSize(pkg.size_bytes)}</span>
+                  <button
+                    onclick={() => uninstallPackage(pkg.name)}
+                    disabled={uninstallingStates[pkg.name]}
+                    class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold bg-danger/10 hover:bg-danger text-danger hover:text-white disabled:opacity-40 transition-all duration-150 active:scale-95 border border-danger/20"
+                  >
+                    {#if uninstallingStates[pkg.name]}
+                      <RefreshCw class="w-3 h-3 animate-spin" />
+                      Removing...
+                    {:else}
+                      <Trash2 class="w-3 h-3" />
+                      Uninstall
+                    {/if}
+                  </button>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
       </div>
     {/if}
   </div>

@@ -9,7 +9,7 @@ fn main() {
             println!("PurgeKit CLI - Initiating deep remnants clean for: {}", app_name);
             
             // Call scanner from the library
-            let remnants = tauri_app_lib::scanner::remnants::scan_app_remnants(app_name, None, None);
+            let remnants = purgekit_lib::scanner::remnants::scan_app_remnants(app_name, None, None);
             println!("Analysis completed. Found {} remnant items.", remnants.len());
             
             for item in &remnants {
@@ -17,7 +17,7 @@ fn main() {
             }
             
             println!("Purging remnants...");
-            let (success, fail) = tauri_app_lib::scanner::remnants::purge_all_remnants(&remnants);
+            let (success, fail) = purgekit_lib::scanner::remnants::purge_all_remnants(&remnants);
             println!("Purge completed. Success: {}, Failed: {}", success, fail);
         } else {
             println!("Usage: purgekit.exe clean <app-name>");
@@ -25,5 +25,5 @@ fn main() {
         return;
     }
 
-    tauri_app_lib::run()
+    purgekit_lib::run()
 }

@@ -1,0 +1,40 @@
+name: Dependabot Auto-Merge
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronized]
+
+permissions:
+  pull-requests: write
+  contents: write
+
+jobs:
+  dependabot:
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+    steps:
+      - name: Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      # Check if it's minor or patch update: approve and auto-merge
+      - name: Approve and Auto-Merge Minor/Patch Updates
+        if: steps.metadata.outputs.update-type != 'version-update:semver-major'
+        run: |
+          gh pr review --approve "$PR_URL"
+          gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+
+      # For major updates: add 'needs-review' label and comment
+      - name: Request Manual Review for Major Updates
+        if: steps.metadata.outputs.update-type == 'version-update:semver-major'
+        run: |
+          gh pr edit "$PR_URL" --add-label "needs-review"
+          gh pr comment "$PR_URL" --body "⚠️ This is a **major** update. Please review breaking changes and test thoroughly before merging."
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}

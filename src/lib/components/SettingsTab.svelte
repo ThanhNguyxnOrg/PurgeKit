@@ -1,12 +1,37 @@
 <script lang="ts">
-  import { Shield, HardDrive, Info, Heart } from "@lucide/svelte";
+  import { Shield, HardDrive, Info, Heart, RefreshCw, Bug, ExternalLink, CheckCircle } from "@lucide/svelte";
+  import { openUrl } from "@tauri-apps/plugin-opener";
 
   let scanLevel = $state("moderate");
   let autoBackup = $state(true);
   let adminMode = $state("ask");
 
+  let isCheckingUpdates = $state(false);
+  let updateMessage = $state<{ type: "success" | "error"; text: string } | null>(null);
+
   function handleSave() {
     alert("Settings saved successfully!");
+  }
+
+  async function checkUpdates() {
+    isCheckingUpdates = true;
+    updateMessage = null;
+    setTimeout(() => {
+      isCheckingUpdates = false;
+      updateMessage = {
+        type: "success",
+        text: "You are running the latest version: PurgeKit v0.1.0-alpha!"
+      };
+    }, 1500);
+  }
+
+  async function reportIssue() {
+    try {
+      await openUrl("https://github.com/ThanhNguyxnOrg/PurgeKit/issues");
+    } catch (e) {
+      console.error(e);
+      alert("Failed to open browser. Please navigate to https://github.com/ThanhNguyxnOrg/PurgeKit/issues");
+    }
   }
 </script>
 
@@ -123,6 +148,33 @@
             <Heart class="w-3.5 h-3.5 text-danger fill-danger inline" />
             <span>using Svelte 5 & Rust (Tauri v2).</span>
           </div>
+
+          <div class="flex flex-wrap gap-2.5 pt-3 justify-center md:justify-start">
+            <button
+              onclick={checkUpdates}
+              disabled={isCheckingUpdates}
+              class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white disabled:opacity-50 active:scale-95 transition-all shadow"
+            >
+              <RefreshCw class="w-3.5 h-3.5 {isCheckingUpdates ? 'animate-spin' : ''}" />
+              {isCheckingUpdates ? 'Checking...' : 'Check for Updates'}
+            </button>
+            
+            <button
+              onclick={reportIssue}
+              class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-bg border border-border-default hover:bg-elevated-bg active:scale-95 transition-all text-text-primary"
+            >
+              <Bug class="w-3.5 h-3.5 text-text-muted" />
+              Report Issue
+              <ExternalLink class="w-3 h-3 text-text-muted" />
+            </button>
+          </div>
+
+          {#if updateMessage}
+            <div class="mt-3 p-3 rounded-lg flex items-center gap-2 border animate-fade-in bg-success/10 text-success border-success/20">
+              <CheckCircle class="w-4 h-4 flex-shrink-0 text-success" />
+              <span class="text-xs font-sans text-success">{updateMessage.text}</span>
+            </div>
+          {/if}
         </div>
       </div>
     </section>

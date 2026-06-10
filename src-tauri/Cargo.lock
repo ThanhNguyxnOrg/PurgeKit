@@ -2690,6 +2690,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "purgekit"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rayon",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-opener",
+ "thiserror 1.0.69",
+ "uuid",
+ "walkdir",
+ "winreg 0.52.0",
+]
+
+[[package]]
 name = "quick-xml"
 version = "0.39.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3465,24 +3483,6 @@ dependencies = [
  "webview2-com",
  "window-vibrancy",
  "windows",
-]
-
-[[package]]
-name = "tauri-app"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "rayon",
- "rusqlite",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-opener",
- "thiserror 1.0.69",
- "uuid",
- "walkdir",
- "winreg 0.52.0",
 ]
 
 [[package]]

@@ -1,4 +1,4 @@
-use crate::scanner::{self, InstalledApp, DevToolInfo, RemnantItem, PathEntry};
+use crate::scanner::{self, InstalledApp, DevToolInfo, RemnantItem, PathEntry, GlobalCliPackage};
 use crate::snapshot_engine::{self, SnapshotRecord, SnapshotDiff};
 use std::process::Command;
 use std::os::windows::process::CommandExt;
@@ -137,4 +137,14 @@ pub fn run_uninstall_command(uninstall_string: String) -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("Failed to spawn uninstaller: {}", e))?;
     Ok(())
+}
+
+#[tauri::command]
+pub fn get_global_npm_packages() -> Vec<GlobalCliPackage> {
+    scanner::scan_global_npm_packages()
+}
+
+#[tauri::command]
+pub fn uninstall_global_npm_package(name: String) -> Result<(), String> {
+    scanner::uninstall_global_npm_package(&name)
 }

@@ -21,7 +21,9 @@ pub fn run() {
             commands::compare_snapshots,
             commands::get_path_entries,
             commands::save_path_entries,
-            commands::run_uninstall_command
+            commands::run_uninstall_command,
+            commands::get_global_npm_packages,
+            commands::uninstall_global_npm_package
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
