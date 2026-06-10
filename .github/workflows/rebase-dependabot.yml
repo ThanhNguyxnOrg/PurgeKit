@@ -13,6 +13,9 @@ jobs:
   rebase:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Rebase open Dependabot PRs
         run: |
           prs=$(gh pr list --state open --author "dependabot[bot]" --json number --jq '.[].number')
@@ -21,4 +24,4 @@ jobs:
             gh pr comment "$pr" --body "@dependabot rebase"
           done
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}

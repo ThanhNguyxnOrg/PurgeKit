@@ -1,7 +1,7 @@
 name: Dependabot Auto-Merge
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, reopened, synchronized]
 
 permissions:
@@ -13,6 +13,9 @@ jobs:
     runs-on: ubuntu-latest
     if: github.actor == 'dependabot[bot]'
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Dependabot metadata
         id: metadata
         uses: dependabot/fetch-metadata@v2
@@ -27,7 +30,7 @@ jobs:
           gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
 
       # For major updates: add 'needs-review' label and comment
       - name: Request Manual Review for Major Updates
@@ -37,4 +40,4 @@ jobs:
           gh pr comment "$PR_URL" --body "⚠️ This is a **major** update. Please review breaking changes and test thoroughly before merging."
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
