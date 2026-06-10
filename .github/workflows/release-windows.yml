@@ -1,19 +1,16 @@
-name: Build Windows App (CI)
+name: Release Windows App
 
 on:
   push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  build-windows:
+  release-windows:
     runs-on: windows-latest
     steps:
       - name: Checkout repository
@@ -36,5 +33,16 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build Tauri App
+      - name: Build and Publish Tauri App
         uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+        with:
+          tagName: v__VERSION__
+          releaseName: "PurgeKit v__VERSION__"
+          releaseBody: "Automated release of PurgeKit v__VERSION__ for Windows."
+          releaseDraft: true
+          prerelease: false
+          includeDebug: false
+          includeRelease: true
+          includeUpdaterJson: false
