@@ -56,7 +56,7 @@ PurgeKit is specifically designed to go beyond typical Windows uninstallers, ens
 ---
 
 ### 📥 Installation Guide
-1. Download `PurgeKit-1.0.0-x64.msi` or `PurgeKit_1.0.0_x64_en-US.msi` from the assets below.
+1. Download `PurgeKit_x64_en-US.msi` or `PurgeKit_x64-setup.exe` from the assets below.
 2. Run the installer and grant **Administrator Privileges** when prompted (required for DiskPart & Registry operations).
 3. Open PurgeKit from the Start Menu and start cleaning! 🚀
 

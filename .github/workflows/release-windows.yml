@@ -96,16 +96,48 @@ jobs:
           Add-Content -Path $env:GITHUB_OUTPUT -Value $body
           Add-Content -Path $env:GITHUB_OUTPUT -Value "EOF"
 
-      - name: Build and Publish Tauri App
+      - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
         with:
-          tagName: v${{ needs.check-trigger.outputs.version }}
-          releaseName: "PurgeKit v${{ needs.check-trigger.outputs.version }}"
-          releaseBody: ${{ steps.get_changelog.outputs.body }}
-          releaseDraft: false
-          prerelease: false
           includeDebug: false
           includeRelease: true
           includeUpdaterJson: false
+
+      - name: Rename and Move Build Artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts
+          
+          # Find and copy/rename the EXE
+          $exeFile = Get-ChildItem -Path "src-tauri/target/release/bundle" -Filter "*_x64-setup.exe" -Recurse | Select-Object -First 1
+          if ($exeFile) {
+              Copy-Item -Path $exeFile.FullName -Destination "artifacts/PurgeKit_x64-setup.exe" -Force
+              Write-Host "Copied EXE to artifacts/PurgeKit_x64-setup.exe"
+          } else {
+              Write-Error "EXE file not found!"
+          }
+          
+          # Find and copy/rename the MSI
+          $msiFile = Get-ChildItem -Path "src-tauri/target/release/bundle" -Filter "*_x64_en-US.msi" -Recurse | Select-Object -First 1
+          if ($msiFile) {
+              Copy-Item -Path $msiFile.FullName -Destination "artifacts/PurgeKit_x64_en-US.msi" -Force
+              Write-Host "Copied MSI to artifacts/PurgeKit_x64_en-US.msi"
+          } else {
+              Write-Error "MSI file not found!"
+          }
+
+      - name: Create and Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.check-trigger.outputs.version }}
+          name: "PurgeKit v${{ needs.check-trigger.outputs.version }}"
+          body: ${{ steps.get_changelog.outputs.body }}
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/PurgeKit_x64-setup.exe
+            artifacts/PurgeKit_x64_en-US.msi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}

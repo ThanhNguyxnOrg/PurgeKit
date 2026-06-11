@@ -20,8 +20,8 @@ Go to the official GitHub releases page:
 👉 [PurgeKit GitHub Releases](https://github.com/ThanhNguyxnOrg/PurgeKit/releases)
 
 Look for the latest release version (e.g., `v1.0.0`) and download one of the following assets:
-*   **`PurgeKit_1.0.0_x64_en-US.msi`**: The recommended installer package. It installs PurgeKit to your system and creates start menu and desktop shortcuts.
-*   **`PurgeKit.exe`**: A portable version of the app. You can run it directly without installing.
+*   **`PurgeKit_x64_en-US.msi`**: The recommended installer package. It installs PurgeKit to your system and creates start menu and desktop shortcuts.
+*   **`PurgeKit_x64-setup.exe`**: The standalone setup executable.
 
 ---
 
