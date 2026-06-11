@@ -66,9 +66,15 @@ When you click **Uninstall** on a compiler version, PurgeKit runs the following 
             | (e.g., rustup toolchain delete) |
             +---------------------------------+
                              |
+<<<<<<< HEAD
+              +--------------+--------------+
+              |                             |
+     [Exit Code: 0]                [Command Fails /
+=======
                +--------------+--------------+
                |                             |
       [Exit Code: 0]                [Command Fails /
+>>>>>>> 529a812beaf99ec34a058655123f656da2ca7246
               |                     Missing from PATH]
               v                             v
       +---------------+             +-----------------+

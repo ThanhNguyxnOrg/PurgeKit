@@ -1,6 +1,10 @@
 # 📥 PurgeKit Installation & Setup Guide (Windows)
 
+<<<<<<< HEAD
+Welcome to **PurgeKit v1.0.0**! This guide walk you through installing, upgrading, and initializing PurgeKit on your system.
+=======
 Welcome to **PurgeKit v1.0.0**! This guide walks you through installing, upgrading, and initializing PurgeKit on your system.
+>>>>>>> 529a812beaf99ec34a058655123f656da2ca7246
 
 ---
 

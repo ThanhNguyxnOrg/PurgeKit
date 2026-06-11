@@ -4,7 +4,11 @@ PurgeKit features a fully automated Continuous Integration & Continuous Delivery
 
 ---
 
+<<<<<<< HEAD
+## 🛠️ Release Automation Architecture
+=======
 ## 🚀 Release Automation Architecture
+>>>>>>> 529a812beaf99ec34a058655123f656da2ca7246
 
 ```mermaid
 graph TD

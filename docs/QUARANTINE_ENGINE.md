@@ -28,7 +28,11 @@ CREATE TABLE IF NOT EXISTS quarantine (
     name TEXT NOT NULL,              -- File/Folder base name
     original_path TEXT NOT NULL,     -- Absolute original path on disk
     quarantine_path TEXT NOT NULL,   -- Absolute path inside the Quarantine directory
+<<<<<<< HEAD
+    created_at TEXT NOT NULL         -- Timestamp of quarantine action (YYYYMMDD_HHMMSS)
+=======
     created_at TEXT NOT NULL         -- Snapshot timestamp of quarantine action (YYYYMMDD_HHMMSS)
+>>>>>>> 529a812beaf99ec34a058655123f656da2ca7246
 );
 ```
 
