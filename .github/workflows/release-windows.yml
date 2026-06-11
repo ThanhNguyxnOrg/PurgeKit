@@ -2,15 +2,48 @@ name: Release Windows App
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  check-trigger:
+    runs-on: ubuntu-latest
+    outputs:
+      is_release: ${{ steps.check.outputs.is_release }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Check Commit Message or Manual Trigger
+        id: check
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION=$(jq -r '.version' src-tauri/tauri.conf.json)
+            echo "Manual trigger. Extracted version from tauri.conf.json: $VERSION"
+            echo "is_release=true" >> "$GITHUB_OUTPUT"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          else
+            COMMIT_MSG="${{ github.event.head_commit.message }}"
+            echo "Commit message: $COMMIT_MSG"
+            if [[ "$COMMIT_MSG" =~ v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+              VERSION="${BASH_REMATCH[1]}"
+              echo "Release trigger detected. Version: $VERSION"
+              echo "is_release=true" >> "$GITHUB_OUTPUT"
+              echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            else
+              echo "No version tag match found in commit message. Skipping release build."
+              echo "is_release=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
   release-windows:
+    needs: check-trigger
+    if: needs.check-trigger.outputs.is_release == 'true'
     runs-on: windows-latest
     steps:
       - name: Checkout repository
@@ -38,10 +71,8 @@ jobs:
         id: get_changelog
         shell: pwsh
         run: |
-          # Get version from tag name (e.g., v1.0.0 -> 1.0.0)
-          $tag = "${{ github.ref_name }}"
-          $version = $tag.TrimStart('v')
-          Write-Host "Extracting changelog for version $version from tag $tag"
+          $version = "${{ needs.check-trigger.outputs.version }}"
+          Write-Host "Extracting changelog for version $version"
           
           if (Test-Path "CHANGELOG.md") {
               $changelog = Get-Content CHANGELOG.md -Raw
@@ -70,8 +101,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
         with:
-          tagName: v__VERSION__
-          releaseName: "PurgeKit v__VERSION__"
+          tagName: v${{ needs.check-trigger.outputs.version }}
+          releaseName: "PurgeKit v${{ needs.check-trigger.outputs.version }}"
           releaseBody: ${{ steps.get_changelog.outputs.body }}
           releaseDraft: true
           prerelease: false
