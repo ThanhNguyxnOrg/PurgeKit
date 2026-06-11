@@ -34,6 +34,37 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Get Changelog Entry
+        id: get_changelog
+        shell: pwsh
+        run: |
+          # Get version from tag name (e.g., v1.0.0 -> 1.0.0)
+          $tag = "${{ github.ref_name }}"
+          $version = $tag.TrimStart('v')
+          Write-Host "Extracting changelog for version $version from tag $tag"
+          
+          if (Test-Path "CHANGELOG.md") {
+              $changelog = Get-Content CHANGELOG.md -Raw
+              # Regex to match the section under ## [version]
+              $pattern = "(?s)## \[" + [regex]::Escape($version) + "\].*?\r?\n(.*?)(?=\r?\n## \[|\Z)"
+              if ($changelog -match $pattern) {
+                  $body = $Matches[1].Trim()
+                  Write-Host "Found changelog entry:"
+                  Write-Host $body
+              } else {
+                  $body = "Release version $version"
+                  Write-Host "Changelog entry for $version not found. Using default."
+              }
+          } else {
+              $body = "Release version $version"
+              Write-Host "CHANGELOG.md not found. Using default."
+          }
+          
+          # Write to GITHUB_OUTPUT using multiline syntax
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "body<<EOF"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value $body
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "EOF"
+
       - name: Build and Publish Tauri App
         uses: tauri-apps/tauri-action@v0
         env:
@@ -41,20 +72,7 @@ jobs:
         with:
           tagName: v__VERSION__
           releaseName: "PurgeKit v__VERSION__"
-          releaseBody: |
-            ### PurgeKit v1.0.0 - Stable Release for Windows 🎉
-            
-            This is the first stable release of PurgeKit for Windows, providing power users and developers with trace-free system cleaning and software removal.
-            
-            #### 🛠️ Key Features Included:
-            * **WSL2 Disk Shrinker**: Safely compact WSL2 virtual drive files (`ext4.vhdx`) using Windows DiskPart with live logs and toggle dynamic auto-shrink (Sparse mode).
-            * **Toolchain Version Sweeper**: Scan and clean unused versions of Rustup compiler toolchains and Node runtimes (NVM / FNM) with active protection locks.
-            * **Universal Project Sweeper**: Traverses workspace directories to calculate sizes and batch sweep heavy directories (`node_modules`, `target`, `venv`, `.vs`...).
-            * **Bulk Silent Uninstaller**: Select multiple desktop/Store apps, run uninstallation silently, and deep clean registry/disk remnants.
-            * **PATH Cleaner**: Scans and sanitizes Windows environment variables to remove broken or duplicate entries.
-            
-            #### 📱 UI Improvements:
-            * Complete responsive flex layout updates to ensure full windowed multitasking usability.
+          releaseBody: ${{ steps.get_changelog.outputs.body }}
           releaseDraft: true
           prerelease: false
           includeDebug: false
