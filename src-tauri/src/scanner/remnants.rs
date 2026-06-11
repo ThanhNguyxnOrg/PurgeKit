@@ -213,7 +213,27 @@ fn clean_match_token(app_name: &str) -> String {
     kept.join(" ").trim().to_lowercase()
 }
 
-fn scan_directory_remnants_recursive(parent_dir: &Path, token: &str, base_score: i32, remnants: &mut Vec<RemnantItem>) {
+fn scan_directory_remnants_recursive(
+    parent_dir: &Path,
+    token: &str,
+    base_score: i32,
+    remnants: &mut Vec<RemnantItem>,
+) {
+    scan_directory_remnants_recursive_impl(parent_dir, token, base_score, remnants, 0, 3);
+}
+
+fn scan_directory_remnants_recursive_impl(
+    parent_dir: &Path,
+    token: &str,
+    base_score: i32,
+    remnants: &mut Vec<RemnantItem>,
+    depth: u32,
+    max_depth: u32,
+) {
+    if depth > max_depth {
+        return;
+    }
+
     let entries = match fs::read_dir(parent_dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -238,9 +258,11 @@ fn scan_directory_remnants_recursive(parent_dir: &Path, token: &str, base_score:
                 path: path.to_string_lossy().to_string(),
                 item_type: item_type.to_string(),
                 size,
-                confidence: "Medium".to_string(), // Placeholder, updated later
+                confidence: "Medium".to_string(),
                 score: base_score,
             });
+        } else if path.is_dir() {
+            scan_directory_remnants_recursive_impl(&path, token, base_score, remnants, depth + 1, max_depth);
         }
     }
 }
@@ -418,13 +440,18 @@ pub fn purge_remnant_item(item: &RemnantItem) -> Result<(), String> {
         "File" | "Directory" => {
             let path = Path::new(&item.path);
             if path.exists() {
-                match crate::locker::delete_file_with_escalation(&item.path) {
-                    crate::locker::DeleteResult::Failed(err) => return Err(err),
-                    _ => {}
+                let settings = crate::settings::load_settings();
+                if settings.backup_before_delete {
+                    crate::backup::quarantine_file_or_directory(&item.path)?;
+                } else {
+                    match crate::locker::delete_file_with_escalation(&item.path) {
+                        crate::locker::DeleteResult::Failed(err) => return Err(err),
+                        _ => {}
+                    }
                 }
             }
         }
-        "RegistryKey" => {
+        "RegistryKey" | "RegistryValue" => {
             let (hive_name, path_str) = {
                 let path_str_clone = item.path.clone();
                 if path_str_clone.starts_with("HKLM\\Wow6432Node") {
@@ -454,15 +481,20 @@ pub fn purge_remnant_item(item: &RemnantItem) -> Result<(), String> {
             let last_backslash = normalized_path.rfind('\\')
                 .ok_or_else(|| format!("Invalid registry path: {}", normalized_path))?;
             let parent_path = &normalized_path[..last_backslash];
-            let key_to_delete = &normalized_path[last_backslash + 1..];
+            let name_to_purge = &normalized_path[last_backslash + 1..];
 
             let parent_key = root.open_subkey_with_flags(parent_path, KEY_WRITE)
                 .map_err(|e| format!("Failed to open registry parent key: {}", e))?;
 
-            // delete_subkey fails on keys that contain subkeys, which most
-            // app remnant keys do. Delete recursively instead.
-            parent_key.delete_subkey_all(key_to_delete)
-                .map_err(|e| format!("Failed to delete registry key: {}", e))?;
+            if item.item_type == "RegistryKey" {
+                // delete_subkey fails on keys that contain subkeys, which most
+                // app remnant keys do. Delete recursively instead.
+                parent_key.delete_subkey_all(name_to_purge)
+                    .map_err(|e| format!("Failed to delete registry key: {}", e))?;
+            } else {
+                parent_key.delete_value(name_to_purge)
+                    .map_err(|e| format!("Failed to delete registry value: {}", e))?;
+            }
         }
         _ => return Err(format!("Unknown item type: {}", item.item_type)),
     }

@@ -60,7 +60,7 @@ fn scan_startup_keys(app_token: &str, install_dir: Option<&str>, remnants: &mut 
                 cleaned_val
             };
 
-            let expanded = expand_env_vars(&exe_path);
+            let expanded = crate::winutil::expand_env_strings(&exe_path);
             let path_lower = expanded.to_lowercase();
             
             let mut is_match = false;
@@ -82,7 +82,7 @@ fn scan_startup_keys(app_token: &str, install_dir: Option<&str>, remnants: &mut 
             if is_match {
                 remnants.push(RemnantItem {
                     path: format!(r"{}\{}\{}", hive_name, subpath, name),
-                    item_type: "RegistryKey".to_string(), // The run value itself
+                    item_type: "RegistryValue".to_string(), // The run value itself
                     size: 0,
                     confidence: if score >= 80 { "VeryHigh".to_string() } else { "High".to_string() },
                     score,
@@ -130,7 +130,7 @@ fn scan_services(app_token: &str, install_dir: Option<&str>, remnants: &mut Vec<
             exe_path
         };
 
-        let expanded = expand_env_vars(&exe_path);
+        let expanded = crate::winutil::expand_env_strings(&exe_path);
         let path_lower = expanded.to_lowercase();
         let service_name_lower = service_name.to_lowercase();
 
@@ -223,7 +223,7 @@ fn scan_scheduled_tasks(app_token: &str, install_dir: Option<&str>, remnants: &m
                     if let Some(cmd_end) = xml_lower[cmd_start..].find("</command>") {
                         let cmd_tag = &xml_content[cmd_start + 9 .. cmd_start + cmd_end];
                         let cleaned_cmd = cmd_tag.trim().trim_matches('"');
-                        let expanded_cmd = expand_env_vars(cleaned_cmd);
+                        let expanded_cmd = crate::winutil::expand_env_strings(cleaned_cmd);
                         if !expanded_cmd.is_empty() && !Path::new(&expanded_cmd).exists() {
                             binary_exists = false;
                         }
@@ -284,7 +284,7 @@ fn scan_firewall_rules(app_token: &str, install_dir: Option<&str>, remnants: &mu
         if is_match {
             remnants.push(RemnantItem {
                 path: format!(r"HKLM\{}\{}", fw_path, name),
-                item_type: "RegistryKey".to_string(),
+                item_type: "RegistryValue".to_string(),
                 size: 0,
                 confidence: if score >= 80 { "VeryHigh".to_string() } else { "High".to_string() },
                 score,
@@ -293,24 +293,3 @@ fn scan_firewall_rules(app_token: &str, install_dir: Option<&str>, remnants: &mu
     }
 }
 
-fn expand_env_vars(raw_path: &str) -> String {
-    let mut expanded = raw_path.to_string();
-    let mut start = 0;
-
-    while let Some(pos_start) = expanded[start..].find('%') {
-        let actual_start = start + pos_start;
-        if let Some(pos_end) = expanded[actual_start + 1..].find('%') {
-            let actual_end = actual_start + 1 + pos_end;
-            let var_name = &expanded[actual_start + 1..actual_end];
-            if let Ok(var_val) = std::env::var(var_name) {
-                expanded.replace_range(actual_start..=actual_end, &var_val);
-                start = actual_start + var_val.len();
-            } else {
-                start = actual_end + 1;
-            }
-        } else {
-            break;
-        }
-    }
-    expanded
-}

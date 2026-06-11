@@ -43,7 +43,7 @@ pub fn scan_com_orphans(app_token: &str, install_dir: Option<&str>) -> Vec<Remna
                         continue;
                     }
 
-                    let expanded = expand_env_vars(&cleaned_path);
+                    let expanded = crate::winutil::expand_env_strings(&cleaned_path);
                     if expanded.is_empty() {
                         continue;
                     }
@@ -122,8 +122,8 @@ pub fn scan_typelib_orphans(app_token: &str) -> Vec<RemnantItem> {
                                         Err(_) => continue,
                                     };
 
-                                    let cleaned_path = raw_path.trim().trim_matches('"').to_string();
-                                    let expanded = expand_env_vars(&cleaned_path);
+                                    let cleaned_path = raw_path.trim().trim_matches('"');
+                                    let expanded = crate::winutil::expand_env_strings(cleaned_path);
                                     if expanded.is_empty() {
                                         continue;
                                     }
@@ -151,24 +151,3 @@ pub fn scan_typelib_orphans(app_token: &str) -> Vec<RemnantItem> {
     remnants
 }
 
-fn expand_env_vars(raw_path: &str) -> String {
-    let mut expanded = raw_path.to_string();
-    let mut start = 0;
-
-    while let Some(pos_start) = expanded[start..].find('%') {
-        let actual_start = start + pos_start;
-        if let Some(pos_end) = expanded[actual_start + 1..].find('%') {
-            let actual_end = actual_start + 1 + pos_end;
-            let var_name = &expanded[actual_start + 1..actual_end];
-            if let Ok(var_val) = std::env::var(var_name) {
-                expanded.replace_range(actual_start..=actual_end, &var_val);
-                start = actual_start + var_val.len();
-            } else {
-                start = actual_end + 1;
-            }
-        } else {
-            break;
-        }
-    }
-    expanded
-}

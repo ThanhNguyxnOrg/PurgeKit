@@ -46,7 +46,7 @@ pub fn get_path_entries() -> Result<Vec<PathEntry>, String> {
     // Prepare overlap detection
     let mut sorted: Vec<(usize, String)> = raw_entries.iter().enumerate()
         .map(|(i, (p, _))| {
-            let expanded = expand_env_vars(p);
+            let expanded = crate::winutil::expand_env_strings(p);
             (i, expanded.to_lowercase().trim_end_matches('\\').to_string())
         })
         .collect();
@@ -67,7 +67,7 @@ pub fn get_path_entries() -> Result<Vec<PathEntry>, String> {
     }
 
     for (idx, (raw, scope)) in raw_entries.into_iter().enumerate() {
-        let expanded = expand_env_vars(&raw);
+        let expanded = crate::winutil::expand_env_strings(&raw);
         let normalized = expanded.to_lowercase().trim_end_matches('\\').to_string();
         let exists = Path::new(&expanded).is_dir();
 
@@ -144,7 +144,7 @@ fn write_path_to_registry(hkey: winreg::HKEY, subpath: &str, value: &str) -> Res
     for unit in value.encode_utf16().chain(std::iter::once(0u16)) {
         bytes.extend_from_slice(&unit.to_le_bytes());
     }
-    let reg_value = winreg::RegValue { bytes, vtype: REG_EXPAND_SZ };
+    let reg_value = winreg::RegValue { bytes: bytes.into(), vtype: REG_EXPAND_SZ };
 
     key.set_raw_value("Path", &reg_value)
         .map_err(|e| format!("Failed to write Registry key: {}", e))?;
@@ -152,24 +152,3 @@ fn write_path_to_registry(hkey: winreg::HKEY, subpath: &str, value: &str) -> Res
     Ok(())
 }
 
-fn expand_env_vars(raw_path: &str) -> String {
-    let mut expanded = raw_path.to_string();
-    let mut start = 0;
-
-    while let Some(pos_start) = expanded[start..].find('%') {
-        let actual_start = start + pos_start;
-        if let Some(pos_end) = expanded[actual_start + 1..].find('%') {
-            let actual_end = actual_start + 1 + pos_end;
-            let var_name = &expanded[actual_start + 1..actual_end];
-            if let Ok(var_val) = env::var(var_name) {
-                expanded.replace_range(actual_start..=actual_end, &var_val);
-                start = actual_start + var_val.len();
-            } else {
-                start = actual_end + 1;
-            }
-        } else {
-            break;
-        }
-    }
-    expanded
-}

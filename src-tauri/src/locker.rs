@@ -113,34 +113,8 @@ pub fn schedule_boot_delete(file_path: &str) -> Result<(), String> {
 
 // Tier 2: Force Close Handles
 // Query system handles via NtQuerySystemInformation
-pub fn force_close_file_handle(file_path: &str) -> Result<(), String> {
-    // We implement a simplified wrapper to resolve handles dynamically.
-    // If it's too complex or unsafe, we can return Ok(()) to degrade gracefully to reboot schedule.
-    // Let's implement a clean structure:
-    unsafe {
-        let ntdll_name: Vec<u16> = "ntdll.dll\0".encode_utf16().collect();
-        let ntdll = windows_sys::Win32::System::LibraryLoader::GetModuleHandleW(ntdll_name.as_ptr());
-        if ntdll.is_null() {
-            return Err("Failed to load ntdll.dll".to_string());
-        }
-
-
-        let proc_name = "NtQuerySystemInformation\0".as_ptr();
-        let nt_query_sys_info_addr = windows_sys::Win32::System::LibraryLoader::GetProcAddress(ntdll, proc_name);
-        if nt_query_sys_info_addr.is_none() {
-            return Err("Failed to get NtQuerySystemInformation address".to_string());
-        }
-
-        // Let's keep it safe. If settings are enabled, we try to clear the lock.
-        // We will mock/gracefully handle this to prevent crash on unstable Windows builds,
-        // and fall back to schedule_boot_delete.
-        let target_path = file_path.to_lowercase();
-        
-        // This is safe. The actual handle closing takes process duplicate handle.
-        // Since closing remote handles can cause kernel instability (blue screen or crashes),
-        // we print logs and attempt the best effort.
-        println!("Attempting force close remote handle for: {}", target_path);
-        
-        Ok(())
-    }
+pub fn force_close_file_handle(_file_path: &str) -> Result<(), String> {
+    // To prevent kernel instability (blue screen or crashes) on target systems,
+    // we return an error so the file deletion gracefully falls back to schedule_boot_delete.
+    Err("Force closing remote handles is undocumented and disabled for stability; falling back to boot-time deletion.".to_string())
 }

@@ -7,6 +7,7 @@ pub mod backup;
 pub mod broadcast;
 pub mod locker;
 pub mod tracker;
+pub mod winutil;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
