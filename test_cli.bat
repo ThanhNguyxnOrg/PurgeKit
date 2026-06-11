@@ -26,7 +26,7 @@ echo Mock data > "%AppData%\PurgeKitTestApp\dummy.txt"
 echo.
 
 echo [3/4] Running PurgeKit CLI to clean mock application...
-src-tauri\target\debug\tauri-app.exe clean PurgeKitTestApp
+src-tauri\target\debug\purgekit-cli.exe clean PurgeKitTestApp -y --min-score 50
 echo.
 
 echo [4/4] Verifying if remnants were successfully purged...
@@ -53,4 +53,4 @@ if "%TEST_FAILED%"=="1" (
     echo   VERIFICATION RESULT: ALL TESTS PASSED
 )
 echo ===================================================
-pause
+rem pause
