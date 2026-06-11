@@ -50,6 +50,9 @@ pub fn run() {
             commands::scan_project_directories,
             commands::delete_project_directories,
             commands::check_directory_exists,
+            commands::get_wsl_distros,
+            commands::compact_wsl_distro,
+            commands::set_wsl_distro_sparse_mode,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

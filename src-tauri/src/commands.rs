@@ -1,4 +1,4 @@
-use crate::scanner::{self, InstalledApp, DevToolInfo, RemnantItem, PathEntry, GlobalCliPackage, ProjectFolder};
+use crate::scanner::{self, InstalledApp, DevToolInfo, RemnantItem, PathEntry, GlobalCliPackage, ProjectFolder, WslDistroInfo};
 use crate::snapshot_engine::{self, SnapshotRecord, SnapshotDiff};
 use crate::settings::{self, AppSettings};
 use serde::Serialize;
@@ -1136,6 +1136,45 @@ pub async fn delete_project_directories(
         });
 
         Ok(results)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn get_wsl_distros() -> Result<Vec<WslDistroInfo>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(scanner::scan_wsl_distributions())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn compact_wsl_distro(
+    app: AppHandle,
+    _name: String,
+    vhdx_path: String,
+) -> Result<String, String> {
+    if !settings::check_is_admin() {
+        return Err("WSL disk compaction using diskpart requires Administrator privileges. Please run PurgeKit as Administrator.".to_string());
+    }
+
+    tauri::async_runtime::spawn_blocking(move || {
+        scanner::compact_vhdx_diskpart(&app, &vhdx_path)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn set_wsl_distro_sparse_mode(
+    app: AppHandle,
+    name: String,
+    sparse: bool,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        scanner::set_wsl_distro_sparse(&app, &name, sparse)
     })
     .await
     .map_err(|e| e.to_string())?
