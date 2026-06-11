@@ -168,25 +168,38 @@ fn scan_services(app_token: &str, install_dir: Option<&str>, remnants: &mut Vec<
 }
 
 fn scan_scheduled_tasks(app_token: &str, install_dir: Option<&str>, remnants: &mut Vec<RemnantItem>) {
-    let app_token_lower = app_token.to_lowercase();
-    
     // Scheduled tasks files are stored in C:\Windows\System32\Tasks
     let windir = std::env::var("SystemRoot").unwrap_or("C:\\Windows".to_string());
     let tasks_dir = Path::new(&windir).join("System32").join("Tasks");
     
-    if !tasks_dir.exists() {
+    if tasks_dir.exists() {
+        scan_tasks_dir_recursive(&tasks_dir, app_token, install_dir, remnants, 0);
+    }
+}
+
+fn scan_tasks_dir_recursive(
+    dir: &Path,
+    app_token: &str,
+    install_dir: Option<&str>,
+    remnants: &mut Vec<RemnantItem>,
+    depth: u32,
+) {
+    if depth > 4 { // Prevent infinite recursion
         return;
     }
-
-    // Read tasks directory recursively
-    let entries = match fs::read_dir(&tasks_dir) {
+    
+    let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
     };
 
+    let app_token_lower = app_token.to_lowercase();
+
     for entry in entries.filter_map(|e| e.ok()) {
         let path = entry.path();
-        if path.is_file() {
+        if path.is_dir() {
+            scan_tasks_dir_recursive(&path, app_token, install_dir, remnants, depth + 1);
+        } else if path.is_file() {
             let task_name = match path.file_name().and_then(|n| n.to_str()) {
                 Some(n) => n.to_string(),
                 None => continue,
@@ -221,8 +234,8 @@ fn scan_scheduled_tasks(app_token: &str, install_dir: Option<&str>, remnants: &m
                 let mut binary_exists = true;
                 if let Some(cmd_start) = xml_lower.find("<command>") {
                     if let Some(cmd_end) = xml_lower[cmd_start..].find("</command>") {
-                        let cmd_tag = &xml_content[cmd_start + 9 .. cmd_start + cmd_end];
-                        let cleaned_cmd = cmd_tag.trim().trim_matches('"');
+                        // Slicing xml_lower instead of xml_content ensures we slice using safe indices
+                        let cleaned_cmd = xml_lower[cmd_start + 9 .. cmd_start + cmd_end].trim().trim_matches('"');
                         let expanded_cmd = crate::winutil::expand_env_strings(cleaned_cmd);
                         if !expanded_cmd.is_empty() && !Path::new(&expanded_cmd).exists() {
                             binary_exists = false;
