@@ -92,7 +92,7 @@ The frontend communicates with the Rust backend using Tauri's asynchronous `invo
 | `delete_project_directories`| `paths: Vec<String>` | `Record<String, String>` | Batch purges selected folders and files |
 | `get_wsl_distros` | None | `Vec<WslDistroInfo>` | Returns WSL distributions and virtual disk paths |
 | `compact_wsl_distro` | `name: String`, `vhdxPath: String` | `String` | Shuts down WSL and runs DiskPart compaction |
-| `set_wsl_distro_sparse_mode`| `name: String`, `sparse: bool` | None | Configures WSL distribution VHDX drive sparse property |
+| `set_wsl_distro_sparse_mode`| `name: String`, `sparse: bool` | None | Configures WSL VHDX drive sparse property |
 | `get_toolchain_versions` | None | `Vec<ToolchainVersion>` | Scans Rustup, NVM, and FNM version directories |
 | `delete_toolchain_version` | `manager: String`, `version: String`, `path: String` | None | Uninstalls runtime versions with folder-purge fallback |
 | `check_directory_exists` | `path: String` | `bool` | Checks if a path directory exists on the system |

@@ -74,7 +74,7 @@ You specify one or more workspace directories (e.g. `D:\Code`). PurgeKit perform
 
 ## 🐋 4. WSL2 Virtual Disk Shrinker
 
-Windows Subsystem for Linux 2 (WSL2) uses virtual hard disks (`ext4.vhdx`) to store files. These files expand automatically as files are created inside Linux. However, when files are deleted in Linux, the Windows host does not automatically shrink the `.vhdx` file, causing the virtual drive to occupy gigabytes of unused space on the Windows host.
+Windows Subsystem for Linux 2 (WSL2) uses virtual hard disks (`ext4.vhdx`) to store files. These files expand automatically as files are created inside Linux. However, when files are deleted in Linux, Windows does not shrink the `.vhdx` file automatically, causing the virtual drive to occupy gigabytes of unused space on the Windows host.
 
 ### 🛠️ DiskPart Compaction Sequence
 PurgeKit automates the complex manual compaction steps:
@@ -89,7 +89,7 @@ PurgeKit automates the complex manual compaction steps:
    ```
 4. **Elevation & Terminal Log**: Spawns DiskPart as Administrator (`runas` command equivalent via Tauri) and hooks stdout/stderr, streaming logs line-by-line in real-time to a Svelte console view.
 
-### 🍃 Auto-Shrink (Sparse Mode)
+### ⚖️ Auto-Shrink (Sparse Mode)
 For Windows 11 systems, PurgeKit allows toggling the native sparse property:
 `wsl --manage [DistroName] --set-sparse true`
 This enables Windows to automatically reclaim unused space from the WSL2 virtual disk in the background, eliminating the need for manual compactions.

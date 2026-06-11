@@ -65,7 +65,7 @@ jobs:
           workspaces: 'src-tauri -> target'
 
       - name: Install frontend dependencies
-        run: npm ci
+         run: npm ci
 
       - name: Get Changelog Entry
         id: get_changelog
