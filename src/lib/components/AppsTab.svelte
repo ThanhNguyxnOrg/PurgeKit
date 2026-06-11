@@ -397,7 +397,7 @@
   }
 </script>
 
-<div class="flex-1 flex flex-col h-screen bg-app-bg text-text-primary relative">
+<div class="flex-1 flex flex-col h-full bg-app-bg text-text-primary relative">
   <!-- Section Header -->
   <header class="p-6 border-b border-border-default flex items-center justify-between bg-sidebar-bg">
     <div>
@@ -502,111 +502,113 @@
       </div>
     {:else}
       <div class="border border-border-default rounded-lg overflow-hidden bg-surface-bg/50">
-        <table class="w-full text-left border-collapse">
-          <thead>
-            <tr class="bg-sidebar-bg border-b border-border-default text-xs font-semibold text-text-secondary uppercase tracking-wider font-mono">
-              <th class="py-4 px-5 w-10">
-                <input
-                  type="checkbox"
-                  aria-label="Select all applications"
-                  checked={selectedAppsCount === filteredApps.length && filteredApps.length > 0}
-                  onchange={(e) => toggleSelectAllApps(e.currentTarget.checked)}
-                  class="rounded border-border-default text-accent focus:ring-accent bg-surface-bg cursor-pointer w-4 h-4"
-                />
-              </th>
-              <th class="py-4 px-5">App Name</th>
-              <th class="py-4 px-5">Publisher</th>
-              <th class="py-4 px-5">Version</th>
-              <th class="py-4 px-5">Size</th>
-              <th class="py-4 px-5">Registry Hive</th>
-              <th class="py-4 px-5 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-border-default text-sm">
-            {#each filteredApps as app}
-              <tr class="hover:bg-elevated-bg/50 transition-colors duration-150 group {selectedApps[app.id] ? 'bg-accent/5' : ''}">
-                <td class="py-4 px-5 w-10">
+        <div class="overflow-x-auto w-full">
+          <table class="w-full text-left border-collapse min-w-[800px]">
+            <thead>
+              <tr class="bg-sidebar-bg border-b border-border-default text-xs font-semibold text-text-secondary uppercase tracking-wider font-mono">
+                <th class="py-4 px-5 w-10">
                   <input
                     type="checkbox"
-                    aria-label="Select application {app.display_name}"
-                    checked={!!selectedApps[app.id]}
-                    onchange={() => toggleSelectApp(app.id)}
+                    aria-label="Select all applications"
+                    checked={selectedAppsCount === filteredApps.length && filteredApps.length > 0}
+                    onchange={(e) => toggleSelectAllApps(e.currentTarget.checked)}
                     class="rounded border-border-default text-accent focus:ring-accent bg-surface-bg cursor-pointer w-4 h-4"
                   />
-                </td>
-                <!-- Name -->
-                <td class="py-4 px-5 font-sans font-medium flex items-center gap-3">
-                  <div class="w-8 h-8 rounded-lg border flex items-center justify-center overflow-hidden transition-colors shadow-sm bg-surface-bg border-border-default flex-shrink-0">
-                    {#if app.icon_base64}
-                      <img src="data:image/png;base64,{app.icon_base64}" class="w-6 h-6 object-contain" alt="" />
-                    {:else}
-                      <div class="w-full h-full flex items-center justify-center font-mono text-xs {getAvatarStyle(app.display_name)}">
-                        {app.display_name.charAt(0).toUpperCase()}
-                      </div>
-                    {/if}
-                  </div>
-                  <div class="flex flex-col">
-                    <div class="flex items-center gap-1.5">
-                      <span class="text-text-primary group-hover:text-white transition-colors">{app.display_name}</span>
-                      {#if app.is_verified}
-                        <span class="inline-flex items-center" title="Verified Publisher Certificate">
-                          <svg class="w-3.5 h-3.5 text-emerald-400 fill-emerald-400/20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-                            <path d="m9 11 2 2 4-4"/>
-                          </svg>
-                        </span>
+                </th>
+                <th class="py-4 px-5">App Name</th>
+                <th class="py-4 px-5">Publisher</th>
+                <th class="py-4 px-5">Version</th>
+                <th class="py-4 px-5">Size</th>
+                <th class="py-4 px-5">Registry Hive</th>
+                <th class="py-4 px-5 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-border-default text-sm">
+              {#each filteredApps as app}
+                <tr class="hover:bg-elevated-bg/50 transition-colors duration-150 group {selectedApps[app.id] ? 'bg-accent/5' : ''}">
+                  <td class="py-4 px-5 w-10">
+                    <input
+                      type="checkbox"
+                      aria-label="Select application {app.display_name}"
+                      checked={!!selectedApps[app.id]}
+                      onchange={() => toggleSelectApp(app.id)}
+                      class="rounded border-border-default text-accent focus:ring-accent bg-surface-bg cursor-pointer w-4 h-4"
+                    />
+                  </td>
+                  <!-- Name -->
+                  <td class="py-4 px-5 font-sans font-medium flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-lg border flex items-center justify-center overflow-hidden transition-colors shadow-sm bg-surface-bg border-border-default flex-shrink-0">
+                      {#if app.icon_base64}
+                        <img src="data:image/png;base64,{app.icon_base64}" class="w-6 h-6 object-contain" alt="" />
+                      {:else}
+                        <div class="w-full h-full flex items-center justify-center font-mono text-xs {getAvatarStyle(app.display_name)}">
+                          {app.display_name.charAt(0).toUpperCase()}
+                        </div>
                       {/if}
                     </div>
-                    <span class="text-[10px] text-text-muted font-mono mt-0.5 max-w-[200px] truncate" title={app.registry_path}>
-                      {app.id}
+                    <div class="flex flex-col min-w-0">
+                      <div class="flex items-center gap-1.5">
+                        <span class="text-text-primary group-hover:text-white transition-colors max-w-[180px] md:max-w-[280px] truncate" title={app.display_name}>{app.display_name}</span>
+                        {#if app.is_verified}
+                          <span class="inline-flex items-center" title="Verified Publisher Certificate">
+                            <svg class="w-3.5 h-3.5 text-emerald-400 fill-emerald-400/20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                              <path d="m9 11 2 2 4-4"/>
+                            </svg>
+                          </span>
+                        {/if}
+                      </div>
+                      <span class="text-[10px] text-text-muted font-mono mt-0.5 max-w-[200px] truncate" title={app.registry_path}>
+                        {app.id}
+                      </span>
+                    </div>
+                  </td>
+                  
+                  <!-- Publisher -->
+                  <td class="py-4 px-5 text-text-secondary max-w-[150px] truncate">
+                    {app.publisher || "Unknown"}
+                  </td>
+                  
+                  <!-- Version -->
+                  <td class="py-4 px-5 text-text-secondary font-mono text-xs">
+                    {app.display_version || "—"}
+                  </td>
+                  
+                  <!-- Size -->
+                  <td class="py-4 px-5 text-text-secondary font-mono text-xs">
+                    {formatSize(app.estimated_size)}
+                  </td>
+                  
+                  <!-- Hive / Type -->
+                  <td class="py-4 px-5">
+                    <span class="px-2 py-0.5 rounded text-[10px] font-mono border
+                      {app.is_uwp 
+                        ? 'bg-blue-950/30 text-blue-400 border-blue-800/40' 
+                        : app.hive === 'HKCU' 
+                          ? 'bg-brand-purple/10 text-brand-purple border-brand-purple/20' 
+                          : 'bg-surface-bg text-text-secondary border-border-default'}">
+                      {app.is_uwp ? "STORE" : app.hive}
                     </span>
-                  </div>
-                </td>
-                
-                <!-- Publisher -->
-                <td class="py-4 px-5 text-text-secondary max-w-[150px] truncate">
-                  {app.publisher || "Unknown"}
-                </td>
- 
-                <!-- Version -->
-                <td class="py-4 px-5 text-text-secondary font-mono text-xs">
-                  {app.display_version || "—"}
-                </td>
- 
-                <!-- Size -->
-                <td class="py-4 px-5 text-text-secondary font-mono text-xs">
-                  {formatSize(app.estimated_size)}
-                </td>
- 
-                <!-- Hive / Type -->
-                <td class="py-4 px-5">
-                  <span class="px-2 py-0.5 rounded text-[10px] font-mono border
-                    {app.is_uwp 
-                      ? 'bg-blue-950/30 text-blue-400 border-blue-800/40' 
-                      : app.hive === 'HKCU' 
-                        ? 'bg-brand-purple/10 text-brand-purple border-brand-purple/20' 
-                        : 'bg-surface-bg text-text-secondary border-border-default'}">
-                    {app.is_uwp ? "STORE" : app.hive}
-                  </span>
-                </td>
- 
-                <!-- Actions -->
-                <td class="py-4 px-5 text-right font-sans">
-                  <div class="flex items-center justify-end gap-2">
-                    <button
-                      onclick={() => startUninstallFlow(app)}
-                      title="Uninstall and Deep Clean Remnants"
-                      class="px-2.5 py-1.5 rounded-lg bg-danger/10 hover:bg-danger text-danger hover:text-white transition-all border border-danger/20 flex items-center gap-1.5 text-xs font-semibold active:scale-95 cursor-pointer"
-                    >
-                      <Trash2 class="w-3.5 h-3.5" />
-                      Uninstall
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
+                  </td>
+                  
+                  <!-- Actions -->
+                  <td class="py-4 px-5 text-right font-sans">
+                    <div class="flex items-center justify-end gap-2">
+                      <button
+                        onclick={() => startUninstallFlow(app)}
+                        title="Uninstall and Deep Clean Remnants"
+                        class="px-2.5 py-1.5 rounded-lg bg-danger/10 hover:bg-danger text-danger hover:text-white transition-all border border-danger/20 flex items-center gap-1.5 text-xs font-semibold active:scale-95 cursor-pointer"
+                      >
+                        <Trash2 class="w-3.5 h-3.5" />
+                        Uninstall
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
       </div>
     {/if}
   </div>

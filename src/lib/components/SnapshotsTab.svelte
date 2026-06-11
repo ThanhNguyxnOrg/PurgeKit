@@ -159,7 +159,7 @@
   let step3Status = $derived(diffResults ? 'completed' : (selectedBefore && selectedAfter ? 'active' : 'pending'));
 </script>
 
-<div class="flex-1 flex flex-col h-screen bg-app-bg text-text-primary relative">
+<div class="flex-1 flex flex-col h-full bg-app-bg text-text-primary relative">
   <!-- Section Header -->
   <header class="p-6 border-b border-border-default flex items-center justify-between bg-sidebar-bg">
     <div>

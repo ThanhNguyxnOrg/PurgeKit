@@ -126,7 +126,7 @@
   });
 </script>
 
-<div class="flex-1 flex flex-col h-screen bg-app-bg text-text-primary">
+<div class="flex-1 flex flex-col h-full bg-app-bg text-text-primary">
   <!-- Section Header -->
   <header class="p-6 border-b border-border-default flex items-center justify-between bg-sidebar-bg">
     <div>

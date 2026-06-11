@@ -109,7 +109,7 @@
   }
 </script>
 
-<div class="flex-1 flex flex-col h-screen bg-app-bg text-text-primary">
+<div class="flex-1 flex flex-col h-full bg-app-bg text-text-primary">
   <!-- Section Header -->
   <header class="p-6 border-b border-border-default flex items-center justify-between bg-sidebar-bg">
     <div>
@@ -207,7 +207,8 @@
       </div>
     {:else}
       <div class="border border-border-default rounded-lg overflow-hidden bg-surface-bg/50">
-        <table class="w-full text-left border-collapse">
+        <div class="overflow-x-auto w-full">
+          <table class="w-full text-left border-collapse min-w-[800px]">
           <thead>
             <tr class="bg-sidebar-bg border-b border-border-default text-xs font-semibold text-text-secondary uppercase tracking-wider font-mono">
               <th class="py-4 px-5">Program Name</th>
@@ -283,7 +284,8 @@
               </tr>
             {/each}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
     {/if}
   </div>

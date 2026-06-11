@@ -283,7 +283,7 @@
   });
 </script>
 
-<div class="flex-1 flex flex-col h-screen bg-app-bg text-text-primary">
+<div class="flex-1 flex flex-col h-full bg-app-bg text-text-primary">
   <!-- Header -->
   <header class="p-6 border-b border-border-default flex items-center justify-between bg-sidebar-bg">
     <div>
@@ -497,7 +497,7 @@
           </div>
 
           <div class="overflow-x-auto w-full">
-            <table class="w-full text-left border-collapse">
+            <table class="w-full text-left border-collapse min-w-[800px]">
               <thead>
                 <tr class="bg-sidebar-bg/60 border-b border-border-default text-xs font-semibold text-text-secondary uppercase tracking-wider font-mono">
                   <th class="py-3.5 px-5 w-10">Select</th>
