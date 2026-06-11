@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { Monitor, Terminal, Layers, FileCode, Settings, Zap } from "@lucide/svelte";
+  import { Monitor, Terminal, Layers, FileCode, Settings, Zap, FolderSearch } from "@lucide/svelte";
 
   let { activeTab = $bindable() } = $props();
 
   const mainMenuItems = [
     { id: "apps", label: "Apps Manager", icon: Monitor },
     { id: "devtools", label: "Dev Tools", icon: Terminal },
+    { id: "projectsweeper", label: "Project Sweeper", icon: FolderSearch },
     { id: "startup", label: "Startup Manager", icon: Zap },
     { id: "snapshots", label: "System Snapshots", icon: Layers },
     { id: "pathcleaner", label: "PATH Cleaner", icon: FileCode },

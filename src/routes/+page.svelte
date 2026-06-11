@@ -2,6 +2,7 @@
   import Sidebar from "$lib/components/Sidebar.svelte";
   import AppsTab from "$lib/components/AppsTab.svelte";
   import DevToolsTab from "$lib/components/DevToolsTab.svelte";
+  import ProjectSweeperTab from "$lib/components/ProjectSweeperTab.svelte";
   import StartupTab from "$lib/components/StartupTab.svelte";
   import SnapshotsTab from "$lib/components/SnapshotsTab.svelte";
   import PathCleanerTab from "$lib/components/PathCleanerTab.svelte";
@@ -21,6 +22,9 @@
     </div>
     <div class="flex-1 flex flex-col h-full {activeTab === 'devtools' ? '' : 'hidden'}">
       <DevToolsTab />
+    </div>
+    <div class="flex-1 flex flex-col h-full {activeTab === 'projectsweeper' ? '' : 'hidden'}">
+      <ProjectSweeperTab />
     </div>
     <div class="flex-1 flex flex-col h-full {activeTab === 'startup' ? '' : 'hidden'}">
       <StartupTab />

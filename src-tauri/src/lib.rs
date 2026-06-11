@@ -47,7 +47,11 @@ pub fn run() {
             commands::restore_quarantine_item,
             commands::delete_quarantine_item,
             commands::run_bulk_silent_uninstall,
+            commands::scan_project_directories,
+            commands::delete_project_directories,
+            commands::check_directory_exists,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+

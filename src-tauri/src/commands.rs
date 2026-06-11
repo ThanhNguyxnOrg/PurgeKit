@@ -1,4 +1,4 @@
-use crate::scanner::{self, InstalledApp, DevToolInfo, RemnantItem, PathEntry, GlobalCliPackage};
+use crate::scanner::{self, InstalledApp, DevToolInfo, RemnantItem, PathEntry, GlobalCliPackage, ProjectFolder};
 use crate::snapshot_engine::{self, SnapshotRecord, SnapshotDiff};
 use crate::settings::{self, AppSettings};
 use serde::Serialize;
@@ -655,6 +655,11 @@ pub async fn stop_install_tracking(
     }).await.map_err(|e| e.to_string())?
 }
 
+fn is_safe_uninstall_string(s: &str) -> bool {
+    let dangerous_chars = ['&', '|', '>', '<', ';', '`', '$', '\n', '\r'];
+    !s.chars().any(|c| dangerous_chars.contains(&c))
+}
+
 fn remnant_requires_admin(item: &RemnantItem) -> bool {
     if item.item_type == "RegistryKey" || item.item_type == "RegistryValue" {
         return item.path.to_uppercase().starts_with("HKLM");
@@ -1079,6 +1084,69 @@ pub async fn run_bulk_silent_uninstall(
     }).await.map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+pub async fn scan_project_directories(
+    app: AppHandle,
+    roots: Vec<String>,
+    folder_types: Vec<String>,
+) -> Result<Vec<ProjectFolder>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        scanner::scan_project_folders(&app, &roots, &folder_types)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn delete_project_directories(
+    app: AppHandle,
+    paths: Vec<String>,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut results = std::collections::HashMap::new();
+        let total = paths.len() as u32;
+
+        for (index, path_str) in paths.iter().enumerate() {
+            let current = (index + 1) as u32;
+            let _ = app.emit("project-delete-progress", ProgressPayload {
+                phase: "deleting".into(),
+                current,
+                total,
+                message: format!("Deleting project directory: {}", path_str),
+            });
+
+            match crate::locker::delete_file_with_escalation(path_str) {
+                crate::locker::DeleteResult::Deleted | crate::locker::DeleteResult::DeletedAfterUnlock | crate::locker::DeleteResult::ForceDeleted => {
+                    results.insert(path_str.clone(), "Deleted".to_string());
+                }
+                crate::locker::DeleteResult::ScheduledForReboot => {
+                    results.insert(path_str.clone(), "ScheduledForReboot".to_string());
+                }
+                crate::locker::DeleteResult::Failed(err) => {
+                    results.insert(path_str.clone(), format!("Failed: {}", err));
+                }
+            }
+        }
+
+        let _ = app.emit("project-delete-progress", ProgressPayload {
+            phase: "completed".into(),
+            current: total,
+            total,
+            message: "Project directories cleanup finished.".into(),
+        });
+
+        Ok(results)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn check_directory_exists(path: String) -> Result<bool, String> {
+    let p = std::path::Path::new(&path);
+    Ok(p.exists() && p.is_dir())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1138,3 +1206,4 @@ mod tests {
         assert_eq!(get_silent_uninstall_command(&app), Some("C:\\Program Files\\App\\custom_cleaner.exe".to_string()));
     }
 }
+

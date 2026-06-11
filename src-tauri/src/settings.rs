@@ -8,6 +8,8 @@ pub struct AppSettings {
     pub scan_level: String, // "safe" | "moderate" | "aggressive"
     pub backup_before_delete: bool,
     pub create_restore_point: bool,
+    #[serde(default)]
+    pub project_scan_paths: Vec<String>,
 }
 
 impl Default for AppSettings {
@@ -17,6 +19,7 @@ impl Default for AppSettings {
             scan_level: "safe".to_string(),
             backup_before_delete: true,
             create_restore_point: true,
+            project_scan_paths: Vec::new(),
         }
     }
 }
@@ -77,6 +80,7 @@ mod tests {
         assert_eq!(default_settings.scan_level, "safe");
         assert_eq!(default_settings.backup_before_delete, true);
         assert_eq!(default_settings.create_restore_point, true);
+        assert!(default_settings.project_scan_paths.is_empty());
     }
 
     #[test]
@@ -86,6 +90,7 @@ mod tests {
             scan_level: "aggressive".to_string(),
             backup_before_delete: false,
             create_restore_point: false,
+            project_scan_paths: vec!["D:\\Code".to_string()],
         };
         let serialized = serde_json::to_string(&settings).unwrap();
         let deserialized: AppSettings = serde_json::from_str(&serialized).unwrap();
@@ -94,5 +99,6 @@ mod tests {
         assert_eq!(deserialized.scan_level, "aggressive");
         assert_eq!(deserialized.backup_before_delete, false);
         assert_eq!(deserialized.create_restore_point, false);
+        assert_eq!(deserialized.project_scan_paths, vec!["D:\\Code".to_string()]);
     }
 }

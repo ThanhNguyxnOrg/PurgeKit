@@ -10,6 +10,7 @@
   let createRestorePoint = $state(true);
   let forceUnlock = $state(false);
   let isAdmin = $state(false);
+  let projectScanPaths = $state<string[]>([]);
 
   let isCheckingUpdates = $state(false);
   let updateMessage = $state<{ type: "success" | "error"; text: string } | null>(null);
@@ -66,12 +67,14 @@
         scan_level: string;
         backup_before_delete: boolean;
         create_restore_point: boolean;
+        project_scan_paths: string[];
       }>("get_settings");
       
       scanLevel = settings.scan_level;
       autoBackup = settings.backup_before_delete;
       createRestorePoint = settings.create_restore_point;
       forceUnlock = settings.enable_undocumented_force_unlock;
+      projectScanPaths = settings.project_scan_paths || [];
       
       isAdmin = await invoke<boolean>("check_is_admin");
     } catch (e) {
@@ -86,7 +89,8 @@
           enable_undocumented_force_unlock: forceUnlock,
           scan_level: scanLevel,
           backup_before_delete: autoBackup,
-          create_restore_point: createRestorePoint
+          create_restore_point: createRestorePoint,
+          project_scan_paths: projectScanPaths
         }
       });
       toast.show("Settings configuration saved successfully!", "success");
