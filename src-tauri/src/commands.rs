@@ -655,11 +655,6 @@ pub async fn stop_install_tracking(
     }).await.map_err(|e| e.to_string())?
 }
 
-fn is_safe_uninstall_string(s: &str) -> bool {
-    let dangerous_chars = ['&', '|', '>', '<', ';', '`', '$', '\n', '\r'];
-    !s.chars().any(|c| dangerous_chars.contains(&c))
-}
-
 fn remnant_requires_admin(item: &RemnantItem) -> bool {
     if item.item_type == "RegistryKey" || item.item_type == "RegistryValue" {
         return item.path.to_uppercase().starts_with("HKLM");
@@ -880,4 +875,266 @@ pub async fn delete_quarantine_item(id: String) -> Result<(), String> {
 
         Ok(())
     }).await.map_err(|e| e.to_string())?
+}
+
+pub fn get_silent_uninstall_command(app: &InstalledApp) -> Option<String> {
+    if app.is_uwp {
+        return app.uninstall_string.clone();
+    }
+
+    if let Some(ref quiet) = app.quiet_uninstall_string {
+        if !quiet.trim().is_empty() {
+            return Some(quiet.clone());
+        }
+    }
+
+    let uninst = app.uninstall_string.as_ref()?;
+    let uninst_lower = uninst.to_lowercase();
+
+    // 1. MSI Installer
+    if uninst_lower.contains("msiexec.exe") || (app.id.starts_with('{') && app.id.ends_with('}')) {
+        if let Some(guid_start) = uninst_lower.find("{") {
+            let guid = &uninst[guid_start..];
+            return Some(format!("MsiExec.exe /X{} /qn /norestart", guid));
+        }
+    }
+
+    // 2. Inno Setup (unins000.exe)
+    if uninst_lower.contains("unins000.exe") {
+        return Some(format!("{} /VERYSILENT /SUPPRESSMSGBOXES /NORESTART", uninst));
+    }
+
+    // 3. Nullsoft Installer (NSIS) (uninstall.exe / uninst.exe)
+    if uninst_lower.contains("uninstall.exe") || uninst_lower.contains("uninst.exe") {
+        return Some(format!("{} /S", uninst));
+    }
+
+    // 4. Advanced Installer
+    if uninst_lower.contains("setup.exe") {
+        return Some(format!("{} /qn", uninst));
+    }
+
+    Some(uninst.clone())
+}
+
+#[derive(Debug, Serialize, serde::Deserialize, Clone)]
+pub struct BulkUninstallProgress {
+    pub app_id: String,
+    pub app_name: String,
+    pub phase: String, // "uninstalling", "scanning_leftovers", "completed", "error"
+    pub current: u32,
+    pub total: u32,
+    pub message: String,
+}
+
+#[tauri::command]
+pub async fn run_bulk_silent_uninstall(
+    app: AppHandle,
+    app_ids: Vec<String>,
+    auto_purge: bool,
+) -> Result<Vec<RemnantItem>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut all_apps = scanner::scan_registry();
+        all_apps.extend(scanner::scan_uwp_apps());
+
+        let total = app_ids.len() as u32;
+        let mut all_remaining_remnants = Vec::new();
+
+        for (index, id) in app_ids.iter().enumerate() {
+            let current = (index + 1) as u32;
+            let target_app = match all_apps.iter().find(|a| &a.id == id) {
+                Some(a) => a,
+                None => {
+                    let _ = app.emit("bulk-uninstall-progress", BulkUninstallProgress {
+                        app_id: id.clone(),
+                        app_name: id.clone(),
+                        phase: "error".into(),
+                        current,
+                        total,
+                        message: format!("App with ID '{}' not found in registry.", id),
+                    });
+                    continue;
+                }
+            };
+
+            let app_name = target_app.display_name.clone();
+
+            let _ = app.emit("bulk-uninstall-progress", BulkUninstallProgress {
+                app_id: id.clone(),
+                app_name: app_name.clone(),
+                phase: "uninstalling".into(),
+                current,
+                total,
+                message: format!("Uninstalling {} silently...", app_name),
+            });
+
+            let uninstall_success = if target_app.is_uwp {
+                if let Some(ref uninst_str) = target_app.uninstall_string {
+                    let prefix = "powershell -NoProfile -Command \"Remove-AppxPackage -Package ";
+                    if uninst_str.starts_with(prefix) && uninst_str.ends_with('"') {
+                        let package_full = uninst_str[prefix.len()..uninst_str.len() - 1].to_string();
+                        if package_full.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '_' || c == '-') {
+                            let status = Command::new("powershell")
+                                .creation_flags(CREATE_NO_WINDOW)
+                                .args(&["-NoProfile", "-Command", &format!("Remove-AppxPackage -Package {}", package_full)])
+                                .status();
+                            status.map(|s| s.success()).unwrap_or(false)
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else if let Some(silent_cmd) = get_silent_uninstall_command(target_app) {
+                if is_safe_uninstall_string(&silent_cmd) {
+                    let status = Command::new("cmd")
+                        .creation_flags(CREATE_NO_WINDOW)
+                        .args(&["/C", &silent_cmd])
+                        .status();
+                    status.map(|s| s.success()).unwrap_or(false)
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            if !uninstall_success {
+                let _ = app.emit("bulk-uninstall-progress", BulkUninstallProgress {
+                    app_id: id.clone(),
+                    app_name: app_name.clone(),
+                    phase: "error".into(),
+                    current,
+                    total,
+                    message: format!("Failed to run silent uninstaller for {}.", app_name),
+                });
+            }
+
+            let _ = app.emit("bulk-uninstall-progress", BulkUninstallProgress {
+                app_id: id.clone(),
+                app_name: app_name.clone(),
+                phase: "scanning_leftovers".into(),
+                current,
+                total,
+                message: format!("Scanning remnants for {}...", app_name),
+            });
+
+            let remnants = scanner::scan_app_remnants(
+                &target_app.display_name,
+                target_app.publisher.as_deref(),
+                target_app.install_location.as_deref(),
+            );
+
+            if auto_purge {
+                let mut success = 0;
+                let mut fail = 0;
+                let mut remaining = Vec::new();
+
+                for item in remnants {
+                    if item.score >= 60 {
+                        match scanner::remnants::purge_remnant_item(&item) {
+                            Ok(_) => success += 1,
+                            Err(_) => {
+                                fail += 1;
+                                remaining.push(item);
+                            }
+                        }
+                    } else {
+                        remaining.push(item);
+                    }
+                }
+
+                all_remaining_remnants.extend(remaining);
+
+                let _ = app.emit("bulk-uninstall-progress", BulkUninstallProgress {
+                    app_id: id.clone(),
+                    app_name: app_name.clone(),
+                    phase: "completed".into(),
+                    current,
+                    total,
+                    message: format!(
+                        "Auto-purged {} items for {} (Failed: {}).",
+                        success, app_name, fail
+                    ),
+                });
+            } else {
+                all_remaining_remnants.extend(remnants);
+                let _ = app.emit("bulk-uninstall-progress", BulkUninstallProgress {
+                    app_id: id.clone(),
+                    app_name: app_name.clone(),
+                    phase: "completed".into(),
+                    current,
+                    total,
+                    message: format!("Uninstalled and collected remnants for {}.", app_name),
+                });
+            }
+        }
+
+        crate::broadcast::broadcast_all_system_changes();
+
+        Ok(all_remaining_remnants)
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_mock_app(id: &str, uninst: Option<&str>, quiet: Option<&str>, is_uwp: bool) -> InstalledApp {
+        InstalledApp {
+            id: id.to_string(),
+            display_name: "Test App".to_string(),
+            display_version: None,
+            publisher: None,
+            uninstall_string: uninst.map(|s| s.to_string()),
+            quiet_uninstall_string: quiet.map(|s| s.to_string()),
+            install_location: None,
+            install_date: None,
+            display_icon: None,
+            icon_base64: None,
+            estimated_size: None,
+            registry_path: "".to_string(),
+            hive: "".to_string(),
+            is_uwp,
+            is_verified: None,
+        }
+    }
+
+    #[test]
+    fn test_get_silent_uninstall_command() {
+        // 1. App registers quiet_uninstall_string
+        let app = create_mock_app("test", Some("uninstall.exe"), Some("uninstall.exe /quiet"), false);
+        assert_eq!(get_silent_uninstall_command(&app), Some("uninstall.exe /quiet".to_string()));
+
+        // 2. UWP App
+        let app = create_mock_app("test_uwp", Some("powershell Remove-AppxPackage"), None, true);
+        assert_eq!(get_silent_uninstall_command(&app), Some("powershell Remove-AppxPackage".to_string()));
+
+        // 3. MSI App with GUID in ID
+        let app = create_mock_app("{1234-5678}", Some("msiexec.exe /I{1234-5678}"), None, false);
+        assert_eq!(get_silent_uninstall_command(&app), Some("MsiExec.exe /X{1234-5678} /qn /norestart".to_string()));
+
+        // 4. MSI App with msiexec.exe in uninst string but GUID is elsewhere
+        let app = create_mock_app("some-msi", Some("C:\\Windows\\System32\\msiexec.exe /I {ABC-DEF}"), None, false);
+        assert_eq!(get_silent_uninstall_command(&app), Some("MsiExec.exe /X{ABC-DEF} /qn /norestart".to_string()));
+
+        // 5. Inno Setup
+        let app = create_mock_app("inno", Some("\"C:\\Program Files\\App\\unins000.exe\""), None, false);
+        assert_eq!(get_silent_uninstall_command(&app), Some("\"C:\\Program Files\\App\\unins000.exe\" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART".to_string()));
+
+        // 6. NSIS
+        let app = create_mock_app("nsis", Some("C:\\Program Files\\App\\uninstall.exe"), None, false);
+        assert_eq!(get_silent_uninstall_command(&app), Some("C:\\Program Files\\App\\uninstall.exe /S".to_string()));
+
+        // 7. Advanced Installer
+        let app = create_mock_app("adv", Some("C:\\Program Files\\App\\setup.exe"), None, false);
+        assert_eq!(get_silent_uninstall_command(&app), Some("C:\\Program Files\\App\\setup.exe /qn".to_string()));
+
+        // 8. Fallback
+        let app = create_mock_app("custom", Some("C:\\Program Files\\App\\custom_cleaner.exe"), None, false);
+        assert_eq!(get_silent_uninstall_command(&app), Some("C:\\Program Files\\App\\custom_cleaner.exe".to_string()));
+    }
 }

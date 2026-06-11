@@ -46,6 +46,40 @@
   let isPurging = $state(false);
   let purgeResult = $state<{ success: number; fail: number } | null>(null);
 
+  // App Checkbox Selection States
+  let selectedApps = $state<Record<string, boolean>>({});
+  let selectedAppsCount = $derived(Object.values(selectedApps).filter(Boolean).length);
+
+  function toggleSelectApp(id: string) {
+    selectedApps[id] = !selectedApps[id];
+  }
+
+  function toggleSelectAllApps(checked: boolean) {
+    if (checked) {
+      filteredApps.forEach(app => {
+        selectedApps[app.id] = true;
+      });
+    } else {
+      selectedApps = {};
+    }
+  }
+
+  function clearAppSelection() {
+    selectedApps = {};
+  }
+
+  // Bulk Uninstall States
+  let isBulkUninstalling = $state(false);
+  let bulkUninstallStep = $state<"idle" | "running" | "remnants_list" | "done">("idle");
+  let bulkUninstallLog = $state<string[]>([]);
+  let bulkAutoPurge = $state(true);
+  let bulkRemnants = $state<RemnantItem[]>([]);
+  let selectedBulkRemnants = $state<Record<string, boolean>>({});
+  let bulkUninstallCurrent = $state(0);
+  let bulkUninstallTotal = $state(0);
+  let bulkUninstallCurrentAppName = $state("");
+  let bulkUninstallStatusMessage = $state("");
+
   // Fetch apps from Tauri backend
   async function loadApps() {
     isLoading = true;
@@ -87,10 +121,25 @@
       }
     );
 
+    const unlistenBulk = listen<{ app_id: string; app_name: string; phase: string; current: number; total: number; message: string }>(
+      "bulk-uninstall-progress",
+      (event) => {
+        const payload = event.payload;
+        bulkUninstallCurrent = payload.current;
+        bulkUninstallTotal = payload.total;
+        bulkUninstallCurrentAppName = payload.app_name;
+        bulkUninstallStatusMessage = payload.message;
+        
+        const timestamp = new Date().toLocaleTimeString();
+        bulkUninstallLog = [...bulkUninstallLog, `[${timestamp}] [${payload.phase.toUpperCase()}] ${payload.message}`];
+      }
+    );
+
     return () => {
       unlistenScan.then((fn) => fn());
       unlistenRemnant.then((fn) => fn());
       unlistenPurge.then((fn) => fn());
+      unlistenBulk.then((fn) => fn());
     };
   });
 
@@ -273,6 +322,79 @@
     
     toast.show(`Successfully exported report to ${format.toUpperCase()}!`, "success");
   }
+
+  async function startBulkUninstall() {
+    const selectedIds = Object.entries(selectedApps).filter(([_, val]) => val).map(([id, _]) => id);
+    if (selectedIds.length === 0) return;
+    
+    isBulkUninstalling = true;
+    bulkUninstallStep = "running";
+    bulkUninstallLog = [`Initializing bulk silent uninstallation for ${selectedIds.length} application(s)...`];
+    bulkRemnants = [];
+    selectedBulkRemnants = {};
+    
+    try {
+      const remainingRemnants = await invoke<RemnantItem[]>("run_bulk_silent_uninstall", {
+        appIds: selectedIds,
+        autoPurge: bulkAutoPurge,
+      });
+      
+      bulkRemnants = remainingRemnants;
+      
+      bulkRemnants.forEach((item) => {
+        selectedBulkRemnants[item.path] = true;
+      });
+      
+      if (bulkRemnants.length > 0) {
+        bulkUninstallStep = "remnants_list";
+      } else {
+        bulkUninstallStep = "done";
+        toast.show("Bulk uninstallation and auto-purge completed! No remaining leftovers found.", "success");
+        clearAppSelection();
+        await loadApps();
+      }
+    } catch (e: any) {
+      console.error("Bulk silent uninstallation failed:", e);
+      toast.show(`Bulk uninstallation error: ${e.toString()}`, "error");
+      bulkUninstallStep = "done";
+    }
+  }
+
+  async function performBulkRemnantsPurge() {
+    const itemsToPurge = bulkRemnants.filter((r) => selectedBulkRemnants[r.path]);
+    if (itemsToPurge.length === 0) {
+      toast.show("No leftovers selected to clean. Closing.", "info");
+      bulkUninstallStep = "done";
+      clearAppSelection();
+      await loadApps();
+      return;
+    }
+    
+    isPurging = true;
+    try {
+      const result = await invoke<{ success: number; fail: number }>("purge_remnants", {
+        items: itemsToPurge,
+      });
+      toast.show(`Purge completed! Removed ${result.success} leftover items.`, "success");
+      bulkUninstallStep = "done";
+      clearAppSelection();
+      await loadApps();
+    } catch (e: any) {
+      toast.show(`Error purging leftovers: ${e.toString()}`, "error");
+    } finally {
+      isPurging = false;
+    }
+  }
+
+  function closeBulkModal() {
+    isBulkUninstalling = false;
+    bulkUninstallStep = "idle";
+    bulkUninstallLog = [];
+    bulkRemnants = [];
+    selectedBulkRemnants = {};
+    clearAppSelection();
+    loadApps();
+  }
 </script>
 
 <div class="flex-1 flex flex-col h-screen bg-app-bg text-text-primary relative">
@@ -383,6 +505,15 @@
         <table class="w-full text-left border-collapse">
           <thead>
             <tr class="bg-sidebar-bg border-b border-border-default text-xs font-semibold text-text-secondary uppercase tracking-wider font-mono">
+              <th class="py-4 px-5 w-10">
+                <input
+                  type="checkbox"
+                  aria-label="Select all applications"
+                  checked={selectedAppsCount === filteredApps.length && filteredApps.length > 0}
+                  onchange={(e) => toggleSelectAllApps(e.currentTarget.checked)}
+                  class="rounded border-border-default text-accent focus:ring-accent bg-surface-bg cursor-pointer w-4 h-4"
+                />
+              </th>
               <th class="py-4 px-5">App Name</th>
               <th class="py-4 px-5">Publisher</th>
               <th class="py-4 px-5">Version</th>
@@ -393,7 +524,16 @@
           </thead>
           <tbody class="divide-y divide-border-default text-sm">
             {#each filteredApps as app}
-              <tr class="hover:bg-elevated-bg/50 transition-colors duration-150 group">
+              <tr class="hover:bg-elevated-bg/50 transition-colors duration-150 group {selectedApps[app.id] ? 'bg-accent/5' : ''}">
+                <td class="py-4 px-5 w-10">
+                  <input
+                    type="checkbox"
+                    aria-label="Select application {app.display_name}"
+                    checked={!!selectedApps[app.id]}
+                    onchange={() => toggleSelectApp(app.id)}
+                    class="rounded border-border-default text-accent focus:ring-accent bg-surface-bg cursor-pointer w-4 h-4"
+                  />
+                </td>
                 <!-- Name -->
                 <td class="py-4 px-5 font-sans font-medium flex items-center gap-3">
                   <div class="w-8 h-8 rounded-lg border flex items-center justify-center overflow-hidden transition-colors shadow-sm bg-surface-bg border-border-default flex-shrink-0">
@@ -639,6 +779,261 @@
                 {/if}
               </button>
             </div>
+          </footer>
+        {/if}
+      </div>
+    </div>
+  {/if}
+
+  <!-- Floating Bulk Action Bar -->
+  {#if selectedAppsCount >= 2 && !isBulkUninstalling}
+    <div class="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 w-full max-w-2xl px-4 animate-slide-up">
+      <div class="backdrop-blur-md bg-sidebar-bg/95 border border-border-strong rounded-xl p-4 shadow-2xl flex items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 rounded-lg bg-accent/10 border border-accent/20 flex items-center justify-center text-accent">
+            <CheckSquare class="w-4.5 h-4.5" />
+          </div>
+          <div>
+            <h4 class="text-xs font-bold text-text-primary">{selectedAppsCount} apps selected</h4>
+            <p class="text-[10px] text-text-muted mt-0.5 font-sans">Ready for batch silent uninstallation</p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-4">
+          <!-- Auto-Purge Toggle -->
+          <label class="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              bind:checked={bulkAutoPurge}
+              class="rounded border-border-default text-accent focus:ring-accent bg-surface-bg cursor-pointer w-4 h-4"
+            />
+            <div class="flex flex-col">
+              <span class="text-xs font-semibold text-text-secondary">Auto-Purge Leftovers</span>
+              <span class="text-[9px] text-text-muted font-sans font-medium">Delete remnants silently</span>
+            </div>
+          </label>
+
+          <div class="h-8 w-[1px] bg-border-default"></div>
+
+          <div class="flex items-center gap-2">
+            <button
+              onclick={clearAppSelection}
+              class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-surface-bg border border-border-default hover:bg-elevated-bg text-text-secondary hover:text-text-primary transition-all active:scale-95 cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              onclick={startBulkUninstall}
+              class="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold bg-accent hover:bg-accent-hover text-white transition-all active:scale-95 shadow cursor-pointer"
+            >
+              <Trash2 class="w-3.5 h-3.5" />
+              Bulk Silent Uninstall
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Bulk Uninstall Modal -->
+  {#if isBulkUninstalling}
+    <div class="absolute inset-0 bg-app-bg/60 backdrop-blur-sm z-50 flex items-center justify-center p-6 animate-fade-in">
+      <div class="bg-sidebar-bg border border-border-strong w-full max-w-3xl rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] animate-scale-up">
+        <!-- Header -->
+        <header class="p-6 border-b border-border-default flex items-center justify-between">
+          <div>
+            <h3 class="text-base font-bold text-text-primary">
+              Bulk Silent Uninstallation
+            </h3>
+            <p class="text-xs text-text-muted mt-1">
+              {#if bulkUninstallStep === "running"}
+                Processing <b>{bulkUninstallCurrent}/{bulkUninstallTotal}</b>: <span class="text-accent">{bulkUninstallCurrentAppName}</span>
+              {:else if bulkUninstallStep === "remnants_list"}
+                Review remaining leftovers from batch uninstallation
+              {:else}
+                Batch operations completed
+              {/if}
+            </p>
+          </div>
+          {#if bulkUninstallStep === "done"}
+            <button
+              onclick={closeBulkModal}
+              class="p-1.5 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-text-secondary hover:text-text-primary transition-colors cursor-pointer"
+            >
+              <X class="w-4 h-4" />
+            </button>
+          {/if}
+        </header>
+
+        <!-- Progress Bar -->
+        {#if bulkUninstallStep === "running" && bulkUninstallTotal > 0}
+          <div class="h-1 bg-border-default w-full relative overflow-hidden">
+            <div
+              class="h-full bg-accent transition-all duration-300"
+              style="width: {(bulkUninstallCurrent / bulkUninstallTotal) * 100}%"
+            ></div>
+          </div>
+        {/if}
+
+        <!-- Body -->
+        <div class="flex-1 overflow-y-auto p-6 space-y-4">
+          {#if bulkUninstallStep === "running"}
+            <div class="flex flex-col gap-3">
+              <div class="flex items-center gap-3 p-3.5 rounded-lg bg-accent/5 border border-accent/10">
+                <RefreshCw class="w-5 h-5 text-accent animate-spin flex-shrink-0" />
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center justify-between text-xs font-semibold text-text-primary">
+                    <span>{bulkUninstallCurrentAppName}</span>
+                    <span class="font-mono text-accent">{bulkUninstallCurrent}/{bulkUninstallTotal}</span>
+                  </div>
+                  <p class="text-[11px] text-text-muted mt-1 truncate">{bulkUninstallStatusMessage}</p>
+                </div>
+              </div>
+
+              <!-- Console-style Log -->
+              <h4 class="text-xs font-bold text-text-secondary uppercase tracking-wider font-mono">Uninstall Log</h4>
+              <div class="bg-app-bg border border-border-default rounded-lg p-4 font-mono text-[11px] text-text-muted overflow-y-auto h-[250px] space-y-1.5 select-text">
+                {#each bulkUninstallLog as line}
+                  <div class="leading-relaxed border-b border-border-default/20 pb-1 last:border-b-0 break-all">{line}</div>
+                {/each}
+              </div>
+            </div>
+
+          {:else if bulkUninstallStep === "remnants_list"}
+            <!-- Residual Clean list -->
+            <div class="space-y-3">
+              <div class="p-4 rounded-lg bg-amber-950/20 border border-amber-900/40 text-amber-300 text-xs flex gap-3 leading-relaxed">
+                <span class="text-base">⚠️</span>
+                <div>
+                  <h4 class="font-bold">Remaining Leftovers Detected</h4>
+                  <p class="mt-1 text-text-muted">The uninstaller completed, but some confidence-level remnants couldn't be auto-purged (or auto-purge was disabled). Review and select below to clean them permanently.</p>
+                </div>
+              </div>
+
+              <!-- Selection Toolbar -->
+              <div class="flex items-center justify-between pb-1 text-xs border-b border-border-default">
+                <div class="flex gap-2">
+                  <button
+                    onclick={() => {
+                      bulkRemnants.forEach(r => selectedBulkRemnants[r.path] = true);
+                    }}
+                    class="text-accent hover:text-accent-hover font-semibold cursor-pointer"
+                  >
+                    Select All
+                  </button>
+                  <span class="text-border-default">|</span>
+                  <button
+                    onclick={() => {
+                      selectedBulkRemnants = {};
+                    }}
+                    class="text-text-secondary hover:text-text-primary font-semibold cursor-pointer"
+                  >
+                    Deselect All
+                  </button>
+                </div>
+                <span class="text-text-muted font-mono">
+                  {Object.values(selectedBulkRemnants).filter(Boolean).length} of {bulkRemnants.length} items selected
+                </span>
+              </div>
+
+              <!-- Remnants List -->
+              <div class="space-y-2 max-h-[280px] overflow-y-auto">
+                {#each bulkRemnants as item}
+                  <button
+                    onclick={() => selectedBulkRemnants[item.path] = !selectedBulkRemnants[item.path]}
+                    class="w-full flex items-start gap-3 p-3 rounded-lg border text-left transition-all hover:bg-elevated-bg/50 cursor-pointer
+                      {selectedBulkRemnants[item.path] ? 'bg-accent-subtle/30 border-accent/20' : 'bg-surface-bg border-border-default'}"
+                  >
+                    <div class="mt-0.5 text-accent flex-shrink-0">
+                      {#if selectedBulkRemnants[item.path]}
+                        <CheckSquare class="w-4 h-4 text-accent" />
+                      {:else}
+                        <Square class="w-4 h-4 text-text-muted" />
+                      {/if}
+                    </div>
+
+                    <div class="w-8 h-8 rounded bg-app-bg border border-border-default flex items-center justify-center text-text-secondary flex-shrink-0">
+                      {#if item.item_type === 'Directory'}
+                        <Folder class="w-4.5 h-4.5 text-warning" />
+                      {:else if item.item_type === 'RegistryKey'}
+                        <Database class="w-4.5 h-4.5 text-brand-purple" />
+                      {:else}
+                        <File class="w-4.5 h-4.5 text-info" />
+                      {/if}
+                    </div>
+
+                    <div class="flex-1 min-w-0">
+                      <span class="block text-xs font-mono font-medium text-text-primary break-all">{item.path}</span>
+                      <div class="flex flex-wrap items-center gap-2 mt-1">
+                        <span class="text-[9px] font-mono uppercase px-1 rounded bg-app-bg border border-border-default text-text-muted">
+                          {item.item_type}
+                        </span>
+                        {#if item.size > 0}
+                          <span class="text-[9px] font-mono text-text-muted">{formatSize(item.size)}</span>
+                        {/if}
+                        <span class="text-[9px] font-mono px-1 rounded border font-semibold
+                          {item.confidence === 'VeryHigh' ? 'bg-emerald-950/30 text-emerald-400 border-emerald-800/40' : ''}
+                          {item.confidence === 'High' ? 'bg-blue-950/30 text-blue-400 border-blue-800/40' : ''}
+                          {item.confidence === 'Medium' ? 'bg-amber-950/30 text-amber-400 border-amber-800/40' : ''}
+                          {item.confidence === 'Low' ? 'bg-rose-950/30 text-rose-400 border-rose-800/40' : ''}"
+                        >
+                          {item.confidence} ({item.score}%)
+                        </span>
+                      </div>
+                    </div>
+                  </button>
+                {/each}
+              </div>
+            </div>
+
+          {:else if bulkUninstallStep === "done"}
+            <div class="py-12 flex flex-col items-center justify-center text-center gap-4 animate-fade-in">
+              <div class="w-16 h-16 rounded-full bg-success/10 border border-success/20 flex items-center justify-center text-success shadow-inner">
+                <svg class="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+              </div>
+              <div>
+                <h4 class="text-base font-bold text-text-primary">All Applications Processed!</h4>
+                <p class="text-xs text-text-muted mt-2 max-w-sm leading-relaxed">
+                  Bulk uninstallation and leftovers cleaning completed successfully.
+                </p>
+              </div>
+            </div>
+          {/if}
+        </div>
+
+        <!-- Footer -->
+        {#if bulkUninstallStep === "remnants_list" || bulkUninstallStep === "done"}
+          <footer class="p-6 border-t border-border-default flex justify-end items-center gap-3 bg-sidebar-bg">
+            {#if bulkUninstallStep === "remnants_list"}
+              <button
+                onclick={() => bulkUninstallStep = "done"}
+                class="px-4 py-2 rounded-lg text-xs font-semibold bg-surface-bg border border-border-default hover:bg-elevated-bg text-text-secondary hover:text-text-primary transition-all cursor-pointer"
+              >
+                Skip Cleaning
+              </button>
+              <button
+                onclick={performBulkRemnantsPurge}
+                disabled={isPurging}
+                class="flex items-center gap-1.5 px-5 py-2 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+              >
+                {#if isPurging}
+                  <RefreshCw class="w-3.5 h-3.5 animate-spin" />
+                  Purging leftovers...
+                {:else}
+                  <Trash2 class="w-3.5 h-3.5" />
+                  Clean Leftover Traces
+                {/if}
+              </button>
+            {:else}
+              <button
+                onclick={closeBulkModal}
+                class="px-6 py-2 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white transition-all active:scale-95 cursor-pointer"
+              >
+                Done
+              </button>
+            {/if}
           </footer>
         {/if}
       </div>
