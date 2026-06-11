@@ -1,122 +1,146 @@
-# ✨ PurgeKit Detailed Features
+# ✨ PurgeKit Detailed Features Guide (v1.0.0)
 
-This document provides an in-depth breakdown of all core features available in **PurgeKit** and how they work under the hood.
+This document provides a comprehensive, developer-level breakdown of all core features available in **PurgeKit v1.0.0** and how they interact with the Windows operating system, filesystem, and registry under the hood.
 
 ---
 
 ## 🔎 1. Active Monitoring & System Snapshots
 
-One of the key improvements over tools like Geek Uninstaller is PurgeKit's ability to track installations dynamically.
+One of the standout features of PurgeKit is its ability to track application installations dynamically. Instead of relying solely on guesswork after an application is installed, PurgeKit allows you to capture the state of the OS before and after an installer runs, isolating every file and registry key modified.
 
 ### 📸 Registry & Filesystem Snapshotting
-Before running an installer, you can capture a **System Snapshot**:
-- **Registry Scan**: PurgeKit scans the hives `HKEY_CURRENT_USER\SOFTWARE` and `HKEY_LOCAL_MACHINE\SOFTWARE` (including `WOW6432Node`) recursively to catalog all keys and values.
-- **Filesystem Scan**: It scans common directory pathways like `%AppData%`, `%LocalAppData%`, `%ProgramData%`, and installation drives.
-- **JSON Serialization**: File/registry paths are compressed and stored in `snapshots/` in your local app data directory, indexed via a local **SQLite** database (`purgekit.db`).
+Before running an installer, you capture a **Baseline Snapshot**:
+* **Registry Crawler**: PurgeKit recursively crawls three primary registry hives:
+  - `HKEY_CURRENT_USER\SOFTWARE`
+  - `HKEY_LOCAL_MACHINE\SOFTWARE`
+  - `HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node` (representing 32-bit software installed on 64-bit Windows)
+  It logs all key paths, value names, types, and values.
+* **Filesystem Crawler**: It crawls major system and user directories:
+  - `%AppData%` (`C:\Users\<User>\AppData\Roaming`)
+  - `%LocalAppData%` (`C:\Users\<User>\AppData\Local`)
+  - `%ProgramData%` (`C:\ProgramData`)
+  - `%ProgramFiles%` (`C:\Program Files`)
+  - `%ProgramFiles(x86)%` (`C:\Program Files (x86)`)
+  It catalogs all file names, directory trees, file sizes, and creation dates.
+* **Storage & Indexing**: Snapshots are serialized into a compressed JSON structure and saved to `.gemini/antigravity-ide/snapshots/` in the user's AppData directory. Key metadata is stored in a local SQLite database (`purgekit.db`) for quick querying.
 
 ### ⚖️ Comparison (Diff) Engine
-After installing software, you take a second snapshot. The comparison engine runs a diff algorithm:
-- **New Registry Keys**: Keys/values present in the post-install snapshot but missing in the baseline.
-- **New Files/Folders**: Directories or files created during the installation.
-- This outputs a detailed list formatted like a Git diff (`+` additions) which can be permanently purged if you decide to uninstall the app.
+After the application installation completes, you take a **Post-Install Snapshot**. The diff engine performs a comparison between the two snapshots:
+* **Registry Additions**: Identifies keys or values present in the post-install snapshot that were absent in the baseline.
+* **Filesystem Additions**: Identifies files, binaries, or folder hierarchies created during the installation timeframe.
+* **Deep Clean Output**: The differences are presented in a Git-like diff format (marked with `+`). When you decide to uninstall the app, PurgeKit uses this diff list to target and remove every single addition, returning the system to its exact pre-installation state.
 
 ---
 
-## 🧹 2. Developer Tool Cache Purger
+## 🧹 2. Apps Manager & Bulk Silent Uninstaller
 
-Developer environments accumulate massive amounts of package caches, compiler logs, and build artifacts. PurgeKit auto-detects these tools and helps reclaim gigabytes of storage.
+PurgeKit provides a centralized management console to inspect, uninstall, and deep-clean standard desktop applications and Windows Store packages (UWP).
 
-### 📦 Supported Tools & Caches
-| Tool | Detection Method | Cache Paths |
-|---|---|---|
-| **Node.js / npm** | `node.exe`, `npm.cmd` on PATH | `%LocalAppData%\npm-cache` |
-| **Python / pip** | `python.exe`, `pip.exe` on PATH | `%LocalAppData%\pip\Cache` |
-| **Rust / cargo** | `rustup.exe`, `cargo.exe` on PATH | `%USERPROFILE%\.cargo` (registry/git caches) |
-| **Go** | `go.exe` on PATH | `%GOPATH%\pkg\mod`, `%GOCACHE%` |
-| **Ruby / gem** | `ruby.exe`, `gem.cmd` on PATH | `%USERPROFILE%\.gem` |
-| **.NET / nuget** | `dotnet.exe` on PATH | `%USERPROFILE%\.nuget\packages` |
-| **Java / Maven** | `java.exe`, `mvn.cmd` on PATH | `%USERPROFILE%\.m2\repository` |
-| **Docker** | `docker.exe` on PATH | `%ProgramData%\Docker` |
-| **pnpm** | `pnpm.cmd` on PATH | `%LocalAppData%\pnpm-store` |
-| **yarn** | `yarn.cmd` on PATH | `%LocalAppData%\Yarn\Cache` |
-| **Composer** | `composer.phar` on PATH | `%AppData%\Composer\cache` |
-| **Gradle** | `gradle.bat` on PATH | `%USERPROFILE%\.gradle\caches` |
+### 🔎 Hybrid Scanner
+PurgeKit queries two distinct sources to compile its application list:
+1. **Desktop Applications (Registry)**: Queries the standard Windows uninstallation registry paths to extract display names, publishers, versions, install locations, and uninstallation strings:
+   - `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall`
+   - `HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall`
+   - `HKLM\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall`
+2. **Windows Store Apps (UWP)**: Executes PowerShell bindings in the background (`Get-AppxPackage -AllUsers`) to retrieve installed package names, publishers, versions, installation directories, and package IDs.
+
+### 📦 Bulk Silent Uninstallation
+* **Command Extraction**: PurgeKit inspects the registry uninstallation string. If a silent or quiet uninstallation parameter is supported (e.g. `/S`, `/quiet`, `/qn`, `/uninstall`, `/silent`), it extracts and runs it.
+* **Execution Flow**: Spawns uninstallation processes sequentially. UWP packages are uninstalled using native PowerShell bindings (`Remove-AppxPackage`).
+* **Auto-Purge Leftovers**: Leverages regex heuristics to clean remnant directories and registry keys left behind by standard uninstallers, operating silently in the background.
 
 ---
 
-## 🍃 3. Deep Remnants Scanner
+## 🗂️ 3. Universal Project Sweeper
 
-When uninstalling standard apps, they often leave behind registry settings or user profiles. PurgeKit's heuristics look for:
-- **Filesystem Junk**: Orphaned folders containing the app name or publisher's name under `%AppData%`, `%LocalAppData%`, `%ProgramData%`, `%ProgramFiles%`, and `Documents`.
-- **Registry Junk**: Registry keys and subkeys matching the application's unique tokens under `HKCU\Software` and `HKLM\Software` (including `WOW6432Node`).
+A crucial module for software developers, the **Universal Project Sweeper** scans programming directories to find and purge space-consuming build artifacts, temporary caches, and dependency folders.
 
----
+### 🔍 Search Presets & Traversals
+You specify one or more workspace directories (e.g. `D:\Code`). PurgeKit performs a multi-threaded recursive directory search using `walkdir` to find matching targets:
+* **NodeJS**: `node_modules` (dependency directory)
+* **Rust**: `target` (cargo build output)
+* **Python**: `venv`, `.venv` (virtual environments)
+* **C# / .NET**: `bin`, `obj` (build output), `.vs` (Visual Studio user settings cache)
+* **Java / Gradle**: `build` (compiler output), `.gradle` (Gradle wrapper cache)
+* **SvelteKit**: `.svelte-kit` (Svelte compiler cache)
+* **Next.js**: `.next` (Next.js build files)
 
-## 🛠️ 4. PATH Environment Cleaner
-
-The Windows PATH variable easily gets cluttered with entries from deleted programs. PurgeKit scans PATH:
-- **Validation**: Resolves environment variables (like `%SystemRoot%`) and tests if the directory exists.
-- **Broken Detection**: Paths that point to non-existent folders are labeled `Broken`.
-- **Duplicate Detection**: Identifies duplicated path variables.
-- **Clean**: Updates the registry `PATH` string dynamically (`REG_EXPAND_SZ`) to remove chosen dead paths (System PATH removal requires administrator privileges).
-
----
-
-## 🗂️ 5. Universal Project Sweeper
-
-Locates and purges heavy build artifacts, temporary caches, and dependency folders in programming directories.
-
-### 🔍 Search Presets
-You configure one or more **Scan Roots** (e.g. `D:\Code`). The sweeper recursively crawls these directories using multi-threaded traversal via `walkdir` to locate folders matching specific preset names:
-* **NodeJS**: `node_modules`
-* **Rust**: `target`
-* **Python**: `venv`, `.venv`
-* **C# / .NET**: `bin`, `obj`, `.vs` (Visual Studio cache)
-* **Java / Gradle**: `build`, `.gradle`
-* **SvelteKit**: `.svelte-kit`
-* **Next.js**: `.next`
-
-### ⚡ Size & Modification Resolution
-For each match, PurgeKit calculates the exact directory size by summing all files recursively and retrieves the last modified timestamp to let you know which projects have been inactive. 
-It supports selective dọn dẹp (cleaning), allowing you to purge hundreds of gigabytes across multiple projects at once.
+### 📊 Size Calculation & Last Modified Time
+* **Size Accumulation**: For each matching folder, PurgeKit recursively sums the file sizes of all nested files rather than relying on folder metadata, ensuring 100% accuracy.
+* **Last Modified Timestamp**: Queries file metadata to determine the last time a file in the directory was written to. This helps identify stale or abandoned projects that have not been touched in months.
+* **Batch Purging**: Users can select all or specific directories and wipe them in a single, safe, multi-threaded operation.
 
 ---
 
-## 🐋 6. WSL2 Virtual Disk Shrinker
+## 🐋 4. WSL2 Virtual Disk Shrinker
 
-WSL2 virtual drives (`ext4.vhdx`) grow as you write files inside Linux. However, when you delete files in Linux, the Windows host does not automatically shrink the `.vhdx` file, leading to massive storage leakage.
+Windows Subsystem for Linux 2 (WSL2) uses virtual hard disks (`ext4.vhdx`) to store files. These files expand automatically as files are created inside Linux. However, when files are deleted in Linux, the Windows host does not automatically shrink the `.vhdx` file, causing the virtual drive to occupy gigabytes of unused space on the Windows host.
 
 ### 🛠️ DiskPart Compaction Sequence
-PurgeKit provides a safe interface to run VHDX compaction:
-1. **WSL Shutdown**: Executes `wsl --shutdown` to free file handles on the virtual drive.
-2. **DiskPart Script**: Generates a temporary `diskpart` script file containing:
+PurgeKit automates the complex manual compaction steps:
+1. **WSL Termination**: Shuts down the WSL subsystem via `wsl --shutdown` to release all file locks on the virtual drives.
+2. **Registry Lookup**: Queries `HKCU\Software\Microsoft\Windows\CurrentVersion\Lxss` to discover registered WSL distributions, their base directories, and `ext4.vhdx` pathways.
+3. **DiskPart Script Generation**: Creates a temporary DiskPart script with the following sequence:
    ```cmd
    select vdisk file="[PATH_TO_VHDX]"
    attach vdisk readonly
    compact vdisk
    detach vdisk
    ```
-3. **Execution & Live Logs**: Spawns `diskpart /s [script]` with Administrator privileges and streams logs line-by-line to Svelte's Terminal view.
+4. **Elevation & Terminal Log**: Spawns DiskPart as Administrator (`runas` command equivalent via Tauri) and hooks stdout/stderr, streaming logs line-by-line in real-time to a Svelte console view.
 
 ### 🍃 Auto-Shrink (Sparse Mode)
-In Windows 11, WSL2 supports the sparse drive property. PurgeKit lets you toggle this option by invoking:
+For Windows 11 systems, PurgeKit allows toggling the native sparse property:
 `wsl --manage [DistroName] --set-sparse true`
-This configures NTFS to mark the `.vhdx` file as sparse, allowing Windows to reclaim empty blocks automatically in the background.
+This enables Windows to automatically reclaim unused space from the WSL2 virtual disk in the background, eliminating the need for manual compactions.
 
 ---
 
-## 📦 7. Toolchain Version Sweeper
+## 📦 5. Toolchain Version Sweeper
 
-Node runtime managers (NVM, FNM) and Rust compilers (Rustup) save every compiler version you download, consuming gigabytes of system storage.
+Node runtime managers (NVM, FNM) and Rust compilers (Rustup) save every version you download, consuming gigabytes of storage over time.
 
 ### 🔎 Version Discovery
-PurgeKit scans the default storage directories for compiler versions:
-* **Rustup**: `%USERPROFILE%\.rustup\toolchains`
-* **NVM for Windows**: `%NVM_HOME%` or `%APPDATA%\nvm`
-* **FNM**: `%LOCALAPPDATA%\fnm\node-versions`, `%APPDATA%\fnm\node-versions`, or `%USERPROFILE%\.fnm\node-versions`.
+PurgeKit scans the default directories for these tools:
+* **Rustup**: `%USERPROFILE%\.rustup\toolchains` (contains compilers like `stable-x86_64-pc-windows-msvc`, `nightly-...`)
+* **NVM**: Reads `%NVM_HOME%` or defaults to `%APPDATA%\nvm`, listing directories prefixed with `v` followed by digits.
+* **FNM**: Scans candidates like `%LOCALAPPDATA%\fnm\node-versions`, `%APPDATA%\fnm\node-versions`, and `%USERPROFILE%\.fnm\node-versions`.
 
 ### 🛡️ Active Safety Lock
-To prevent breaking your active developer environment, PurgeKit executes shell commands `node -v` and `rustup show active-toolchain` to identify the version currently active in your environment, and displays a prominent warning in the UI if you attempt to delete them.
+Before allowing deletion, PurgeKit runs shell checks in the background (`node -v` and `rustup show active-toolchain`). The versions currently in use are marked with an **Active** badge in the UI. If a user attempts to delete an active compiler, a detailed modal prompt will trigger, requiring explicit confirmation.
 
-### 🐚 Uninstallation Fallback
-When you delete a compiler version, PurgeKit attempts the official uninstallation commands (`rustup toolchain uninstall [version]`, `nvm uninstall [version]`, or `fnm uninstall [version]`). If the commands fail or are missing from the system path, PurgeKit falls back to direct folder purging via Windows directory deletion APIs.
+### 🐚 Fallback Purging Strategy
+* **CLI Command**: Spawns `rustup toolchain uninstall`, `nvm uninstall`, or `fnm uninstall` to perform clean uninstallation.
+* **Purge Fallback**: If the runtime manager is missing from the environment PATH, PurgeKit bypasses the CLI and deletes the version directory directly using Windows directory deletion APIs.
+
+---
+
+## 🍃 6. Developer Tool Cache Purger
+
+Developer tool caches store downloaded libraries and logs. PurgeKit queries their default local directories:
+* **npm**: `%LocalAppData%\npm-cache`
+* **pip**: `%LocalAppData%\pip\Cache`
+* **cargo**: `%USERPROFILE%\.cargo\registry` (and `git` index)
+* **go**: `%GOPATH%\pkg\mod` and `%GOCACHE%`
+* **composer**: `%AppData%\Composer\cache`
+* **gradle**: `%USERPROFILE%\.gradle\caches`
+
+Caches are calculated and cleaned using direct directory deletion, freeing up valuable storage instantly.
+
+---
+
+## 🛠️ 7. PATH Environment Cleaner
+
+The Windows `PATH` environment variable accumulates dead links from deleted software, causing terminal command conflicts.
+
+### 🔎 Scans & Identifications
+PurgeKit retrieves PATH arrays from the Registry:
+* **User PATH**: `HKCU\Environment`
+* **System PATH**: `HKLM\System\CurrentControlSet\Control\Session Manager\Environment`
+Each entry is validated:
+* **Broken**: Resolves nested environment variables (e.g. `%USERPROFILE%`) and checks if the directory exists on disk.
+* **Duplicate**: Flags duplicate entries.
+* **Redundant (Overlap)**: Identifies if a subdirectory path is already covered by a parent directory in PATH.
+
+### 🔧 Repair & Propagation
+When paths are deleted, PurgeKit updates the Registry entries with `REG_EXPAND_SZ` types and broadcasts a Windows message `WM_SETTINGCHANGE` to all running processes so that the updated PATH is loaded immediately without requiring a system reboot.
