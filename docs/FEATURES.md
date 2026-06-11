@@ -1,6 +1,6 @@
 # ✨ PurgeKit Detailed Features
 
-This document provides a detailed breakdown of all core features available in **PurgeKit** and how they work under the hood.
+This document provides an in-depth breakdown of all core features available in **PurgeKit** and how they work under the hood.
 
 ---
 
@@ -59,3 +59,64 @@ The Windows PATH variable easily gets cluttered with entries from deleted progra
 - **Broken Detection**: Paths that point to non-existent folders are labeled `Broken`.
 - **Duplicate Detection**: Identifies duplicated path variables.
 - **Clean**: Updates the registry `PATH` string dynamically (`REG_EXPAND_SZ`) to remove chosen dead paths (System PATH removal requires administrator privileges).
+
+---
+
+## 🗂️ 5. Universal Project Sweeper
+
+Locates and purges heavy build artifacts, temporary caches, and dependency folders in programming directories.
+
+### 🔍 Search Presets
+You configure one or more **Scan Roots** (e.g. `D:\Code`). The sweeper recursively crawls these directories using multi-threaded traversal via `walkdir` to locate folders matching specific preset names:
+* **NodeJS**: `node_modules`
+* **Rust**: `target`
+* **Python**: `venv`, `.venv`
+* **C# / .NET**: `bin`, `obj`, `.vs` (Visual Studio cache)
+* **Java / Gradle**: `build`, `.gradle`
+* **SvelteKit**: `.svelte-kit`
+* **Next.js**: `.next`
+
+### ⚡ Size & Modification Resolution
+For each match, PurgeKit calculates the exact directory size by summing all files recursively and retrieves the last modified timestamp to let you know which projects have been inactive. 
+It supports selective dọn dẹp (cleaning), allowing you to purge hundreds of gigabytes across multiple projects at once.
+
+---
+
+## 🐋 6. WSL2 Virtual Disk Shrinker
+
+WSL2 virtual drives (`ext4.vhdx`) grow as you write files inside Linux. However, when you delete files in Linux, the Windows host does not automatically shrink the `.vhdx` file, leading to massive storage leakage.
+
+### 🛠️ DiskPart Compaction Sequence
+PurgeKit provides a safe interface to run VHDX compaction:
+1. **WSL Shutdown**: Executes `wsl --shutdown` to free file handles on the virtual drive.
+2. **DiskPart Script**: Generates a temporary `diskpart` script file containing:
+   ```cmd
+   select vdisk file="[PATH_TO_VHDX]"
+   attach vdisk readonly
+   compact vdisk
+   detach vdisk
+   ```
+3. **Execution & Live Logs**: Spawns `diskpart /s [script]` with Administrator privileges and streams logs line-by-line to Svelte's Terminal view.
+
+### 🍃 Auto-Shrink (Sparse Mode)
+In Windows 11, WSL2 supports the sparse drive property. PurgeKit lets you toggle this option by invoking:
+`wsl --manage [DistroName] --set-sparse true`
+This configures NTFS to mark the `.vhdx` file as sparse, allowing Windows to reclaim empty blocks automatically in the background.
+
+---
+
+## 📦 7. Toolchain Version Sweeper
+
+Node runtime managers (NVM, FNM) and Rust compilers (Rustup) save every compiler version you download, consuming gigabytes of system storage.
+
+### 🔎 Version Discovery
+PurgeKit scans the default storage directories for compiler versions:
+* **Rustup**: `%USERPROFILE%\.rustup\toolchains`
+* **NVM for Windows**: `%NVM_HOME%` or `%APPDATA%\nvm`
+* **FNM**: `%LOCALAPPDATA%\fnm\node-versions`, `%APPDATA%\fnm\node-versions`, or `%USERPROFILE%\.fnm\node-versions`.
+
+### 🛡️ Active Safety Lock
+To prevent breaking your active developer environment, PurgeKit executes shell commands `node -v` and `rustup show active-toolchain` to identify the version currently active in your environment, and displays a prominent warning in the UI if you attempt to delete them.
+
+### 🐚 Uninstallation Fallback
+When you delete a compiler version, PurgeKit attempts the official uninstallation commands (`rustup toolchain uninstall [version]`, `nvm uninstall [version]`, or `fnm uninstall [version]`). If the commands fail or are missing from the system path, PurgeKit falls back to direct folder purging via Windows directory deletion APIs.

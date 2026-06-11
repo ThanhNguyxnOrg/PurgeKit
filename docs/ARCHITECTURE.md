@@ -6,7 +6,7 @@ This document describes the design architecture, project structure, and communic
 
 ## 🏗️ Overview
 
-PurgeKit is structured as a **Tauri v2** application, separating the security-sensitive operations (Registry writes, file system deletes) in a **Rust backend** and presenting a reactive user interface in a **Svelte 5 frontend**.
+PurgeKit is structured as a **Tauri v2** application, separating security-sensitive operations (Registry writes, file system deletes, command execution) in a **Rust backend** and presenting a reactive user interface in a **Svelte 5 frontend**.
 
 ```mermaid
 graph TD
@@ -23,7 +23,7 @@ graph TD
 ```
 d:\Code\PurgeKit\
 ├── src-tauri\                 # 🦀 Rust Backend (Tauri)
-│   ├── Cargo.toml             # Dependencies (winreg, walkdir, rayon, rusqlite, serde)
+│   ├── Cargo.toml             # Dependencies (winreg, walkdir, rusqlite, serde)
 │   └── src\
 │       ├── main.rs            # Application bootstrap & CLI command parsing
 │       ├── lib.rs             # Tauri initialization, SQLite setups, and command bindings
@@ -33,10 +33,14 @@ d:\Code\PurgeKit\
 │       └── scanner\           # Registry, UWP, dev cache, remnants, and PATH logic
 │           ├── mod.rs         # Scanner entrypoint
 │           ├── registry.rs    # Scan 3 registry hives for installed desktop apps
+│           ├── msi.rs         # MSI Installer bindings and FFI calls
 │           ├── uwp.rs         # Scan Windows Store packages via Powershell
 │           ├── cli_dev.rs     # Search dev caches (npm, cargo, pip, go)
 │           ├── remnants.rs    # Recursive filesystem/registry orphaned search
-│           └── path_cleaner.rs# Windows user & system PATH editor
+│           ├── path_cleaner.rs# Windows user & system PATH editor
+│           ├── project_sweeper.rs # Traverses workspace roots for heavy build artifacts
+│           ├── wsl_shrinker.rs# Scans WSL distros and compacts VHDX disks using DiskPart
+│           └── toolchain_sweeper.rs # Quets and uninstalls Cargo, NVM, and FNM compiler versions
 ├── src\                       # ⚡ Frontend (Svelte 5 / TypeScript)
 │   ├── app.css                # CSS Variables, global scrollbar, animations
 │   ├── app.html               # Google Fonts imports
@@ -44,9 +48,11 @@ d:\Code\PurgeKit\
 │   │   ├── +layout.svelte     # Imports global CSS
 │   │   └── +page.svelte       # Main layout viewer and tab manager
 │   └── lib\components\        # Redesigned UI Views (Ember Orange theme)
-│       ├── Sidebar.svelte     # Hover-expanding sidebar (Option B)
+│       ├── Sidebar.svelte     # Hover-expanding sidebar
 │       ├── AppsTab.svelte     # Desktop/Store list + Deep remnants modal
-│       ├── DevToolsTab.svelte # Dev tool cache controller + bento statistics
+│       ├── DevToolsTab.svelte # Bento-style dev tool cache cleaner, global packages, and runtimes sweeper
+│       ├── ProjectSweeperTab.svelte # Traverses workspace paths for project build files dọn dẹp (cleaning)
+│       ├── WslShrinkerTab.svelte # WSL2 virtual drive manager and Diskpart compact console
 │       ├── SnapshotsTab.svelte # Snapshot baseline workflow stepper & diff viewer
 │       ├── PathCleanerTab.svelte # Path variable visualizer & health table
 │       └── SettingsTab.svelte # Scanner controls + Admin privilege status
@@ -91,3 +97,11 @@ The Svelte frontend communicates with Rust using Tauri's asynchronous `invoke` f
 | `delete_snapshot` | `id` | None | Deletes snapshot from SQLite and disk |
 | `get_path_entries` | None | `Vec<PathEntry>` | Reads User/System PATH environment variables |
 | `save_path_entries` | `remainingValues`, `scope` | None | Writes updated PATH list to Windows Registry |
+| `scan_project_directories` | `roots`, `folderTypes` | `Vec<ProjectFolder>` | Recursively searches workspace roots for heavy build paths |
+| `delete_project_directories`| `paths` | `Record<String, String>` | Batch deletes selected project directories |
+| `get_wsl_distros` | None | `Vec<WslDistroInfo>` | Fetches registered WSL distributions from Registry |
+| `compact_wsl_distro` | `name`, `vhdxPath` | `String` | Shuts down WSL and runs DiskPart compaction |
+| `set_wsl_distro_sparse_mode`| `name`, `sparse` | None | Configures WSL distribution VHDX drive as sparse |
+| `get_toolchain_versions` | None | `Vec<ToolchainVersion>` | Scans Rustup, NVM, and FNM compiler toolchain directories |
+| `delete_toolchain_version` | `manager`, `version`, `path`| None | Uninstalls toolchain version with folder-purge fallback |
+| `check_directory_exists` | `path` | `bool` | Checks if a folder path exists on Windows host |

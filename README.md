@@ -19,10 +19,10 @@
 </p>
 
 <p align="center">
-  <a href="#-key-features">Key Features</a> • 
+  <a href="#-core-modules">Core Modules</a> • 
   <a href="#-quick-start">Quick Start</a> • 
   <a href="#-cli-usage">CLI Usage</a> • 
-  <a href="#-architecture">Architecture</a> • 
+  <a href="#-documentation">Documentation</a> • 
   <a href="#-changelog">Changelog</a>
 </p>
 
@@ -30,38 +30,20 @@
 
 ## 💡 What is PurgeKit?
 
-**PurgeKit** is a professional-grade system uninstaller designed specifically for **Power Users** and **Developers** on Windows. 
-
-Unlike standard uninstallers (like Geek Uninstaller or Revo) which often miss deep developer cache folders, environment configuration files, or local CLI runtimes, PurgeKit aims for **100% trace-free removal** of software, compilers, virtual disks, and development packages.
+**PurgeKit** is a professional-grade system uninstaller designed specifically for **Power Users** and **Developers** on Windows. Unlike standard uninstallers (like Geek Uninstaller or Revo) which often miss deep developer cache folders, environment configuration files, or local CLI runtimes, PurgeKit aims for **100% trace-free removal** of software, compilers, virtual disks, and development packages.
 
 ---
 
-## 🔥 Key Features
+## 🔥 Core Modules
 
-### 1. 🧹 Apps Manager & Bulk Silent Uninstaller
-* **Hybrid Scanner**: Fetches both standard desktop apps (x86/x64) and Windows Store packages (UWP).
-* **Batch Operations**: Select multiple applications and uninstall them sequentially in a single click.
-* **Auto-Purge Leftovers**: Leverages regex-based rules to scan `%AppData%`, `%LocalAppData%`, `%ProgramData%`, and Windows Registry keys for orphaned leftovers.
+PurgeKit is structured around five main modules:
+1. **🧹 Apps Manager & Bulk Silent Uninstaller**: Fetch standard desktop apps and UWP Store packages, uninstall them in batch, and scan/purge leftovers in Registry & file systems.
+2. **🗂️ Universal Project Sweeper**: Recursively scans workspace directories for heavy compile folders and dependencies (`node_modules`, `target`, `venv`, `.vs`...) and purges them.
+3. **🐋 WSL2 Virtual Disk Shrinker**: Safely compacts bloating virtual drive files (`ext4.vhdx`) using Windows DiskPart and manages dynamic auto-shrink (Sparse mode).
+4. **🛠️ Toolchain Version Sweeper & Dev Caches**: Detects and uninstalls unused/obsolete versions of Rustup compiler toolchains and Node runtimes (NVM / FNM) with safe folder purging fallbacks.
+5. **🖥️ PATH Environment Cleaner**: Identifies and repairs broken, duplicate, or redundant path variables in Windows User & System environments.
 
-### 2. 🗂️ Universal Project Sweeper
-* **Developer Directory Cleaner**: Scan workspace roots (e.g., `D:\Code`, `D:\Projects`) for space-hogging build artifacts and dependencies.
-* **Supported Frameworks**: Includes NodeJS (`node_modules`), Rust (`target`), Python (`venv`, `.venv`), C#/.NET (`bin`, `obj`, `.vs`), Java/Gradle (`build`, `.gradle`), SvelteKit (`.svelte-kit`), and Next.js (`.next`).
-* **Batch Purging**: Calculates exact directory sizes and sweeps them safely with multi-threaded deletion.
-
-### 3. 🐋 WSL2 Virtual Disk Shrinker
-* **WSL VHDX Compaction**: Safely compacts bloating virtual drive files (`ext4.vhdx`) using Windows DiskPart with live logs streamed directly to a custom Terminal UI.
-* **Auto-Shrink (Sparse Mode)**: Toggle the NTFS `FILE_ATTRIBUTE_SPARSE_FILE` attribute on WSL virtual disks, allowing Windows to reclaim deleted blocks dynamically.
-* **Distro Manager**: Displays names, paths, sizes, and sparse properties of all registered WSL distributions.
-
-### 4. 🛠️ Toolchain Version Sweeper & Dev Caches
-* **Compiler Cleaner**: Detect and uninstall old/unused versions of Rustup compiler toolchains and Node.js runtimes (NVM and FNM).
-* **Safe Fallback**: Invokes the official CLI uninstall commands with direct directory purging fallback if they are missing from `PATH`.
-* **Safety Lock**: Prevents accidental deletion of the active compiler/runtime version currently set in the environment.
-* **Dev Cache Cleaner**: Drains caches for Cargo, npm, yarn, pip, bun, and VS Code.
-
-### 5. 🖥️ PATH Environment Cleaner
-* **Env Sanitizer**: Scans Windows User and System `PATH` variables for broken, duplicate, or redundant directory paths.
-* **One-Click Repair**: Clean up invalid paths to prevent environment conflicts.
+*For in-depth explanations of how each module works, see [✨ Detailed Feature Overview](docs/FEATURES.md).*
 
 ---
 
@@ -70,7 +52,7 @@ Unlike standard uninstallers (like Geek Uninstaller or Revo) which often miss de
 ### 📦 Prerequisites
 * **Rust Toolchain** (MSRV 1.77+)
 * **Node.js** (v18+)
-* **Windows 10 / 11** (with Administrator privileges for disk/registry changes)
+* **Windows 10 / 11** (Administrator privileges required for registry & DiskPart operations)
 
 ### 💻 Local Development
 ```bash
@@ -102,7 +84,7 @@ PurgeKit includes a standalone CLI executable for script automation and CI/CD pi
 # Clean an application and its remnants silently
 purgekit.exe clean "AppName"
 
-# Clean developer tool caches (e.g. cargo, npm)
+# Clean developer tool caches
 purgekit.exe cache prune --all
 purgekit.exe cache prune npm cargo
 
@@ -112,11 +94,12 @@ purgekit.exe wsl compact "Ubuntu"
 
 ---
 
-## 📐 Architecture
+## 📖 Documentation
 
-PurgeKit is split into two components:
-1. **Core Backend (Rust)**: High-performance registry scanning, Windows Win32 API interactions, filesystem traversal, process creation, and DiskPart scripting.
-2. **Frontend UI (Svelte 5 & CSS)**: A fully responsive, modern glassmorphism UI styled with Tailwind CSS, supporting horizontal table scrolling, auto-adapt layouts, and real-time logs streaming over IPC events.
+Detailed documents are located in the [`docs/`](docs/) directory:
+* [✨ Detailed Feature Overview](docs/FEATURES.md) - Learn how deep scanning, snapshot diffing, and WSL2 compaction work.
+* [📐 Architecture Design](docs/ARCHITECTURE.md) - Deep dive into Tauri IPC commands, Rust scanner modules, and SQLite schemas.
+* [🔧 Development Guide](docs/DEVELOPMENT.md) - Guidelines for setting up, writing commands, and adding new developer caches.
 
 ---
 
