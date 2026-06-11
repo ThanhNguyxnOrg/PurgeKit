@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
-  import { Camera, Calendar, ArrowRight, Shield, Layers, RefreshCw, Database, FileText, CheckCircle, Trash2, X } from "@lucide/svelte";
+  import { Camera, Calendar, ArrowRight, Shield, Layers, RefreshCw, Database, FileText, CheckCircle, Trash2, X, Play, Square, Activity } from "@lucide/svelte";
+  import { toast } from "../toast";
 
   interface SnapshotRecord {
     id: string;
@@ -23,6 +24,13 @@
   let newSnapshotName = $state("");
   let showCreateModal = $state(false);
 
+  // Install Tracking Monitor States
+  let isTracking = $state(false);
+  let showTrackModal = $state(false);
+  let trackSessionName = $state("");
+  let isStartingTrack = $state(false);
+  let isStoppingTrack = $state(false);
+
   // Compare States
   let selectedBefore = $state("");
   let selectedAfter = $state("");
@@ -35,6 +43,7 @@
       snapshots = await invoke<SnapshotRecord[]>("list_snapshots");
     } catch (e) {
       console.error("Failed to load snapshots:", e);
+      toast.show("Lỗi khi tải danh sách snapshots!", "error");
     } finally {
       isLoading = false;
     }
@@ -46,31 +55,66 @@
 
   async function handleCreateSnapshot() {
     if (newSnapshotName.trim() === "") {
-      alert("Please enter a name for the snapshot.");
+      toast.show("Vui lòng nhập tên cho snapshot.", "warning");
       return;
     }
 
     isCreating = true;
     try {
       await invoke("take_snapshot", { name: newSnapshotName });
+      toast.show(`Đã tạo snapshot "${newSnapshotName}" thành công!`, "success");
       newSnapshotName = "";
       showCreateModal = false;
       await loadSnapshots();
     } catch (e: any) {
-      alert(`Failed to create snapshot: ${e.toString()}`);
+      toast.show(`Không thể tạo snapshot: ${e.toString()}`, "error");
     } finally {
       isCreating = false;
     }
   }
 
+  async function handleStartTracking() {
+    if (trackSessionName.trim() === "") {
+      toast.show("Vui lòng nhập tên cho phiên cài đặt.", "warning");
+      return;
+    }
+
+    isStartingTrack = true;
+    try {
+      await invoke("start_install_tracking", { name: trackSessionName });
+      isTracking = true;
+      showTrackModal = false;
+      toast.show(`Bắt đầu theo dõi cài đặt cho "${trackSessionName}"!`, "success");
+    } catch (e: any) {
+      toast.show(`Không thể bắt đầu theo dõi: ${e.toString()}`, "error");
+    } finally {
+      isStartingTrack = false;
+    }
+  }
+
+  async function handleStopTracking() {
+    isStoppingTrack = true;
+    try {
+      const snap: any = await invoke("stop_install_tracking");
+      isTracking = false;
+      toast.show(`Đã hoàn tất theo dõi cài đặt cho "${trackSessionName}"! Đã tạo snapshot "${snap.name}".`, "success");
+      trackSessionName = "";
+      await loadSnapshots();
+    } catch (e: any) {
+      toast.show(`Lỗi khi dừng theo dõi cài đặt: ${e.toString()}`, "error");
+    } finally {
+      isStoppingTrack = false;
+    }
+  }
+
   async function handleCompare() {
     if (!selectedBefore || !selectedAfter) {
-      alert("Please select both a BEFORE and AFTER snapshot to compare.");
+      toast.show("Vui lòng chọn cả snapshot TRƯỚC và SAU để so sánh.", "warning");
       return;
     }
 
     if (selectedBefore === selectedAfter) {
-      alert("Please select two different snapshots to compare.");
+      toast.show("Vui lòng chọn hai snapshot khác nhau để so sánh.", "warning");
       return;
     }
 
@@ -81,24 +125,27 @@
         beforeId: selectedBefore,
         afterId: selectedAfter,
       });
+      toast.show("So sánh snapshots hoàn tất!", "success");
     } catch (e: any) {
-      alert(`Comparison failed: ${e.toString()}`);
+      toast.show(`So sánh thất bại: ${e.toString()}`, "error");
     } finally {
       isComparing = false;
     }
   }
 
   async function handleDeleteSnapshot(id: string) {
-    if (!confirm("Are you sure you want to delete this snapshot?")) return;
+    if (!confirm("Bạn có chắc chắn muốn xoá snapshot này không?")) return;
     try {
       await invoke("delete_snapshot", { id });
+      toast.show("Đã xoá snapshot thành công!", "success");
       if (selectedBefore === id) selectedBefore = "";
       if (selectedAfter === id) selectedAfter = "";
       await loadSnapshots();
     } catch (e: any) {
-      alert(`Failed to delete snapshot: ${e.toString()}`);
+      toast.show(`Không thể xoá snapshot: ${e.toString()}`, "error");
     }
   }
+
 
   function clearCompare() {
     selectedBefore = "";
@@ -123,6 +170,15 @@
     </div>
 
     <div class="flex items-center gap-2">
+      {#if !isTracking}
+        <button
+          onclick={() => showTrackModal = true}
+          class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-brand-purple hover:bg-purple-600 text-white active:scale-95 transition-all shadow"
+        >
+          <Activity class="w-3.5 h-3.5" />
+          Install Monitor
+        </button>
+      {/if}
       <button
         onclick={() => showCreateModal = true}
         class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white active:scale-95 transition-all shadow"
@@ -143,6 +199,32 @@
 
   <!-- Content Area -->
   <div class="flex-1 overflow-y-auto p-6 space-y-6">
+    {#if isTracking}
+      <div class="p-4 rounded-lg bg-red-950/20 border border-red-500/30 flex items-center justify-between animate-fade-in shadow-lg">
+        <div class="flex items-center gap-3">
+          <span class="relative flex h-3 w-3">
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+            <span class="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+          </span>
+          <span class="text-xs font-bold text-red-400">
+            Installation Monitor Active: Tracking changes for "{trackSessionName}"... Please run your software installer now.
+          </span>
+        </div>
+        <button
+          onclick={handleStopTracking}
+          disabled={isStoppingTrack}
+          class="px-4 py-2 rounded-lg text-xs font-bold bg-red-600 hover:bg-red-500 text-white active:scale-95 transition-all shadow flex items-center gap-1.5"
+        >
+          {#if isStoppingTrack}
+            <RefreshCw class="w-3.5 h-3.5 animate-spin" />
+            Saving Snapshot...
+          {:else}
+            <Square class="w-3 h-3 fill-white" />
+            Stop & Save Snapshot
+          {/if}
+        </button>
+      </div>
+    {/if}
     <!-- Notice Banner -->
     <div class="p-4 rounded-lg bg-surface-bg border border-border-default flex items-start gap-4">
       <div class="w-10 h-10 rounded-lg bg-app-bg border border-border-default flex items-center justify-center flex-shrink-0 text-accent">
@@ -407,6 +489,53 @@
               Scanning System...
             {:else}
               Scan Baseline
+            {/if}
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Install Tracking Modal Overlay -->
+  {#if showTrackModal}
+    <div class="fixed inset-0 z-50 bg-overlay-bg backdrop-blur-md flex items-center justify-center p-4">
+      <div class="bg-surface-bg border border-border-default w-full max-w-md rounded-lg flex flex-col shadow-2xl p-6 relative animate-scale-up duration-200">
+        <h3 class="text-base font-bold text-text-primary flex items-center gap-2">
+          <Activity class="w-5 h-5 text-brand-purple" />
+          Real-time Install Monitor
+        </h3>
+        <p class="text-xs text-text-muted mt-1">
+          PurgeKit will record a baseline and monitor file creations (using NTFS USN Journal) and registry entries in real-time.
+        </p>
+        
+        <div class="mt-4 space-y-2">
+          <label for="track-name-input" class="text-xs font-medium text-text-secondary">Application Name / Session ID</label>
+          <input
+            type="text"
+            id="track-name-input"
+            placeholder="e.g., Python 3.12, VS Code"
+            bind:value={trackSessionName}
+            class="w-full px-3.5 py-2 rounded-lg bg-app-bg border border-border-default focus:border-accent/50 outline-none text-xs font-sans text-text-primary transition-all placeholder:text-text-muted"
+          />
+        </div>
+
+        <div class="mt-6 flex justify-end gap-3">
+          <button
+            onclick={() => { showTrackModal = false; trackSessionName = ""; }}
+            class="px-4 py-2 rounded-lg text-xs font-semibold bg-surface-bg border border-border-default hover:bg-elevated-bg text-text-secondary hover:text-text-primary transition-all"
+          >
+            Cancel
+          </button>
+          <button
+            onclick={handleStartTracking}
+            disabled={isStartingTrack || !trackSessionName.trim()}
+            class="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold bg-brand-purple hover:bg-purple-600 text-white disabled:opacity-50 active:scale-95 transition-all shadow"
+          >
+            {#if isStartingTrack}
+              <RefreshCw class="w-3.5 h-3.5 animate-spin" />
+              Initializing...
+            {:else}
+              Start Tracking
             {/if}
           </button>
         </div>

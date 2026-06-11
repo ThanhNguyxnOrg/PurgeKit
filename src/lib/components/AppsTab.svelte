@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
+  import { listen } from "@tauri-apps/api/event";
   import { Search, RefreshCw, Trash2, Laptop, ShoppingBag, Eye, X, CheckSquare, Square, Folder, Database, File } from "@lucide/svelte";
+  import { toast } from "../toast";
 
   interface InstalledApp {
     id: string;
@@ -24,12 +26,16 @@
     path: string;
     item_type: string; // "File" | "Directory" | "RegistryKey"
     size: number;
+    confidence: string;
+    score: number;
   }
+
 
   let apps = $state<InstalledApp[]>([]);
   let searchQuery = $state("");
   let filterType = $state<"all" | "desktop" | "uwp">("all");
   let isLoading = $state(true);
+  let statusMessage = $state("Scanning system registry & packages...");
 
   // Remnants Modal States
   let activeApp = $state<InstalledApp | null>(null);
@@ -46,6 +52,7 @@
       apps = await invoke<InstalledApp[]>("get_installed_apps");
     } catch (e) {
       console.error("Failed to load apps:", e);
+      toast.show("Lỗi khi quét danh sách ứng dụng!", "error");
     } finally {
       isLoading = false;
     }
@@ -53,6 +60,37 @@
 
   onMount(() => {
     loadApps();
+
+    const unlistenScan = listen<{ phase: string; current: number; total: number; message: string }>(
+      "scan-progress",
+      (event) => {
+        statusMessage = event.payload.message;
+      }
+    );
+
+    const unlistenRemnant = listen<{ phase: string; current: number; total: number; message: string }>(
+      "remnant-scan-progress",
+      (event) => {
+        if (uninstallStep === "scanning") {
+          uninstallStatusText = event.payload.message;
+        }
+      }
+    );
+
+    const unlistenPurge = listen<{ phase: string; current: number; total: number; message: string }>(
+      "purge-progress",
+      (event) => {
+        if (isPurging) {
+          uninstallStatusText = event.payload.message;
+        }
+      }
+    );
+
+    return () => {
+      unlistenScan.then((fn) => fn());
+      unlistenRemnant.then((fn) => fn());
+      unlistenPurge.then((fn) => fn());
+    };
   });
 
   // Filter and search logic
@@ -110,7 +148,7 @@
         await invoke("run_uninstall_command", { uninstallString: app.uninstall_string });
       } catch (e: any) {
         console.error("Official uninstaller failed or was closed:", e);
-        // Continue to remnant scanning anyway since registry/files might be partially deleted
+        toast.show("Trình gỡ cài đặt chính thức trả về mã lỗi hoặc đã bị đóng.", "warning");
       }
     }
 
@@ -132,6 +170,7 @@
       });
     } catch (e) {
       console.error("Failed to scan remnants:", e);
+      toast.show("Lỗi khi quét các tệp tin thừa trên hệ thống!", "error");
     } finally {
       isScanningRemnants = false;
       uninstallStep = "remnants_list";
@@ -154,7 +193,7 @@
   async function performPurge() {
     const itemsToPurge = remnants.filter((r) => selectedRemnants[r.path]);
     if (itemsToPurge.length === 0) {
-      alert("Please select at least one remnant item to purge.");
+      toast.show("Vui lòng chọn ít nhất một thư mục/khoá thừa để dọn dẹp.", "warning");
       return;
     }
 
@@ -164,14 +203,16 @@
         items: itemsToPurge,
       });
       purgeResult = result;
+      toast.show(`Dọn dẹp hoàn tất! Đã xoá ${result.success} mục thừa thành công.`, "success");
       // Reload apps list
       await loadApps();
     } catch (e: any) {
-      alert(`Error purging remnants: ${e.toString()}`);
+      toast.show(`Lỗi khi dọn dẹp remnants: ${e.toString()}`, "error");
     } finally {
       isPurging = false;
     }
   }
+
 
   function closeRemnantsModal() {
     activeApp = null;
@@ -248,8 +289,9 @@
     {#if isLoading}
       <div class="flex flex-col items-center justify-center h-64 gap-3">
         <RefreshCw class="w-8 h-8 text-accent animate-spin" />
-        <span class="text-sm text-text-muted font-mono">Scanning system registry & packages...</span>
+        <span class="text-sm text-text-muted font-mono">{statusMessage}</span>
       </div>
+
     {:else if filteredApps.length === 0}
       <div class="flex flex-col items-center justify-center h-64 border border-dashed border-border-default rounded-lg bg-surface-bg/30">
         <span class="text-sm text-text-muted">No applications matched your search criteria.</span>
@@ -453,15 +495,24 @@
 
                     <div class="flex-1 min-w-0">
                       <span class="block text-xs font-mono font-medium text-text-primary break-all">{item.path}</span>
-                      <div class="flex items-center gap-2 mt-1">
+                      <div class="flex flex-wrap items-center gap-2 mt-1">
                         <span class="text-[9px] font-mono uppercase px-1 rounded bg-app-bg border border-border-default text-text-muted">
                           {item.item_type}
                         </span>
                         {#if item.size > 0}
                           <span class="text-[9px] font-mono text-text-muted">{formatSize(item.size)}</span>
                         {/if}
+                        <span class="text-[9px] font-mono px-1 rounded border font-semibold
+                          {item.confidence === 'VeryHigh' ? 'bg-emerald-950/30 text-emerald-400 border-emerald-800/40' : ''}
+                          {item.confidence === 'High' ? 'bg-blue-950/30 text-blue-400 border-blue-800/40' : ''}
+                          {item.confidence === 'Medium' ? 'bg-amber-950/30 text-amber-400 border-amber-800/40' : ''}
+                          {item.confidence === 'Low' ? 'bg-rose-950/30 text-rose-400 border-rose-800/40' : ''}"
+                        >
+                          {item.confidence} ({item.score}%)
+                        </span>
                       </div>
                     </div>
+
                   </button>
                 {/each}
               </div>

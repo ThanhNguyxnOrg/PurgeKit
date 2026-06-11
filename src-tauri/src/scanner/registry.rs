@@ -22,32 +22,90 @@ pub struct InstalledApp {
 
 pub fn scan_registry() -> Vec<InstalledApp> {
     let mut apps = Vec::new();
+    let unsub = r"Microsoft\Windows\CurrentVersion\Uninstall";
 
-    // 1. HKLM (64-bit & 32-bit apps on 32-bit OS)
+    // Hive 1: HKLM 64-bit system apps
     scan_uninstall_key(
         HKEY_LOCAL_MACHINE,
-        r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+        &format!(r"SOFTWARE\{}", unsub),
         "HKLM",
         &mut apps,
     );
 
-    // 2. HKLM WOW6432Node (32-bit apps on 64-bit OS)
+    // Hive 2: HKLM WOW6432Node (32-bit apps on 64-bit OS)
     scan_uninstall_key(
         HKEY_LOCAL_MACHINE,
-        r"SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
-        "HKLM_WOW6432",
+        &format!(r"SOFTWARE\Wow6432Node\{}", unsub),
+        "HKLM_WOW",
         &mut apps,
     );
 
-    // 3. HKCU (User specific apps)
+    // Hive 3: HKCU (User specific apps)
     scan_uninstall_key(
         HKEY_CURRENT_USER,
-        r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+        &format!(r"SOFTWARE\{}", unsub),
         "HKCU",
         &mut apps,
     );
 
+    // Hive 4: HKCU WOW6432Node (32-bit user apps)
+    scan_uninstall_key(
+        HKEY_CURRENT_USER,
+        &format!(r"SOFTWARE\Wow6432Node\{}", unsub),
+        "HKCU_WOW",
+        &mut apps,
+    );
+
+    // Hive 5: VirtualStore (32-bit legacy apps redirected by Windows)
+    scan_uninstall_key(
+        HKEY_CURRENT_USER,
+        &format!(r"Software\Classes\VirtualStore\MACHINE\SOFTWARE\{}", unsub),
+        "VirtualStore",
+        &mut apps,
+    );
+
+    // Hive 6: VirtualStore WOW6432Node variant
+    scan_uninstall_key(
+        HKEY_CURRENT_USER,
+        &format!(r"Software\Classes\VirtualStore\MACHINE\SOFTWARE\Wow6432Node\{}", unsub),
+        "VirtualStore_WOW",
+        &mut apps,
+    );
+
+    deduplicate_apps(&mut apps);
+
     apps
+}
+
+fn app_richness_score(app: &InstalledApp) -> u32 {
+    let mut score = 0;
+    if app.icon_base64.is_some() { score += 5; }
+    if app.uninstall_string.is_some() { score += 3; }
+    if app.install_location.is_some() { score += 2; }
+    if app.estimated_size.is_some() { score += 2; }
+    if app.display_version.is_some() { score += 1; }
+    score
+}
+
+fn deduplicate_apps(apps: &mut Vec<InstalledApp>) {
+    let mut unique_apps: Vec<InstalledApp> = Vec::new();
+    for app in apps.drain(..) {
+        let exists_idx = unique_apps.iter().position(|a| {
+            a.id == app.id || (a.display_name.to_lowercase() == app.display_name.to_lowercase() 
+                && a.publisher.as_ref().map(|p| p.to_lowercase()) == app.publisher.as_ref().map(|p| p.to_lowercase()))
+        });
+        if let Some(idx) = exists_idx {
+            let current = &unique_apps[idx];
+            let current_score = app_richness_score(current);
+            let new_score = app_richness_score(&app);
+            if new_score > current_score {
+                unique_apps[idx] = app;
+            }
+        } else {
+            unique_apps.push(app);
+        }
+    }
+    *apps = unique_apps;
 }
 
 fn scan_uninstall_key(
@@ -80,16 +138,9 @@ fn scan_uninstall_key(
             continue;
         }
 
-        // Avoid duplicates if already scanned
-        if apps.iter().any(|app| app.id == name && app.display_name == display_name) {
-            continue;
-        }
-
         // ParentName indicates it might be an update or subcomponent, often skipped or marked
         let parent_key_name: Option<String> = subkey.get_value("ParentKeyName").ok();
         if parent_key_name.is_some() {
-            // Keep updates for now or skip? Geek uninstaller hides updates by default. Let's skip subcomponents for simplicity or keep them.
-            // For now, let's keep them, but in front-end we can filter. Actually, skipping is better to keep list clean.
             continue;
         }
 
@@ -122,13 +173,10 @@ fn scan_uninstall_key(
             }
         }
         
+        // EstimatedSize: Windows stores KiB -> multiply by 1024 to get bytes
         let estimated_size: Option<u64> = subkey.get_value("EstimatedSize")
-            .map(|val: u32| val as u64)
-            .ok()
-            .or_else(|| {
-                // If EstimatedSize is missing, we could later calculate it from the InstallLocation size
-                None
-            });
+            .map(|val: u32| (val as u64) * 1024)
+            .ok();
 
         let registry_path = format!(r"{}\{}", subpath, name);
 
@@ -162,3 +210,4 @@ fn scan_uninstall_key(
         });
     }
 }
+

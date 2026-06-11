@@ -1,16 +1,49 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { Shield, HardDrive, Info, Heart, RefreshCw, Bug, ExternalLink, CheckCircle } from "@lucide/svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
+  import { invoke } from "@tauri-apps/api/core";
+  import { toast } from "../toast";
 
-  let scanLevel = $state("moderate");
+  let scanLevel = $state("safe");
   let autoBackup = $state(true);
-  let adminMode = $state("ask");
+  let forceUnlock = $state(false);
+  let isAdmin = $state(false);
 
   let isCheckingUpdates = $state(false);
   let updateMessage = $state<{ type: "success" | "error"; text: string } | null>(null);
 
-  function handleSave() {
-    alert("Settings saved successfully!");
+  async function loadSettings() {
+    try {
+      const settings = await invoke<{
+        enable_undocumented_force_unlock: boolean;
+        scan_level: string;
+        backup_before_delete: boolean;
+      }>("get_settings");
+      
+      scanLevel = settings.scan_level;
+      autoBackup = settings.backup_before_delete;
+      forceUnlock = settings.enable_undocumented_force_unlock;
+      
+      isAdmin = await invoke<boolean>("check_is_admin");
+    } catch (e) {
+      console.error("Failed to load settings:", e);
+    }
+  }
+
+  async function handleSave() {
+    try {
+      await invoke("save_settings", {
+        settings: {
+          enable_undocumented_force_unlock: forceUnlock,
+          scan_level: scanLevel,
+          backup_before_delete: autoBackup
+        }
+      });
+      toast.show("Cấu hình settings đã được lưu thành công!", "success");
+    } catch (e: any) {
+      toast.show(`Lỗi khi lưu settings: ${e.toString()}`, "error");
+    }
   }
 
   async function checkUpdates() {
@@ -30,9 +63,13 @@
       await openUrl("https://github.com/ThanhNguyxnOrg/PurgeKit/issues");
     } catch (e) {
       console.error(e);
-      alert("Failed to open browser. Please navigate to https://github.com/ThanhNguyxnOrg/PurgeKit/issues");
+      toast.show("Failed to open browser.", "error");
     }
   }
+
+  onMount(() => {
+    loadSettings();
+  });
 </script>
 
 <div class="flex-1 flex flex-col h-screen bg-app-bg text-text-primary">
@@ -65,7 +102,7 @@
           <select
             id="scan-level"
             bind:value={scanLevel}
-            class="px-3 py-1.5 rounded-lg bg-app-bg border border-border-default text-xs text-text-primary outline-none focus:border-accent/50"
+            class="px-3 py-1.5 rounded-lg bg-app-bg border border-border-default text-xs text-text-primary outline-none focus:border-accent/50 cursor-pointer"
           >
             <option value="safe">Safe (Only obvious paths)</option>
             <option value="moderate">Moderate (Standard match)</option>
@@ -83,7 +120,21 @@
             type="checkbox"
             id="auto-backup"
             bind:checked={autoBackup}
-            class="w-4 h-4 rounded accent-accent bg-app-bg border-border-default focus:ring-accent/30"
+            class="w-4 h-4 rounded accent-accent bg-app-bg border-border-default focus:ring-accent/30 cursor-pointer"
+          />
+        </div>
+
+        <!-- Hidden setting: force unlock -->
+        <div class="flex items-center justify-between py-3">
+          <div>
+            <label for="force-unlock" class="text-sm font-medium text-text-secondary">Force Unlock Files</label>
+            <span class="block text-xs text-text-muted mt-0.5">Enable undocumented force handle duplication to unlock locked remnants (Phase 4).</span>
+          </div>
+          <input
+            type="checkbox"
+            id="force-unlock"
+            bind:checked={forceUnlock}
+            class="w-4 h-4 rounded accent-accent bg-app-bg border-border-default focus:ring-accent/30 cursor-pointer"
           />
         </div>
       </div>
@@ -96,33 +147,23 @@
         Permissions & Elevation
       </h3>
 
-      <!-- Moved Privileged Mode status badge from sidebar -->
-      <div class="flex items-center gap-3 p-3.5 rounded-lg bg-success/10 border border-success/20 mb-4 animate-fade-in">
-        <Shield class="w-5 h-5 text-success" />
-        <div class="flex flex-col">
-          <span class="text-xs font-bold text-text-primary">Privileged Mode Active</span>
-          <span class="text-[10px] text-text-muted font-mono">Running as Administrator (Standard Admin)</span>
-        </div>
-      </div>
-
-      <div class="space-y-4">
-        <!-- Elevation behavior -->
-        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 py-3">
-          <div>
-            <label for="admin-mode" class="text-sm font-medium text-text-secondary">UAC Elevation Preference</label>
-            <span class="block text-xs text-text-muted mt-0.5">Choose how PurgeKit requests Admin permissions for advanced cleaning.</span>
+      {#if isAdmin}
+        <div class="flex items-center gap-3 p-3.5 rounded-lg bg-success/10 border border-success/20 mb-4 animate-fade-in">
+          <Shield class="w-5 h-5 text-success" />
+          <div class="flex flex-col">
+            <span class="text-xs font-bold text-text-primary">Privileged Mode Active</span>
+            <span class="text-[10px] text-text-muted font-mono">Running as Administrator (Standard Admin)</span>
           </div>
-          <select
-            id="admin-mode"
-            bind:value={adminMode}
-            class="px-3 py-1.5 rounded-lg bg-app-bg border border-border-default text-xs text-text-primary outline-none focus:border-accent/50"
-          >
-            <option value="always">Always run as Administrator</option>
-            <option value="ask">Elevate dynamically when needed</option>
-            <option value="never">Never elevate (Standard user mode)</option>
-          </select>
         </div>
-      </div>
+      {:else}
+        <div class="flex items-center gap-3 p-3.5 rounded-lg bg-danger/10 border border-danger/20 mb-4 animate-fade-in">
+          <Shield class="w-5 h-5 text-danger" />
+          <div class="flex flex-col">
+            <span class="text-xs font-bold text-text-primary">Standard Mode Active</span>
+            <span class="text-[10px] text-text-muted font-mono">Running as standard user. Some clean features will be restricted.</span>
+          </div>
+        </div>
+      {/if}
     </section>
 
     <!-- About Section -->
@@ -153,7 +194,7 @@
             <button
               onclick={checkUpdates}
               disabled={isCheckingUpdates}
-              class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white disabled:opacity-50 active:scale-95 transition-all shadow"
+              class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white disabled:opacity-50 active:scale-95 transition-all shadow cursor-pointer"
             >
               <RefreshCw class="w-3.5 h-3.5 {isCheckingUpdates ? 'animate-spin' : ''}" />
               {isCheckingUpdates ? 'Checking...' : 'Check for Updates'}
@@ -161,7 +202,7 @@
             
             <button
               onclick={reportIssue}
-              class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-bg border border-border-default hover:bg-elevated-bg active:scale-95 transition-all text-text-primary"
+              class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-bg border border-border-default hover:bg-elevated-bg active:scale-95 transition-all text-text-primary cursor-pointer"
             >
               <Bug class="w-3.5 h-3.5 text-text-muted" />
               Report Issue
@@ -183,10 +224,11 @@
     <div class="flex justify-end pt-4">
       <button
         onclick={handleSave}
-        class="px-5 py-2.5 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white active:scale-95 transition-all shadow"
+        class="px-5 py-2.5 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white active:scale-95 transition-all shadow cursor-pointer"
       >
         Save Changes
       </button>
     </div>
   </div>
 </div>
+

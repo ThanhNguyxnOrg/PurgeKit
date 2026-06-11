@@ -2,11 +2,16 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { ShieldAlert, Trash2, CheckCircle2, ShieldCheck, RefreshCw, FolderSearch, CheckSquare, Square } from "@lucide/svelte";
+  import { toast } from "../toast";
 
   interface PathEntry {
     value: string;
+    expanded: string;
     is_valid: boolean;
+    is_duplicate: boolean;
+    is_overlap: boolean;
     scope: string; // "User" | "System"
+    issue_reason: string;
   }
 
   let envPaths = $state<PathEntry[]>([]);
@@ -19,14 +24,15 @@
     selectedPaths = {};
     try {
       envPaths = await invoke<PathEntry[]>("get_path_entries");
-      // Select all broken paths by default for cleaning
+      // Select all broken, duplicate, or overlapping paths by default for cleaning
       envPaths.forEach((entry) => {
-        if (!entry.is_valid) {
+        if (!entry.is_valid || entry.is_duplicate || entry.is_overlap) {
           selectedPaths[entry.value] = true;
         }
       });
     } catch (e) {
       console.error("Failed to load PATH entries:", e);
+      toast.show("Lỗi khi tải danh sách PATH!", "error");
     } finally {
       isLoading = false;
     }
@@ -43,7 +49,7 @@
   async function cleanSelectedPaths() {
     const pathsToRemove = Object.keys(selectedPaths).filter((key) => selectedPaths[key]);
     if (pathsToRemove.length === 0) {
-      alert("No paths selected for cleaning.");
+      toast.show("Vui lòng chọn ít nhất một đường dẫn để dọn dẹp.", "warning");
       return;
     }
 
@@ -73,10 +79,10 @@
         });
       }
 
-      alert("Selected broken paths cleaned successfully!");
+      toast.show("Đã dọn dẹp các đường dẫn lỗi/trùng lặp thành công!", "success");
       await loadPaths();
     } catch (e: any) {
-      alert(`Clean failed: ${e.toString()}\n\nNote: Cleaning 'System' PATH requires running PurgeKit as Administrator.`);
+      toast.show(`Dọn dẹp thất bại: ${e.toString()}`, "error");
     } finally {
       isSaving = false;
     }
@@ -97,7 +103,7 @@
       <button
         onclick={cleanSelectedPaths}
         disabled={isSaving || Object.keys(selectedPaths).filter(k => selectedPaths[k]).length === 0}
-        class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-danger hover:bg-danger/80 disabled:opacity-50 active:scale-95 transition-all text-white shadow"
+        class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-danger hover:bg-danger/80 disabled:opacity-50 active:scale-95 transition-all text-white shadow cursor-pointer"
       >
         <Trash2 class="w-3.5 h-3.5" />
         Clean Selected Paths
@@ -106,7 +112,7 @@
       <button
         onclick={loadPaths}
         disabled={isLoading}
-        class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-bg border border-border-default hover:bg-elevated-bg active:scale-95 disabled:opacity-50 transition-all text-text-primary"
+        class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-bg border border-border-default hover:bg-elevated-bg active:scale-95 disabled:opacity-50 transition-all text-text-primary cursor-pointer"
       >
         <RefreshCw class="w-3.5 h-3.5 {isLoading ? 'animate-spin' : ''}" />
         Scan PATH
@@ -123,18 +129,18 @@
           <FolderSearch class="w-5 h-5 text-accent" />
         </div>
         <div>
-          <span class="block text-[10px] text-text-muted font-mono uppercase">Total Analyzed</span>
-          <span class="text-lg font-bold text-text-primary">{envPaths.length} Entries</span>
+          <span class="block text-[10px] text-text-muted font-mono uppercase">Tổng số phân tích</span>
+          <span class="text-lg font-bold text-text-primary">{envPaths.length} mục</span>
         </div>
       </div>
 
       <div class="p-4 rounded-lg bg-danger/10 border border-danger/20 flex items-center gap-3">
-        <div class="w-10 h-10 rounded-lg bg-danger/20 border border-danger/30 flex items-center justify-center text-danger animate-fade-in">
+        <div class="w-10 h-10 rounded-lg bg-danger/20 border border-danger/30 flex items-center justify-center text-danger animate-pulse flex-shrink-0">
           <ShieldAlert class="w-5 h-5 text-danger" />
         </div>
         <div>
-          <span class="block text-[10px] text-text-muted font-mono uppercase">Broken Paths</span>
-          <span class="text-lg font-bold text-danger">{envPaths.filter(p => !p.is_valid).length} Detected</span>
+          <span class="block text-[10px] text-text-muted font-mono uppercase">Vấn đề phát hiện</span>
+          <span class="text-lg font-bold text-danger">{envPaths.filter(p => !p.is_valid || p.is_duplicate || p.is_overlap).length} lỗi</span>
         </div>
       </div>
 
@@ -143,8 +149,8 @@
           <CheckCircle2 class="w-5 h-5 text-success" />
         </div>
         <div>
-          <span class="block text-[10px] text-text-muted font-mono uppercase">Healthy Paths</span>
-          <span class="text-lg font-bold text-success">{envPaths.filter(p => p.is_valid).length} Entries</span>
+          <span class="block text-[10px] text-text-muted font-mono uppercase">Đường dẫn sạch</span>
+          <span class="text-lg font-bold text-success">{envPaths.filter(p => p.is_valid && !p.is_duplicate && !p.is_overlap).length} mục</span>
         </div>
       </div>
     </div>
@@ -181,7 +187,7 @@
                   <td class="py-4 px-5">
                     <button
                       onclick={() => toggleSelection(p.value)}
-                      class="text-accent focus:outline-none flex-shrink-0"
+                      class="text-accent focus:outline-none flex-shrink-0 cursor-pointer"
                     >
                       {#if selectedPaths[p.value]}
                         <CheckSquare class="w-4.5 h-4.5 text-accent" />
@@ -192,7 +198,7 @@
                   </td>
                   
                   <!-- Scope -->
-                  <td class="py-4 px-5 font-mono text-xs">
+                  <td class="py-4 px-5 font-mono text-xs font-semibold">
                     <span class="px-2 py-0.5 rounded border
                       {p.scope === 'System' ? 'bg-surface-bg text-text-secondary border-border-default' : 'bg-brand-purple/10 text-brand-purple border-brand-purple/20'}">
                       {p.scope}
@@ -205,23 +211,33 @@
                   </td>
                   
                   <!-- Status -->
-                  <td class="py-4 px-5">
+                  <td class="py-4 px-5 font-mono text-xs">
                     {#if !p.is_valid}
-                      <span class="flex items-center gap-1.5 text-xs text-danger font-medium">
-                        <ShieldAlert class="w-4 h-4 flex-shrink-0 text-danger" />
-                        Broken
+                      <span class="px-2 py-0.5 rounded bg-danger/10 text-danger border border-danger/20 flex items-center gap-1 w-max">
+                        <ShieldAlert class="w-3.5 h-3.5" />
+                        Bị hỏng
+                      </span>
+                    {:else if p.is_duplicate}
+                      <span class="px-2 py-0.5 rounded bg-amber-950/30 text-amber-400 border border-amber-800/40 flex items-center gap-1 w-max">
+                        <ShieldAlert class="w-3.5 h-3.5" />
+                        Trùng lặp
+                      </span>
+                    {:else if p.is_overlap}
+                      <span class="px-2 py-0.5 rounded bg-blue-950/30 text-blue-400 border border-blue-800/40 flex items-center gap-1 w-max">
+                        <ShieldAlert class="w-3.5 h-3.5" />
+                        Lặp thừa
                       </span>
                     {:else}
-                      <span class="flex items-center gap-1.5 text-xs text-success font-medium">
-                        <CheckCircle2 class="w-4 h-4 flex-shrink-0 text-success" />
-                        Healthy
+                      <span class="px-2 py-0.5 rounded bg-emerald-950/30 text-emerald-400 border border-emerald-800/40 flex items-center gap-1 w-max">
+                        <CheckCircle2 class="w-3.5 h-3.5" />
+                        Hợp lệ
                       </span>
                     {/if}
                   </td>
                   
                   <!-- Reason -->
-                  <td class="py-4 px-5 text-xs text-text-muted font-sans">
-                    {!p.is_valid ? "Directory does not exist on this machine" : "Valid directory"}
+                  <td class="py-4 px-5 text-xs text-text-muted font-sans max-w-[200px] truncate" title={p.issue_reason}>
+                    {p.issue_reason}
                   </td>
                 </tr>
               {/each}

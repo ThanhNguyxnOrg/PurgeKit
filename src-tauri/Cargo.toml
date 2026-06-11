@@ -30,4 +30,24 @@ anyhow = "1.0"
 thiserror = "2.0"
 uuid = { version = "1", features = ["v4"] }
 windows-icons = "0.3.0"
+chrono = "0.4"
+base64 = "0.22"
+is_elevated = "0.1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_ApplicationInstallationAndServicing",           # MSI FFI
+    "Win32_System_RestartManager",       # Locked file unlock
+    "Win32_Storage_FileSystem",          # MoveFileExW
+    "Win32_UI_WindowsAndMessaging",      # WM_SETTINGCHANGE
+    "Win32_UI_Shell",                    # SHChangeNotify
+    "Win32_System_Threading",            # Handle duplication
+    "Win32_System_Registry",             # RegNotifyChangeKeyValue
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
+    "Win32_System_LibraryLoader",
+    "Win32_Security",
+] }
+
 

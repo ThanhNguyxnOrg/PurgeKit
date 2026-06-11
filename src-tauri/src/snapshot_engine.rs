@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+
 use winreg::enums::*;
 use winreg::RegKey;
 use rusqlite::Connection;
@@ -35,14 +35,14 @@ pub struct SnapshotDiff {
 
 pub fn create_snapshot(name: &str) -> Result<SnapshotRecord, String> {
     let id = Uuid::new_v4().to_string();
-    let created_at = format!("{:?}", SystemTime::now());
+    let created_at = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-    // 1. Scan Registry Keys (depth-limited to keep it fast)
+    // 1. Scan Registry Keys (depth 5 as specified in plan)
     let mut registry_keys = Vec::new();
-    let _ = scan_registry_keys_recursive(HKEY_CURRENT_USER, "HKCU", "SOFTWARE", 0, 3, &mut registry_keys);
-    let _ = scan_registry_keys_recursive(HKEY_LOCAL_MACHINE, "HKLM", "SOFTWARE", 0, 3, &mut registry_keys);
+    let _ = scan_registry_keys_recursive(HKEY_CURRENT_USER, "HKCU", "SOFTWARE", 0, 5, &mut registry_keys);
+    let _ = scan_registry_keys_recursive(HKEY_LOCAL_MACHINE, "HKLM", "SOFTWARE", 0, 5, &mut registry_keys);
 
-    // 2. Scan Filesystem (focus on AppData, ProgramData, ProgramFiles)
+    // 2. Scan Filesystem (focus on AppData, ProgramData, ProgramFiles, depth 3)
     let mut files = Vec::new();
     let dirs = vec![
         env::var_os("APPDATA").map(PathBuf::from),
@@ -126,6 +126,28 @@ pub fn list_snapshots() -> Result<Vec<SnapshotRecord>, String> {
     Ok(list)
 }
 
+pub fn delete_snapshot_by_id(id: &str) -> Result<(), String> {
+    let db_path = get_db_path();
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    
+    // Find file path to delete JSON
+    let mut stmt = conn.prepare("SELECT data_file_path FROM snapshots WHERE id = ?1")
+        .map_err(|e| e.to_string())?;
+    let data_file_path: String = stmt.query_row([id], |row| row.get(0))
+        .map_err(|e| format!("Snapshot not found: {}", e))?;
+    
+    let path = Path::new(&data_file_path);
+    if path.exists() {
+        let _ = fs::remove_file(path);
+    }
+    
+    // Delete from DB
+    conn.execute("DELETE FROM snapshots WHERE id = ?1", [id])
+        .map_err(|e| e.to_string())?;
+    
+    Ok(())
+}
+
 pub fn compare_snapshots_by_id(before_id: &str, after_id: &str) -> Result<SnapshotDiff, String> {
     let before_data = load_snapshot_data(before_id)?;
     let after_data = load_snapshot_data(after_id)?;
@@ -133,16 +155,20 @@ pub fn compare_snapshots_by_id(before_id: &str, after_id: &str) -> Result<Snapsh
     let mut new_registry_keys = Vec::new();
     let mut new_files = Vec::new();
 
+    use std::collections::HashSet;
+    let before_registry: HashSet<&String> = before_data.registry_keys.iter().collect();
+    let before_files: HashSet<&String> = before_data.files.iter().collect();
+
     // Registry Diff
     for key in &after_data.registry_keys {
-        if !before_data.registry_keys.contains(key) {
+        if !before_registry.contains(key) {
             new_registry_keys.push(key.clone());
         }
     }
 
     // Filesystem Diff
     for file in &after_data.files {
-        if !before_data.files.contains(file) {
+        if !before_files.contains(file) {
             new_files.push(file.clone());
         }
     }
@@ -172,7 +198,7 @@ fn load_snapshot_data(id: &str) -> Result<SnapshotData, String> {
     Ok(data)
 }
 
-fn scan_registry_keys_recursive(
+pub fn scan_registry_keys_recursive(
     hkey: winreg::HKEY,
     hive_name: &str,
     subpath: &str,
@@ -210,3 +236,4 @@ fn scan_files_recursive(dir: &Path, max_depth: usize, files: &mut Vec<String>) {
         files.push(entry.path().to_string_lossy().to_string());
     }
 }
+

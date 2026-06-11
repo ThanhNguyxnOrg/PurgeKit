@@ -582,8 +582,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
  "iana-time-zone",
+ "js-sys",
  "num-traits",
  "serde",
+ "wasm-bindgen",
  "windows-link 0.2.1",
 ]
 
@@ -2051,6 +2053,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "is_elevated"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5299060ff5db63e788015dcb9525ad9b84f4fd9717ed2cbdeba5018cbf42f9b5"
+dependencies = [
+ "winapi",
+]
+
+[[package]]
 name = "itertools"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3101,6 +3112,9 @@ name = "purgekit"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
+ "chrono",
+ "is_elevated",
  "rayon",
  "rusqlite",
  "serde",
@@ -3112,6 +3126,7 @@ dependencies = [
  "uuid",
  "walkdir",
  "windows-icons",
+ "windows-sys 0.59.0",
  "winreg 0.56.0",
 ]
 

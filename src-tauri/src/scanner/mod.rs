@@ -3,6 +3,10 @@ pub mod uwp;
 pub mod cli_dev;
 pub mod remnants;
 pub mod path_cleaner;
+pub mod com_purger;
+pub mod autoruns;
+pub mod msi;
+
 
 pub use registry::{InstalledApp, scan_registry};
 pub use uwp::scan_uwp_apps;

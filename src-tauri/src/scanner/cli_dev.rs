@@ -22,14 +22,20 @@ pub struct DevToolInfo {
 pub fn scan_dev_tools() -> Vec<DevToolInfo> {
     let mut tools = Vec::new();
 
-    // List of dev tools to check
+    // List of 12 dev tools to check
     let tool_checks = vec![
         ("npm", vec!["--version"], "npm cache clean --force"),
         ("pnpm", vec!["--version"], "pnpm store prune"),
         ("yarn", vec!["--version"], "yarn cache clean"),
         ("pip", vec!["--version"], "pip cache purge"),
-        ("cargo", vec!["--version"], "cargo clean"), // We can handle cargo specific cleaning manually too
+        ("cargo", vec!["--version"], "cargo clean"),
         ("go", vec!["version"], "go clean -cache -modcache"),
+        ("bun", vec!["--version"], "bun pm clean"),
+        ("deno", vec!["--version"], "deno clean"),
+        ("gradle", vec!["--version"], "gradle clean"), // Handled manually
+        ("maven", vec!["--version"], "mvn clean"), // Handled manually
+        ("dotnet", vec!["--version"], "dotnet nuget locals all --clear"),
+        ("docker", vec!["--version"], "docker system prune -f"),
     ];
 
     for (name, args, clean_cmd) in tool_checks {
@@ -43,8 +49,11 @@ pub fn scan_dev_tools() -> Vec<DevToolInfo> {
             clean_command: Some(clean_cmd.to_string()),
         };
 
-        // Try to execute the tool to check if it exists and get version
-        if let Ok(output) = Command::new(name)
+        // Check if the command is executable
+        // For maven on Windows, the command is 'mvn'
+        let cmd_to_run = if name == "maven" { "mvn" } else { name };
+
+        if let Ok(output) = Command::new(cmd_to_run)
             .creation_flags(CREATE_NO_WINDOW)
             .args(&args)
             .output()
@@ -54,10 +63,10 @@ pub fn scan_dev_tools() -> Vec<DevToolInfo> {
                 let version_str = String::from_utf8_lossy(&output.stdout);
                 info.version = Some(version_str.trim().to_string());
                 
-                // Get command path (like `where npm` on Windows)
+                // Find executable location
                 if let Ok(where_output) = Command::new("where")
                     .creation_flags(CREATE_NO_WINDOW)
-                    .arg(name)
+                    .arg(cmd_to_run)
                     .output()
                 {
                     if where_output.status.success() {
@@ -77,7 +86,6 @@ pub fn scan_dev_tools() -> Vec<DevToolInfo> {
             if let Some(ref path) = cache_path {
                 if path.exists() {
                     info.cache_path = Some(path.to_string_lossy().to_string());
-                    // Compute size in a separate step or synchronously (we'll do sync here since it's simple)
                     info.cache_size = Some(calculate_dir_size(path));
                 }
             }
@@ -95,38 +103,23 @@ fn get_cache_path(name: &str) -> Option<PathBuf> {
     let userprofile = env::var_os("USERPROFILE").map(PathBuf::from);
 
     match name {
-        "npm" => {
-            // Default npm cache: %AppData%\npm-cache
-            appdata.map(|p| p.join("npm-cache"))
-        }
-        "pnpm" => {
-            // Default pnpm cache: %LocalAppData%\pnpm-store or %LocalAppData%\pnpm\store
-            localappdata.clone().map(|p| p.join("pnpm").join("store"))
-                .or_else(|| localappdata.map(|p| p.join("pnpm-store")))
-        }
-        "yarn" => {
-            // Default yarn cache: %LocalAppData%\Yarn\Cache
-            localappdata.map(|p| p.join("Yarn").join("Cache"))
-        }
-        "pip" => {
-            // Default pip cache: %LocalAppData%\pip\Cache
-            localappdata.map(|p| p.join("pip").join("cache"))
-        }
-        "cargo" => {
-            // Default cargo registry cache: %UserProfile%\.cargo\registry\cache
-            userprofile.map(|p| p.join(".cargo"))
-        }
-        "go" => {
-            // Default go build cache: %LocalAppData%\go-build
-            localappdata.map(|p| p.join("go-build"))
-        }
+        "npm" => appdata.map(|p| p.join("npm-cache")),
+        "pnpm" => localappdata.clone().map(|p| p.join("pnpm").join("store"))
+            .or_else(|| localappdata.map(|p| p.join("pnpm-store"))),
+        "yarn" => localappdata.map(|p| p.join("Yarn").join("Cache")),
+        "pip" => localappdata.map(|p| p.join("pip").join("cache")),
+        "cargo" => userprofile.map(|p| p.join(".cargo")),
+        "go" => localappdata.map(|p| p.join("go-build")),
+        "bun" => localappdata.map(|p| p.join("bun").join("install").join("cache")),
+        "deno" => localappdata.map(|p| p.join("deno")),
+        "gradle" => userprofile.clone().map(|p| p.join(".gradle").join("caches")),
+        "maven" => userprofile.map(|p| p.join(".m2").join("repository")),
+        "dotnet" => userprofile.map(|p| p.join(".nuget").join("packages")),
         _ => None,
     }
 }
 
 pub fn calculate_dir_size(path: &Path) -> u64 {
-    // Basic walk to count file sizes.
-    // In production, we can optimize this with rayon, but walkdir is fast enough for standard caches.
     let mut total_size = 0;
     for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
         if entry.file_type().is_file() {
@@ -168,12 +161,10 @@ pub fn scan_global_npm_packages() -> Vec<GlobalCliPackage> {
                     None => continue,
                 };
                 
-                // Skip special folders like .bin
                 if name.starts_with('.') {
                     continue;
                 }
                 
-                // If it is a scoped package directory (starts with @)
                 if name.starts_with('@') {
                     if let Ok(sub_entries) = fs::read_dir(&path) {
                         for sub_entry in sub_entries.filter_map(|e| e.ok()) {
@@ -230,7 +221,6 @@ fn parse_npm_package_info(path: &Path, name: &str) -> GlobalCliPackage {
 }
 
 pub fn uninstall_global_npm_package(name: &str) -> Result<(), String> {
-    // Run npm uninstall -g <name>
     let output = Command::new("cmd")
         .creation_flags(CREATE_NO_WINDOW)
         .args(&["/C", &format!("npm uninstall -g {}", name)])
@@ -238,7 +228,6 @@ pub fn uninstall_global_npm_package(name: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to execute npm uninstall: {}", e))?;
         
     if !output.status.success() {
-        // Fallback: manually delete the folder from node_modules if npm uninstall fails or is slow
         let appdata = env::var_os("APPDATA").map(PathBuf::from)
             .ok_or_else(|| "APPDATA environment variable not found".to_string())?;
         let package_path = appdata.join("npm").join("node_modules").join(name);
@@ -248,7 +237,6 @@ pub fn uninstall_global_npm_package(name: &str) -> Result<(), String> {
                 .map_err(|e| format!("Failed to manually remove package folder: {}", e))?;
         }
         
-        // Also remove possible bin files in %APPDATA%\npm\
         let bin_name = if name.contains('/') {
             name.split('/').last().unwrap_or(name)
         } else {
