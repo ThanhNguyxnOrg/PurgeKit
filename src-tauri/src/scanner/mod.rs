@@ -8,6 +8,7 @@ pub mod autoruns;
 pub mod msi;
 pub mod project_sweeper;
 pub mod wsl_shrinker;
+pub mod toolchain_sweeper;
 
 
 pub use registry::{InstalledApp, scan_registry};
@@ -17,6 +18,7 @@ pub use remnants::{RemnantItem, scan_app_remnants, purge_all_remnants};
 pub use path_cleaner::{PathEntry, get_path_entries, set_path_entries};
 pub use project_sweeper::{ProjectFolder, scan_project_folders};
 pub use wsl_shrinker::{WslDistroInfo, scan_wsl_distributions, compact_vhdx_diskpart, set_wsl_distro_sparse};
+pub use toolchain_sweeper::{ToolchainVersion, scan_toolchain_versions, uninstall_toolchain_version};
 
 pub fn scan_all_apps() -> Vec<InstalledApp> {
     let mut apps = scan_registry();

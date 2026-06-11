@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
-  import { Terminal, RefreshCw, Trash2, HardDrive, AlertCircle, CheckCircle, FolderOpen, X, Square, CheckSquare, Folder, Database, File } from "@lucide/svelte";
+  import { Terminal, RefreshCw, Trash2, HardDrive, AlertCircle, CheckCircle, FolderOpen, X, Square, CheckSquare, Folder, Database, File, Cpu } from "@lucide/svelte";
   import { toast } from "../toast.svelte";
 
   interface DevToolInfo {
@@ -37,6 +37,16 @@
     score: number;
   }
 
+  interface ToolchainVersion {
+    manager: string;
+    version: string;
+    path: string;
+    size_bytes: number;
+    is_active: boolean;
+  }
+
+  let activeSubTab = $state("caches"); // "caches" | "packages" | "toolchains"
+
   let tools = $state<DevToolInfo[]>([]);
   let pathIssuesCount = $state(0);
   let isLoading = $state(true);
@@ -45,6 +55,11 @@
   let globalPackages = $state<GlobalCliPackage[]>([]);
   let isPackagesLoading = $state(false);
   let uninstallingStates = $state<Record<string, boolean>>({});
+
+  // Toolchains States
+  let toolchains = $state<ToolchainVersion[]>([]);
+  let isToolchainsLoading = $state(false);
+  let uninstallingToolchains = $state<Record<string, boolean>>({});
 
   // Remnants Modal States
   let activePackage = $state<GlobalCliPackage | null>(null);
@@ -84,9 +99,23 @@
     }
   }
 
+  async function loadToolchains() {
+    isToolchainsLoading = true;
+    try {
+      toolchains = await invoke<ToolchainVersion[]>("get_toolchain_versions");
+      toolchains.sort((a, b) => b.size_bytes - a.size_bytes);
+    } catch (e) {
+      console.error("Failed to load toolchains:", e);
+      toast.show("Failed to load compiler toolchains!", "error");
+    } finally {
+      isToolchainsLoading = false;
+    }
+  }
+
   function refreshAll() {
     loadDevTools();
     loadGlobalPackages();
+    loadToolchains();
   }
 
   async function uninstallPackage(pkg: GlobalCliPackage) {
@@ -180,6 +209,7 @@
   onMount(() => {
     loadDevTools();
     loadGlobalPackages();
+    loadToolchains();
   });
 
   // Helper to format file size
@@ -247,6 +277,40 @@
   let detectedToolsCount = $derived(
     tools.filter(t => t.detected).length
   );
+
+  let totalToolchainsSize = $derived(
+    toolchains.reduce((acc, curr) => acc + curr.size_bytes, 0)
+  );
+
+  let totalToolchainsCount = $derived(
+    toolchains.length
+  );
+
+  async function uninstallToolchain(tc: ToolchainVersion) {
+    let confirmMsg = `Are you sure you want to uninstall ${tc.manager} version: ${tc.version}?`;
+    if (tc.is_active) {
+      confirmMsg = `WARNING: The toolchain ${tc.version} is currently ACTIVE in your environment.\n\nUninstalling it might break your active developer projects until you configure another version.\n\nAre you sure you want to proceed?`;
+    }
+    if (!confirm(confirmMsg)) {
+      return;
+    }
+
+    uninstallingToolchains[tc.path] = true;
+    try {
+      toast.show(`Uninstalling ${tc.version}...`, "info");
+      await invoke("delete_toolchain_version", {
+        manager: tc.manager,
+        version: tc.version,
+        path: tc.path
+      });
+      toast.show(`Successfully uninstalled ${tc.version}!`, "success");
+      await loadToolchains();
+    } catch (err: any) {
+      toast.show(`Failed to uninstall toolchain: ${err.toString()}`, "error");
+    } finally {
+      uninstallingToolchains[tc.path] = false;
+    }
+  }
 </script>
 
 <div class="flex-1 flex flex-col h-screen bg-app-bg text-text-primary">
@@ -256,155 +320,187 @@
       <h2 class="text-2xl font-bold font-sans text-text-primary">
         Dev Tools
       </h2>
-      <p class="text-xs text-text-muted mt-1">Free up storage by cleaning unused package caches & build caches from developer tools</p>
+      <p class="text-xs text-text-muted mt-1">Free up storage by cleaning unused package caches, compiler versions & global packages</p>
     </div>
 
     <div class="flex items-center gap-2">
-      <button
-        onclick={cleanAllCaches}
-        disabled={isLoading || tools.filter(t => t.detected && t.cache_size && t.cache_size > 0).length === 0}
-        class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white disabled:opacity-50 active:scale-95 transition-all shadow"
-      >
-        <Trash2 class="w-3.5 h-3.5" />
-        Purge All Caches
-      </button>
+      {#if activeSubTab === 'caches'}
+        <button
+          onclick={cleanAllCaches}
+          disabled={isLoading || tools.filter(t => t.detected && t.cache_size && t.cache_size > 0).length === 0}
+          class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white disabled:opacity-50 active:scale-95 transition-all shadow"
+        >
+          <Trash2 class="w-3.5 h-3.5" />
+          Purge All Caches
+        </button>
+      {/if}
 
       <button
         onclick={refreshAll}
-        disabled={isLoading || isPackagesLoading}
+        disabled={isLoading || isPackagesLoading || isToolchainsLoading}
         class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-bg border border-border-default hover:bg-elevated-bg active:scale-95 disabled:opacity-50 transition-all text-text-primary"
       >
-        <RefreshCw class="w-3.5 h-3.5 {isLoading || isPackagesLoading ? 'animate-spin' : ''}" />
+        <RefreshCw class="w-3.5 h-3.5 {isLoading || isPackagesLoading || isToolchainsLoading ? 'animate-spin' : ''}" />
         Refresh
       </button>
     </div>
   </header>
 
-
+  <!-- Sub-Tab Navigation Selector -->
+  <div class="px-6 py-3 border-b border-border-default bg-sidebar-bg/60 flex items-center gap-4">
+    <div class="flex p-1 rounded-lg bg-app-bg border border-border-default w-max">
+      <button
+        onclick={() => activeSubTab = "caches"}
+        class="px-4 py-1.5 rounded-md text-xs font-semibold transition-all duration-150 cursor-pointer
+          {activeSubTab === 'caches' ? 'bg-surface-bg border border-border-default text-accent shadow-sm' : 'text-text-secondary hover:text-text-primary border border-transparent'}"
+      >
+        Developer Caches
+      </button>
+      <button
+        onclick={() => activeSubTab = "packages"}
+        class="px-4 py-1.5 rounded-md text-xs font-semibold transition-all duration-150 cursor-pointer
+          {activeSubTab === 'packages' ? 'bg-surface-bg border border-border-default text-accent shadow-sm' : 'text-text-secondary hover:text-text-primary border border-transparent'}"
+      >
+        Global CLI Packages
+      </button>
+      <button
+        onclick={() => activeSubTab = "toolchains"}
+        class="px-4 py-1.5 rounded-md text-xs font-semibold transition-all duration-150 cursor-pointer
+          {activeSubTab === 'toolchains' ? 'bg-surface-bg border border-border-default text-accent shadow-sm' : 'text-text-secondary hover:text-text-primary border border-transparent'}"
+      >
+        Toolchain Runtimes
+      </button>
+    </div>
+  </div>
 
   <!-- Content Area -->
   <div class="flex-1 overflow-y-auto p-6 space-y-6">
-    {#if isLoading}
-      <div class="flex flex-col items-center justify-center h-64 gap-3">
-        <RefreshCw class="w-8 h-8 text-accent animate-spin" />
-        <span class="text-sm text-text-muted font-mono">Analyzing local developer caches...</span>
-      </div>
-    {:else}
-      <!-- Stats Row -->
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <!-- Total Cache Card -->
-        <div class="p-4 rounded-lg bg-surface-bg border-l-4 border-l-accent border border-border-default flex items-center gap-3 shadow-sm">
-          <div class="w-10 h-10 rounded-lg bg-app-bg border border-border-default flex items-center justify-center">
-            <HardDrive class="w-5 h-5 text-accent" />
+
+    {#if activeSubTab === 'caches'}
+      <!-- Tab 1: Caches Grid -->
+      {#if isLoading}
+        <div class="flex flex-col items-center justify-center h-64 gap-3">
+          <RefreshCw class="w-8 h-8 text-accent animate-spin" />
+          <span class="text-sm text-text-muted font-mono">Analyzing local developer caches...</span>
+        </div>
+      {:else}
+        <!-- Stats Row -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <!-- Total Cache Card -->
+          <div class="p-4 rounded-lg bg-surface-bg border-l-4 border-l-accent border border-border-default flex items-center gap-3 shadow-sm">
+            <div class="w-10 h-10 rounded-lg bg-app-bg border border-border-default flex items-center justify-center">
+              <HardDrive class="w-5 h-5 text-accent" />
+            </div>
+            <div>
+              <span class="block text-[10px] text-text-muted font-mono uppercase tracking-wide">Total Cache</span>
+              <span class="text-lg font-bold text-text-primary">{formatSize(totalCacheSize)}</span>
+            </div>
           </div>
-          <div>
-            <span class="block text-[10px] text-text-muted font-mono uppercase tracking-wide">Total Cache</span>
-            <span class="text-lg font-bold text-text-primary">{formatSize(totalCacheSize)}</span>
+
+          <!-- Tools Found Card -->
+          <div class="p-4 rounded-lg bg-surface-bg border-l-4 border-l-border-strong border border-border-default flex items-center gap-3 shadow-sm">
+            <div class="w-10 h-10 rounded-lg bg-app-bg border border-border-default flex items-center justify-center">
+              <Terminal class="w-5 h-5 text-text-secondary" />
+            </div>
+            <div>
+              <span class="block text-[10px] text-text-muted font-mono uppercase tracking-wide">Tools Found</span>
+              <span class="text-lg font-bold text-text-primary">{detectedToolsCount} Detected</span>
+            </div>
+          </div>
+
+          <!-- PATH Issues Card -->
+          <div class="p-4 rounded-lg bg-surface-bg border-l-4 border-l-danger border border-border-default flex items-center gap-3 shadow-sm">
+            <div class="w-10 h-10 rounded-lg bg-app-bg border border-border-default flex items-center justify-center animate-fade-in">
+              <AlertCircle class="w-5 h-5 text-danger" />
+            </div>
+            <div>
+              <span class="block text-[10px] text-text-muted font-mono uppercase tracking-wide">PATH Issues</span>
+              <span class="text-lg font-bold text-danger">{pathIssuesCount} Broken</span>
+            </div>
           </div>
         </div>
 
-        <!-- Tools Found Card -->
-        <div class="p-4 rounded-lg bg-surface-bg border-l-4 border-l-border-strong border border-border-default flex items-center gap-3 shadow-sm">
-          <div class="w-10 h-10 rounded-lg bg-app-bg border border-border-default flex items-center justify-center">
-            <Terminal class="w-5 h-5 text-text-secondary" />
-          </div>
-          <div>
-            <span class="block text-[10px] text-text-muted font-mono uppercase tracking-wide">Tools Found</span>
-            <span class="text-lg font-bold text-text-primary">{detectedToolsCount} Detected</span>
-          </div>
-        </div>
-
-        <!-- PATH Issues Card -->
-        <div class="p-4 rounded-lg bg-surface-bg border-l-4 border-l-danger border border-border-default flex items-center gap-3 shadow-sm">
-          <div class="w-10 h-10 rounded-lg bg-app-bg border border-border-default flex items-center justify-center animate-fade-in">
-            <AlertCircle class="w-5 h-5 text-danger" />
-          </div>
-          <div>
-            <span class="block text-[10px] text-text-muted font-mono uppercase tracking-wide">PATH Issues</span>
-            <span class="text-lg font-bold text-danger">{pathIssuesCount} Broken</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Tools Grid -->
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {#each tools as tool}
-          <div class="border rounded-lg p-5 flex flex-col bg-surface-bg/50 transition-all duration-200 relative overflow-hidden group
-            {tool.detected 
-              ? 'border-border-default hover:border-border-strong' 
-              : 'border-border-subtle opacity-40 bg-surface-bg/10'}">
-            
-            <!-- Card Header -->
-            <div class="flex items-center justify-between">
-              <div class="flex items-center gap-3">
-                <div class="w-10 h-10 rounded-lg bg-app-bg border border-border-default flex items-center justify-center shadow-sm">
-                  <Terminal class="w-5 h-5 {tool.detected ? 'text-accent' : 'text-text-disabled'}" />
-                </div>
-                <div>
-                  <h3 class="text-base font-bold font-sans capitalize text-text-primary">{tool.name}</h3>
-                  <span class="text-[10px] font-mono {tool.detected ? 'text-success' : 'text-text-muted'}">
-                    {tool.detected ? `Version ${tool.version}` : 'Not Detected'}
-                  </span>
-                </div>
-              </div>
+        <!-- Tools Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {#each tools as tool}
+            <div class="border rounded-lg p-5 flex flex-col bg-surface-bg/50 transition-all duration-200 relative overflow-hidden group
+              {tool.detected 
+                ? 'border-border-default hover:border-border-strong' 
+                : 'border-border-subtle opacity-40 bg-surface-bg/10'}">
               
-              {#if tool.detected}
-                <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-success/10 text-success border border-success/20">
-                  Ready
-                </span>
-              {/if}
-            </div>
-
-            <!-- Path details -->
-            <div class="mt-4 flex-1 space-y-2.5 text-xs">
-              {#if tool.detected}
-                <div class="space-y-1">
-                  <span class="text-text-muted font-mono text-[9px] uppercase tracking-wide">Cache Path</span>
-                  <div class="flex items-center gap-1.5 text-text-secondary bg-app-bg p-2 rounded-lg border border-border-default font-mono text-[10px] select-all truncate" title={tool.cache_path}>
-                    <FolderOpen class="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
-                    <span class="truncate">{tool.cache_path}</span>
+              <!-- Card Header -->
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                  <div class="w-10 h-10 rounded-lg bg-app-bg border border-border-default flex items-center justify-center shadow-sm">
+                    <Terminal class="w-5 h-5 {tool.detected ? 'text-accent' : 'text-text-disabled'}" />
+                  </div>
+                  <div>
+                    <h3 class="text-base font-bold font-sans capitalize text-text-primary">{tool.name}</h3>
+                    <span class="text-[10px] font-mono {tool.detected ? 'text-success' : 'text-text-muted'}">
+                      {tool.detected ? `Version ${tool.version}` : 'Not Detected'}
+                    </span>
                   </div>
                 </div>
-
-                <div class="flex items-center justify-between bg-app-bg/50 p-3 rounded-lg border border-border-default">
-                  <div class="flex items-center gap-2">
-                    <HardDrive class="w-4 h-4 text-text-secondary" />
-                    <span class="text-text-secondary font-sans">Current Cache Size</span>
-                  </div>
-                  <span class="text-sm font-bold font-mono text-accent">
-                    {formatSize(tool.cache_size)}
+                
+                {#if tool.detected}
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-success/10 text-success border border-success/20">
+                    Ready
                   </span>
+                {/if}
+              </div>
+
+              <!-- Path details -->
+              <div class="mt-4 flex-1 space-y-2.5 text-xs">
+                {#if tool.detected}
+                  <div class="space-y-1">
+                    <span class="text-text-muted font-mono text-[9px] uppercase tracking-wide">Cache Path</span>
+                    <div class="flex items-center gap-1.5 text-text-secondary bg-app-bg p-2 rounded-lg border border-border-default font-mono text-[10px] select-all truncate" title={tool.cache_path}>
+                      <FolderOpen class="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
+                      <span class="truncate">{tool.cache_path}</span>
+                    </div>
+                  </div>
+
+                  <div class="flex items-center justify-between bg-app-bg/50 p-3 rounded-lg border border-border-default">
+                    <div class="flex items-center gap-2">
+                      <HardDrive class="w-4 h-4 text-text-secondary" />
+                      <span class="text-text-secondary font-sans">Current Cache Size</span>
+                    </div>
+                    <span class="text-sm font-bold font-mono text-accent">
+                      {formatSize(tool.cache_size)}
+                    </span>
+                  </div>
+                {:else}
+                  <p class="text-text-muted italic py-6 text-center font-sans">
+                    This tool was not found in your system's PATH. No caches to manage.
+                  </p>
+                {/if}
+              </div>
+
+              <!-- Actions -->
+              {#if tool.detected}
+                <div class="mt-5 pt-4 border-t border-border-default flex gap-2">
+                  <button
+                    onclick={() => cleanCache(tool.name)}
+                    disabled={cleaningStates[tool.name] || !tool.cache_size || tool.cache_size === 0}
+                    class="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-semibold bg-surface-bg hover:bg-elevated-bg border border-border-default text-text-primary disabled:opacity-40 transition-all active:scale-[0.98]"
+                  >
+                    {#if cleaningStates[tool.name]}
+                      <RefreshCw class="w-3.5 h-3.5 animate-spin" />
+                      Cleaning...
+                    {:else}
+                      <Trash2 class="w-3.5 h-3.5" />
+                      Purge Cache
+                    {/if}
+                  </button>
                 </div>
-              {:else}
-                <p class="text-text-muted italic py-6 text-center font-sans">
-                  This tool was not found in your system's PATH. No caches to manage.
-                </p>
               {/if}
             </div>
+          {/each}
+        </div>
+      {/if}
 
-            <!-- Actions -->
-            {#if tool.detected}
-              <div class="mt-5 pt-4 border-t border-border-default flex gap-2">
-                <button
-                  onclick={() => cleanCache(tool.name)}
-                  disabled={cleaningStates[tool.name] || !tool.cache_size || tool.cache_size === 0}
-                  class="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-semibold bg-surface-bg hover:bg-elevated-bg border border-border-default text-text-primary disabled:opacity-40 transition-all active:scale-[0.98]"
-                >
-                  {#if cleaningStates[tool.name]}
-                    <RefreshCw class="w-3.5 h-3.5 animate-spin" />
-                    Cleaning...
-                  {:else}
-                    <Trash2 class="w-3.5 h-3.5" />
-                    Purge Cache
-                  {/if}
-                </button>
-              </div>
-            {/if}
-          </div>
-        {/each}
-      </div>
-
-      <!-- Global Packages Section -->
+    {:else if activeSubTab === 'packages'}
+      <!-- Tab 2: Global CLI Packages -->
       <div class="border border-border-default rounded-lg bg-surface-bg/30 p-5 space-y-4">
         <div class="flex items-center justify-between border-b border-border-default pb-3">
           <div>
@@ -486,7 +582,111 @@
           </div>
         {/if}
       </div>
+
+    {:else if activeSubTab === 'toolchains'}
+      <!-- Tab 3: Toolchain Runtimes -->
+      <div class="space-y-6 animate-fade-in">
+        <!-- Stats Row -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="p-4 rounded-lg bg-surface-bg border border-border-default flex items-center gap-3">
+            <div class="w-10 h-10 rounded-lg bg-app-bg border border-border-default flex items-center justify-center">
+              <HardDrive class="w-5 h-5 text-accent" />
+            </div>
+            <div>
+              <span class="block text-[10px] text-text-muted font-mono uppercase tracking-wide">Total Runtime Space</span>
+              <span class="text-lg font-bold text-text-primary">{formatSize(totalToolchainsSize)}</span>
+            </div>
+          </div>
+
+          <div class="p-4 rounded-lg bg-surface-bg border border-border-default flex items-center gap-3">
+            <div class="w-10 h-10 rounded-lg bg-app-bg border border-border-default flex items-center justify-center">
+              <Cpu class="w-5 h-5 text-text-secondary" />
+            </div>
+            <div>
+              <span class="block text-[10px] text-text-muted font-mono uppercase tracking-wide">Runtimes Detected</span>
+              <span class="text-lg font-bold text-text-primary">{totalToolchainsCount} Versions</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Toolchains List -->
+        <div class="border border-border-default rounded-lg bg-surface-bg/30 p-5 space-y-4">
+          <div class="flex items-center justify-between border-b border-border-default pb-3">
+            <div>
+              <h3 class="text-sm font-bold text-text-primary flex items-center gap-2">
+                <Cpu class="w-4 h-4 text-accent" />
+                Compiler & Runtime Versions
+              </h3>
+              <span class="text-[10px] text-text-muted">Clean up old versions of Rustup, NVM, and FNM managers to free up storage</span>
+            </div>
+            <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-accent/10 text-accent border border-accent/20 font-mono">
+              {toolchains.length} Versions
+            </span>
+          </div>
+
+          {#if isToolchainsLoading}
+            <div class="flex items-center justify-center py-6 gap-2">
+              <RefreshCw class="w-4 h-4 text-accent animate-spin" />
+              <span class="text-xs text-text-muted font-mono">Scanning toolchain runtimes...</span>
+            </div>
+          {:else if toolchains.length === 0}
+            <p class="text-xs text-text-muted italic py-4 text-center font-sans">
+              No installed compiler toolchains detected (Rustup, NVM, or FNM).
+            </p>
+          {:else}
+            <div class="divide-y divide-border-default">
+              {#each toolchains as tc}
+                <div class="flex items-center justify-between py-3.5 first:pt-0 last:pb-0 gap-4 group animate-fade-in">
+                  <div class="flex items-center gap-3 flex-1 min-w-0">
+                    <div class="w-8 h-8 rounded-lg border flex items-center justify-center bg-surface-bg border-border-default flex-shrink-0">
+                      <Cpu class="w-4.5 h-4.5 text-accent" />
+                    </div>
+
+                    <div class="flex-1 min-w-0 font-sans">
+                      <div class="flex items-center gap-2">
+                        <span class="font-bold text-xs font-mono text-text-primary truncate" title={tc.version}>{tc.version}</span>
+                        <span class="text-[9px] uppercase px-1.5 py-0.5 rounded font-mono font-semibold
+                          {tc.manager === 'rustup' ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20' : ''}
+                          {tc.manager === 'nvm' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : ''}
+                          {tc.manager === 'fnm' ? 'bg-pink-500/10 text-pink-400 border border-pink-500/20' : ''}"
+                        >
+                          {tc.manager}
+                        </span>
+                        
+                        {#if tc.is_active}
+                          <span class="text-[9px] bg-success/15 border border-success/35 text-success px-1.5 py-0.5 rounded font-mono font-semibold">
+                            Active
+                          </span>
+                        {/if}
+                      </div>
+                      <div class="text-[9px] text-text-disabled font-mono mt-0.5 truncate" title={tc.path}>{tc.path}</div>
+                    </div>
+                  </div>
+
+                  <div class="flex items-center gap-4">
+                    <span class="text-xs font-bold font-mono text-text-secondary whitespace-nowrap">{formatSize(tc.size_bytes)}</span>
+                    <button
+                      onclick={() => uninstallToolchain(tc)}
+                      disabled={uninstallingToolchains[tc.path]}
+                      class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold bg-danger/10 hover:bg-danger text-danger hover:text-white transition-all duration-150 active:scale-95 border border-danger/20 disabled:opacity-50 cursor-pointer"
+                    >
+                      {#if uninstallingToolchains[tc.path]}
+                        <RefreshCw class="w-3 h-3 animate-spin" />
+                        Uninstalling...
+                      {:else}
+                        <Trash2 class="w-3 h-3" />
+                        Uninstall
+                      {/if}
+                    </button>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </div>
     {/if}
+
   </div>
 </div>
 

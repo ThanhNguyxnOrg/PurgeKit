@@ -53,6 +53,8 @@ pub fn run() {
             commands::get_wsl_distros,
             commands::compact_wsl_distro,
             commands::set_wsl_distro_sparse_mode,
+            commands::get_toolchain_versions,
+            commands::delete_toolchain_version,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

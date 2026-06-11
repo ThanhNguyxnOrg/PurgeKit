@@ -1,4 +1,4 @@
-use crate::scanner::{self, InstalledApp, DevToolInfo, RemnantItem, PathEntry, GlobalCliPackage, ProjectFolder, WslDistroInfo};
+use crate::scanner::{self, InstalledApp, DevToolInfo, RemnantItem, PathEntry, GlobalCliPackage, ProjectFolder, WslDistroInfo, ToolchainVersion};
 use crate::snapshot_engine::{self, SnapshotRecord, SnapshotDiff};
 use crate::settings::{self, AppSettings};
 use serde::Serialize;
@@ -1175,6 +1175,28 @@ pub async fn set_wsl_distro_sparse_mode(
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         scanner::set_wsl_distro_sparse(&app, &name, sparse)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn get_toolchain_versions() -> Result<Vec<ToolchainVersion>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(scanner::scan_toolchain_versions())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn delete_toolchain_version(
+    manager: String,
+    version: String,
+    path: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        scanner::uninstall_toolchain_version(&manager, &version, &path)
     })
     .await
     .map_err(|e| e.to_string())?
