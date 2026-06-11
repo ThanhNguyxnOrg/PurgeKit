@@ -30,7 +30,7 @@ jobs:
           gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # For major updates: add 'needs-review' label and comment
       - name: Request Manual Review for Major Updates
@@ -40,4 +40,4 @@ jobs:
           gh pr comment "$PR_URL" --body "⚠️ This is a **major** update. Please review breaking changes and test thoroughly before merging."
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
