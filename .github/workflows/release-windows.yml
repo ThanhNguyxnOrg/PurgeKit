@@ -104,7 +104,7 @@ jobs:
           tagName: v${{ needs.check-trigger.outputs.version }}
           releaseName: "PurgeKit v${{ needs.check-trigger.outputs.version }}"
           releaseBody: ${{ steps.get_changelog.outputs.body }}
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           includeDebug: false
           includeRelease: true
