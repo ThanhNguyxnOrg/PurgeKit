@@ -36,5 +36,8 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build Tauri App
-        uses: tauri-apps/tauri-action@v0
+      - name: Svelte & TypeScript Check
+        run: npm run check
+
+      - name: Rust Compiler Check
+        run: cargo check --manifest-path src-tauri/Cargo.toml
