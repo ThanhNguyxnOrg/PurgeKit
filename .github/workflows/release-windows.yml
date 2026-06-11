@@ -96,35 +96,6 @@ jobs:
           Add-Content -Path $env:GITHUB_OUTPUT -Value $body
           Add-Content -Path $env:GITHUB_OUTPUT -Value "EOF"
 
-      - name: Get Changelog Entry
-        id: get_changelog
-        shell: pwsh
-        run: |
-          $version = "${{ needs.check-trigger.outputs.version }}"
-          Write-Host "Extracting changelog for version $version"
-          
-          if (Test-Path "CHANGELOG.md") {
-              $changelog = Get-Content CHANGELOG.md -Raw
-              # Regex to match the section under ## [version]
-              $pattern = "(?s)## \[" + [regex]::Escape($version) + "\].*?\r?\n(.*?)(?=\r?\n## \[|\Z)"
-              if ($changelog -match $pattern) {
-                  $body = $Matches[1].Trim()
-                  Write-Host "Found changelog entry:"
-                  Write-Host $body
-              } else {
-                  $body = "Release version $version"
-                  Write-Host "Changelog entry for $version not found. Using default."
-              }
-          } else {
-              $body = "Release version $version"
-              Write-Host "CHANGELOG.md not found. Using default."
-          }
-          
-          # Write to GITHUB_OUTPUT using multiline syntax
-          Add-Content -Path $env:GITHUB_OUTPUT -Value "body<<EOF"
-          Add-Content -Path $env:GITHUB_OUTPUT -Value $body
-          Add-Content -Path $env:GITHUB_OUTPUT -Value "EOF"
-
       - name: Build and Publish Tauri App
         uses: tauri-apps/tauri-action@v0
         env:
