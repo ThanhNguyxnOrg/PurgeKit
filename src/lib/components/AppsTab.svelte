@@ -17,6 +17,7 @@
     registry_path: string;
     hive: string;
     is_uwp: boolean;
+    icon_base64?: string | null;
   }
 
   interface RemnantItem {

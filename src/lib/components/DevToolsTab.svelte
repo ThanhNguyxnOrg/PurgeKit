@@ -374,7 +374,7 @@
                   <div class="w-8 h-8 rounded-lg border flex items-center justify-center overflow-hidden transition-colors shadow-sm bg-surface-bg border-border-default flex-shrink-0 relative">
                     <!-- Try loading the NPM package logo from unavatar.io, fallback to initials otherwise -->
                     <img src="https://unavatar.io/npm/{pkg.name}" 
-                         onload={(e) => e.currentTarget.style.opacity = '1'}
+                         onload={(e) => (e.currentTarget as HTMLImageElement).style.opacity = '1'}
                          class="w-6 h-6 object-contain opacity-0 transition-opacity duration-150 relative z-10" 
                          alt="" />
                     <div class="absolute inset-0 flex items-center justify-center font-mono text-[10px] bg-red-950/20 text-red-400 border border-red-800/20 w-full h-full">
