@@ -53,9 +53,13 @@ pub fn scan_dev_tools() -> Vec<DevToolInfo> {
         // For maven on Windows, the command is 'mvn'
         let cmd_to_run = if name == "maven" { "mvn" } else { name };
 
-        if let Ok(output) = Command::new(cmd_to_run)
+        // Run through `cmd /C`: npm, pnpm, yarn, gradle and mvn ship as
+        // .cmd/.bat shims on Windows, which CreateProcess (Command::new)
+        // cannot launch directly, so detection always failed for them.
+        let version_cmd = format!("{} {}", cmd_to_run, args.join(" "));
+        if let Ok(output) = Command::new("cmd")
             .creation_flags(CREATE_NO_WINDOW)
-            .args(&args)
+            .args(&["/C", &version_cmd])
             .output()
         {
             if output.status.success() {
@@ -221,6 +225,21 @@ fn parse_npm_package_info(path: &Path, name: &str) -> GlobalCliPackage {
 }
 
 pub fn uninstall_global_npm_package(name: &str) -> Result<(), String> {
+    // SECURITY: the name is interpolated into a `cmd /C` string. Without
+    // validation, a crafted name like "pkg & calc.exe" would be executed as
+    // an arbitrary command. Enforce the npm package name charset.
+    let is_valid = !name.is_empty()
+        && name.len() <= 214
+        && !name.starts_with('.')
+        && name.matches('/').count() <= 1
+        && name.chars().all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit()
+                || matches!(c, '-' | '_' | '.' | '@' | '/' | '~')
+        });
+    if !is_valid {
+        return Err(format!("Invalid npm package name: {}", name));
+    }
+
     let output = Command::new("cmd")
         .creation_flags(CREATE_NO_WINDOW)
         .args(&["/C", &format!("npm uninstall -g {}", name)])

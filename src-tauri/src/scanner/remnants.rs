@@ -88,8 +88,11 @@ fn get_scan_locations(level: &str) -> Vec<ScanTarget> {
     targets.push(reg_target(HKEY_LOCAL_MACHINE, "HKLM", r"SOFTWARE\Wow6432Node", 50));
 
     // Uninstall keys (ghost entries)
-    targets.push(reg_target(HKEY_LOCAL_MACHINE, "HKLM_UNINSTALL", &format!(r"SOFTWARE\{}", unsub), 70));
-    targets.push(reg_target(HKEY_CURRENT_USER, "HKCU_UNINSTALL", &format!(r"SOFTWARE\{}", unsub), 70));
+    // NOTE: use real hive names so purge_remnant_item and `reg export` backups
+    // can resolve these paths (HKLM_UNINSTALL/HKCU_UNINSTALL were unsupported
+    // hives, so purging ghost uninstall entries always failed).
+    targets.push(reg_target(HKEY_LOCAL_MACHINE, "HKLM", &format!(r"SOFTWARE\{}", unsub), 70));
+    targets.push(reg_target(HKEY_CURRENT_USER, "HKCU", &format!(r"SOFTWARE\{}", unsub), 70));
 
     // ═══ TIER 7: VirtualStore remnants (base_score: 65) ═══
     targets.push(reg_target(HKEY_CURRENT_USER, "HKCU", r"Software\Classes\VirtualStore\MACHINE\SOFTWARE", 65));
@@ -189,14 +192,25 @@ pub fn scan_app_remnants(
 }
 
 fn clean_match_token(app_name: &str) -> String {
-    let mut token = app_name.to_string();
-    let remove_words = vec!["uninstaller", "installer", "setup", "software", "client", "x64", "x86", "32bit", "64bit", "free", "pro", "ultimate"];
-    for word in remove_words {
-        token = token.replace(word, "");
-    }
-    
-    token = token.chars().filter(|c| c.is_alphanumeric() || c.is_whitespace() || *c == '-' || *c == '_').collect();
-    token.trim().to_lowercase()
+    let remove_words = ["uninstaller", "installer", "setup", "software", "client", "x64", "x86", "32bit", "64bit", "free", "pro", "ultimate"];
+
+    // Strip noise words on word boundaries only. A plain substring replace
+    // mangled real names (e.g. "GoPro" -> "go", "Professional" -> "fessional"),
+    // causing wrong or missed matches.
+    let cleaned: String = app_name
+        .chars()
+        .filter(|c| c.is_alphanumeric() || c.is_whitespace() || *c == '-' || *c == '_')
+        .collect();
+
+    let kept: Vec<&str> = cleaned
+        .split_whitespace()
+        .filter(|w| {
+            let wl = w.to_lowercase();
+            !remove_words.contains(&wl.as_str())
+        })
+        .collect();
+
+    kept.join(" ").trim().to_lowercase()
 }
 
 fn scan_directory_remnants_recursive(parent_dir: &Path, token: &str, base_score: i32, remnants: &mut Vec<RemnantItem>) {
@@ -445,7 +459,9 @@ pub fn purge_remnant_item(item: &RemnantItem) -> Result<(), String> {
             let parent_key = root.open_subkey_with_flags(parent_path, KEY_WRITE)
                 .map_err(|e| format!("Failed to open registry parent key: {}", e))?;
 
-            parent_key.delete_subkey(key_to_delete)
+            // delete_subkey fails on keys that contain subkeys, which most
+            // app remnant keys do. Delete recursively instead.
+            parent_key.delete_subkey_all(key_to_delete)
                 .map_err(|e| format!("Failed to delete registry key: {}", e))?;
         }
         _ => return Err(format!("Unknown item type: {}", item.item_type)),

@@ -138,7 +138,15 @@ fn write_path_to_registry(hkey: winreg::HKEY, subpath: &str, value: &str) -> Res
     let key = root.open_subkey_with_flags(subpath, KEY_WRITE)
         .map_err(|e| format!("Access Denied (Requires Admin elevation?): {}", e))?;
 
-    key.set_value("Path", &value)
+    // PATH must stay REG_EXPAND_SZ: set_value writes REG_SZ, which silently
+    // breaks entries containing environment variables like %SystemRoot%.
+    let mut bytes: Vec<u8> = Vec::with_capacity((value.len() + 1) * 2);
+    for unit in value.encode_utf16().chain(std::iter::once(0u16)) {
+        bytes.extend_from_slice(&unit.to_le_bytes());
+    }
+    let reg_value = winreg::RegValue { bytes, vtype: REG_EXPAND_SZ };
+
+    key.set_raw_value("Path", &reg_value)
         .map_err(|e| format!("Failed to write Registry key: {}", e))?;
 
     Ok(())
