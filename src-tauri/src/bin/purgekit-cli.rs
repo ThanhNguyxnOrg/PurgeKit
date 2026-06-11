@@ -2,7 +2,7 @@
 //! attribute) so stdout/stderr work natively in release builds.
 
 use clap::{Parser, Subcommand};
-use purgekit_lib::scanner::remnants::{purge_remnant_item, scan_app_remnants, RemnantItem};
+use purgekit_lib::scanner::remnants::{purge_remnant_item, scan_app_remnants};
 use std::io::Write;
 
 #[derive(Parser)]

@@ -54,3 +54,33 @@ pub fn map_win32_error(err: &std::io::Error) -> &'static str {
 pub fn format_win32_error(context: &str, err: &std::io::Error) -> String {
     format!("{}: {} - {}", context, map_win32_error(err), err)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Error;
+
+    #[test]
+    fn test_expand_env_strings() {
+        assert_eq!(expand_env_strings("hello world"), "hello world");
+        
+        #[cfg(windows)]
+        {
+            let expanded = expand_env_strings("%SystemRoot%");
+            assert!(expanded.to_lowercase().contains("windows") || expanded.to_lowercase().contains("win"));
+            assert!(!expanded.contains("%"));
+        }
+    }
+
+    #[test]
+    fn test_map_win32_error() {
+        let err2 = Error::from_raw_os_error(2);
+        assert_eq!(map_win32_error(&err2), "ERROR_FILE_NOT_FOUND (2)");
+
+        let err5 = Error::from_raw_os_error(5);
+        assert_eq!(map_win32_error(&err5), "ERROR_ACCESS_DENIED (5)");
+
+        let non_os = Error::new(std::io::ErrorKind::Other, "custom error");
+        assert_eq!(map_win32_error(&non_os), "NON_OS_ERROR");
+    }
+}

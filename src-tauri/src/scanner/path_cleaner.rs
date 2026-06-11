@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::env;
 use std::path::Path;
 use winreg::enums::*;
 use winreg::RegKey;
