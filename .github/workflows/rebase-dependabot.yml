@@ -24,4 +24,4 @@ jobs:
             gh pr comment "$pr" --body "@dependabot rebase"
           done
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
