@@ -97,9 +97,19 @@ purgekit.exe wsl compact "Ubuntu"
 ## 📖 Documentation
 
 Detailed documents are located in the [`docs/`](docs/) directory:
-* [✨ Detailed Feature Overview](docs/FEATURES.md) - Learn how deep scanning, snapshot diffing, and WSL2 compaction work.
-* [📐 Architecture Design](docs/ARCHITECTURE.md) - Deep dive into Tauri IPC commands, Rust scanner modules, and SQLite schemas.
-* [🔧 Development Guide](docs/DEVELOPMENT.md) - Guidelines for setting up, writing commands, and adding new developer caches.
+*   [📥 Installation & Setup Guide](docs/INSTALLATION.md) - How to download, install, and run PurgeKit on Windows.
+*   [✨ Detailed Feature Overview](docs/FEATURES.md) - Learn how deep scanning, snapshot diffing, and WSL2 compaction work.
+*   [📐 Technical Architecture](docs/ARCHITECTURE.md) - Deep dive into Tauri IPC commands, Rust modules, and SQLite schemas.
+*   [🗂️ Universal Project Sweeper Guide](docs/PROJECT_SWEEPER.md) - Folder presets, walkdir scan rules, and size calculation.
+*   [📸 System Snapshot Engine Guide](docs/SNAPSHOT_ENGINE.md) - Baseline snapshotting, registry/filesystem crawls, and diff engine.
+*   [📡 Active Installation Tracker Guide](docs/ACTIVE_TRACKER.md) - Live tracking using NTFS USN Journal and registry hooks.
+*   [🛡️ Quarantine & Backup Engine Guide](docs/QUARANTINE_ENGINE.md) - Safe registry exports (.reg), local folder quarantine, and restoration.
+*   [🚀 Startup Manager & Autoruns Guide](docs/STARTUP_MANAGER.md) - Registry Run keys, user startup folders, and disable/enable triggers.
+*   [📦 Global CLI Package Sweeper Guide](docs/GLOBAL_CLI_SWEEPER.md) - Global packages (npm/yarn/pnpm/pip/cargo) scan and uninstall rules.
+*   [🔐 Security & UAC Elevation Model](docs/SECURITY_UAC.md) - Trust manifest, TokenElevation checks, and privilege boundaries.
+*   [⚙️ Configuration & Settings Guide](docs/CONFIGURATION.md) - Format of `settings.json`, scan levels, and exclusions.
+*   [🔧 Development Guide](docs/DEVELOPMENT.md) - Guidelines for setting up, writing backend commands, and adding new developer caches.
+*   [🚀 Automated Release Workflow (CI/CD)](docs/CI_CD_RELEASES.md) - GitHub Actions workflows, triggers, and automated changelog publishing.
 
 ---
 
