@@ -5,8 +5,9 @@ use std::path::PathBuf;
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AppSettings {
     pub enable_undocumented_force_unlock: bool,
-    pub scan_level: String, // "safe" | "normal" | "aggressive"
+    pub scan_level: String, // "safe" | "moderate" | "aggressive"
     pub backup_before_delete: bool,
+    pub create_restore_point: bool,
 }
 
 impl Default for AppSettings {
@@ -15,6 +16,7 @@ impl Default for AppSettings {
             enable_undocumented_force_unlock: false,
             scan_level: "safe".to_string(),
             backup_before_delete: true,
+            create_restore_point: true,
         }
     }
 }
@@ -39,9 +41,16 @@ pub fn load_settings() -> AppSettings {
         return AppSettings::default();
     }
     
-    fs::read_to_string(path)
+    let mut settings = fs::read_to_string(path)
         .and_then(|content| serde_json::from_str::<AppSettings>(&content).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e)))
-        .unwrap_or_else(|_| AppSettings::default())
+        .unwrap_or_else(|_| AppSettings::default());
+
+    // Validate scan_level and fallback if invalid
+    if settings.scan_level != "safe" && settings.scan_level != "moderate" && settings.scan_level != "aggressive" {
+        settings.scan_level = "safe".to_string();
+    }
+    
+    settings
 }
 
 pub fn save_settings(settings: &AppSettings) -> Result<(), String> {
@@ -67,6 +76,7 @@ mod tests {
         assert_eq!(default_settings.enable_undocumented_force_unlock, false);
         assert_eq!(default_settings.scan_level, "safe");
         assert_eq!(default_settings.backup_before_delete, true);
+        assert_eq!(default_settings.create_restore_point, true);
     }
 
     #[test]
@@ -75,6 +85,7 @@ mod tests {
             enable_undocumented_force_unlock: true,
             scan_level: "aggressive".to_string(),
             backup_before_delete: false,
+            create_restore_point: false,
         };
         let serialized = serde_json::to_string(&settings).unwrap();
         let deserialized: AppSettings = serde_json::from_str(&serialized).unwrap();
@@ -82,5 +93,6 @@ mod tests {
         assert_eq!(deserialized.enable_undocumented_force_unlock, true);
         assert_eq!(deserialized.scan_level, "aggressive");
         assert_eq!(deserialized.backup_before_delete, false);
+        assert_eq!(deserialized.create_restore_point, false);
     }
 }

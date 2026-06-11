@@ -82,13 +82,13 @@ pub fn get_path_entries() -> Result<Vec<PathEntry>, String> {
         let is_overlap = overlaps.contains(&idx);
 
         let issue = if dead {
-            "Thư mục không tồn tại".to_string()
+            "Directory does not exist".to_string()
         } else if is_dup {
-            format!("Trùng lặp với dòng thứ #{}", dup_of.unwrap() + 1)
+            format!("Duplicate of line #{}", dup_of.unwrap() + 1)
         } else if is_overlap {
-            "Thư mục con bị lặp thừa của một mục khác trong PATH".to_string()
+            "Redundant subdirectory of another PATH entry".to_string()
         } else {
-            "Hợp lệ".to_string()
+            "Valid".to_string()
         };
 
         results.push(PathEntry {

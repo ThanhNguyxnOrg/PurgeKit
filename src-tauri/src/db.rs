@@ -39,5 +39,16 @@ pub fn init_db() -> Result<(), String> {
         [],
     ).map_err(|e| e.to_string())?;
 
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS quarantine (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            original_path TEXT NOT NULL,
+            quarantine_path TEXT NOT NULL,
+            created_at TEXT NOT NULL
+         )",
+        [],
+    ).map_err(|e| e.to_string())?;
+
     Ok(())
 }

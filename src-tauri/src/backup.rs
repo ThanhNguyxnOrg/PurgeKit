@@ -20,6 +20,12 @@ fn get_backups_dir() -> PathBuf {
 }
 
 pub fn backup_registry_key(key_path: &str) -> Result<PathBuf, String> {
+    // Validate key_path to start with HKCU\ or HKLM\
+    let key_upper = key_path.to_uppercase();
+    if !key_upper.starts_with("HKCU\\") && !key_upper.starts_with("HKLM\\") {
+        return Err("Invalid Registry Key path (Must start with HKCU or HKLM)".to_string());
+    }
+
     // Normal registry key path e.g. "HKCU\SOFTWARE\AppName"
     // Normalize or clean path for filename
     let cleaned_name = key_path
@@ -86,20 +92,43 @@ pub fn quarantine_file_or_directory(path_str: &str) -> Result<PathBuf, String> {
     let dest_path = q_dir.join(dest_name);
 
     // Try renaming first (fast)
-    if fs::rename(src_path, &dest_path).is_ok() {
-        return Ok(dest_path);
-    }
-
-    // Fallback: Copy recursively then remove
-    if src_path.is_dir() {
-        copy_dir_all(src_path, &dest_path)
-            .map_err(|e| format!("Failed to copy directory to quarantine: {}", e))?;
-        let _ = fs::remove_dir_all(src_path);
+    let moved = if fs::rename(src_path, &dest_path).is_ok() {
+        true
     } else {
-        fs::copy(src_path, &dest_path)
-            .map_err(|e| format!("Failed to copy file to quarantine: {}", e))?;
-        let _ = fs::remove_file(src_path);
-    }
+        // Fallback: Copy recursively then remove
+        if src_path.is_dir() {
+            if copy_dir_all(src_path, &dest_path).is_ok() {
+                let _ = fs::remove_dir_all(src_path);
+                true
+            } else {
+                false
+            }
+        } else {
+            if fs::copy(src_path, &dest_path).is_ok() {
+                let _ = fs::remove_file(src_path);
+                true
+            } else {
+                false
+            }
+        }
+    };
 
-    Ok(dest_path)
+    if moved {
+        let db_path = crate::db::get_db_path();
+        if let Ok(conn) = rusqlite::Connection::open(db_path) {
+            let _ = conn.execute(
+                "INSERT INTO quarantine (id, name, original_path, quarantine_path, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    file_uuid,
+                    src_path.file_name().and_then(|n| n.to_str()).unwrap_or("remnant"),
+                    path_str,
+                    dest_path.to_string_lossy().to_string(),
+                    timestamp
+                ]
+            );
+        }
+        Ok(dest_path)
+    } else {
+        Err("Failed to move item to quarantine".to_string())
+    }
 }

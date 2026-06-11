@@ -10,6 +10,24 @@ use tauri::{AppHandle, Emitter};
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+const SAFE_DEV_TOOL_CLEAN_COMMANDS: &[&str] = &[
+    "npm cache clean --force",
+    "pnpm store prune",
+    "yarn cache clean",
+    "pip cache purge",
+    "cargo clean",
+    "go clean -cache -modcache",
+    "bun pm clean",
+    "deno clean",
+    "gradle clean",
+    "mvn clean",
+    "dotnet nuget locals all --clear",
+    "docker system prune -f",
+    "conda clean -a -y",
+    "gem cleanup",
+    "flutter pub cache clean --force",
+];
+
 #[derive(Debug, Serialize, Clone)]
 pub struct ProgressPayload {
     pub phase: String,
@@ -169,10 +187,42 @@ pub async fn clean_dev_tool_cache(app: AppHandle, name: String) -> Result<u64, S
             }
         }
 
+        // Specially handle vscode
+        if name == "vscode" {
+            if let Some(ref path_str) = tool.cache_path {
+                let vscode_dir = Path::new(path_str);
+                let cache_dir = vscode_dir.join("Cache");
+                let cached_data_dir = vscode_dir.join("CachedData");
+                let workspace_storage_dir = vscode_dir.join("User").join("workspaceStorage");
+                
+                let mut freed = 0;
+                if cache_dir.exists() {
+                    freed += scanner::cli_dev::calculate_dir_size(&cache_dir);
+                    let _ = fs::remove_dir_all(&cache_dir);
+                    let _ = fs::create_dir_all(&cache_dir);
+                }
+                if cached_data_dir.exists() {
+                    freed += scanner::cli_dev::calculate_dir_size(&cached_data_dir);
+                    let _ = fs::remove_dir_all(&cached_data_dir);
+                    let _ = fs::create_dir_all(&cached_data_dir);
+                }
+                if workspace_storage_dir.exists() {
+                    freed += scanner::cli_dev::calculate_dir_size(&workspace_storage_dir);
+                    let _ = fs::remove_dir_all(&workspace_storage_dir);
+                    let _ = fs::create_dir_all(&workspace_storage_dir);
+                }
+                return Ok(freed);
+            }
+        }
+
 
         // Standard CLI tools cache cleaning
         let clean_cmd = tool.clean_command.as_ref()
             .ok_or_else(|| format!("No clean command defined for '{}'", name))?;
+
+        if !SAFE_DEV_TOOL_CLEAN_COMMANDS.contains(&clean_cmd.as_str()) {
+            return Err(format!("Clean command '{}' is not in the safe whitelist (Command Injection Blocked)!", clean_cmd));
+        }
 
         let output = Command::new("cmd")
             .creation_flags(CREATE_NO_WINDOW)
@@ -243,6 +293,19 @@ pub async fn purge_remnants(app: AppHandle, items: Vec<RemnantItem>) -> Result<P
         let mut fail = 0;
 
         let settings = settings::load_settings();
+
+        // Admin elevation pre-check for protected items
+        if !settings::check_is_admin() {
+            let needs_admin = items.iter().any(|item| remnant_requires_admin(item));
+            if needs_admin {
+                return Err("Some selected remnant items (such as HKLM registry keys or system files) require Administrator privileges to delete. Please run the application as Administrator.".to_string());
+            }
+        }
+
+        // 0. Optional System Restore Point phase
+        if settings.create_restore_point {
+            create_system_restore_point(&app);
+        }
 
         // 1. Optional backup phase
         if settings.backup_before_delete {
@@ -350,6 +413,9 @@ pub async fn get_path_entries() -> Result<Vec<PathEntry>, String> {
 #[tauri::command]
 pub async fn save_path_entries(remaining_values: Vec<String>, scope: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        if scope == "System" && !settings::check_is_admin() {
+            return Err("Modifying System PATH requires Administrator privileges. Please run the application as Administrator.".to_string());
+        }
         scanner::set_path_entries(remaining_values, &scope)?;
         crate::broadcast::broadcast_environment_change();
         Ok(())
@@ -360,6 +426,32 @@ pub async fn save_path_entries(remaining_values: Vec<String>, scope: String) -> 
 pub async fn run_uninstall_command(uninstall_string: String) -> Result<(), String> {
     if uninstall_string.trim().is_empty() {
         return Err("Uninstall command is empty".to_string());
+    }
+    
+    // Check if it is a UWP uninstall command
+    let is_uwp = uninstall_string.starts_with("powershell -NoProfile -Command \"Remove-AppxPackage -Package ") 
+        && uninstall_string.ends_with('"');
+        
+    if is_uwp {
+        let prefix = "powershell -NoProfile -Command \"Remove-AppxPackage -Package ";
+        let package_full = uninstall_string[prefix.len()..uninstall_string.len() - 1].to_string();
+        if !package_full.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '_' || c == '-') {
+            return Err("Invalid UWP package name or contains unsafe characters".to_string());
+        }
+        
+        return tauri::async_runtime::spawn_blocking(move || {
+            let mut child = Command::new("powershell")
+                .creation_flags(CREATE_NO_WINDOW)
+                .args(&["-NoProfile", "-Command", &format!("Remove-AppxPackage -Package {}", package_full)])
+                .spawn()
+                .map_err(|e| format!("Failed to spawn powershell: {}", e))?;
+            let _ = child.wait().map_err(|e| format!("PowerShell finished with error: {}", e))?;
+            Ok(())
+        }).await.map_err(|e| e.to_string())?;
+    }
+    
+    if !is_safe_uninstall_string(&uninstall_string) {
+        return Err("Uninstall command contains invalid or unsafe characters (Command Injection Blocked)".to_string());
     }
     
     tauri::async_runtime::spawn_blocking(move || {
@@ -374,16 +466,35 @@ pub async fn run_uninstall_command(uninstall_string: String) -> Result<(), Strin
 }
 
 #[tauri::command]
-pub async fn get_global_npm_packages() -> Result<Vec<GlobalCliPackage>, String> {
+pub async fn get_global_cli_packages() -> Result<Vec<GlobalCliPackage>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        Ok(scanner::scan_global_npm_packages())
+        Ok(scanner::scan_global_cli_packages())
     }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn uninstall_global_npm_package(name: String) -> Result<(), String> {
+pub async fn uninstall_global_cli_package(name: String, manager: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        scanner::uninstall_global_npm_package(&name)
+        scanner::uninstall_global_cli_package(&name, &manager)
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn get_cli_package_bin_names(package_path: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(scanner::get_cli_package_bin_names(&package_path))
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn get_cli_package_remnants(
+    name: String,
+    manager: String,
+    package_path: String,
+    bin_names: Vec<String>,
+) -> Result<Vec<RemnantItem>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(scanner::get_cli_package_remnants(&name, &manager, &package_path, bin_names))
     }).await.map_err(|e| e.to_string())?
 }
 
@@ -541,5 +652,232 @@ pub async fn stop_install_tracking(
             reg_count: new_registry_keys.len(),
             file_count: new_files.len(),
         })
+    }).await.map_err(|e| e.to_string())?
+}
+
+fn is_safe_uninstall_string(s: &str) -> bool {
+    let dangerous_chars = ['&', '|', '>', '<', ';', '`', '$', '\n', '\r'];
+    !s.chars().any(|c| dangerous_chars.contains(&c))
+}
+
+fn remnant_requires_admin(item: &RemnantItem) -> bool {
+    if item.item_type == "RegistryKey" || item.item_type == "RegistryValue" {
+        return item.path.to_uppercase().starts_with("HKLM");
+    }
+    if item.item_type == "File" || item.item_type == "Directory" {
+        let path_upper = item.path.to_uppercase();
+        return path_upper.contains("PROGRAM FILES") 
+            || path_upper.contains("WINDOWS") 
+            || path_upper.starts_with("C:\\PROGRAMDATA");
+    }
+    false
+}
+
+fn create_system_restore_point(app: &AppHandle) {
+    let _ = app.emit("purge-progress", ProgressPayload {
+        phase: "restore_point".into(),
+        current: 0,
+        total: 100,
+        message: "Creating System Restore Point...".into(),
+    });
+
+    if !settings::check_is_admin() {
+        let _ = app.emit("purge-progress", ProgressPayload {
+            phase: "restore_point_warning".into(),
+            current: 0,
+            total: 100,
+            message: "Skipping System Restore Point creation (Administrator privileges required)".into(),
+        });
+        return;
+    }
+
+    let status = Command::new("powershell")
+        .creation_flags(CREATE_NO_WINDOW)
+        .args(&[
+            "-NoProfile",
+            "-Command",
+            "Checkpoint-Computer -Description \"PurgeKit Restore Point\" -RestorePointType \"APPLICATION_UNINSTALL\""
+        ])
+        .status();
+
+    match status {
+        Ok(s) if s.success() => {
+            let _ = app.emit("purge-progress", ProgressPayload {
+                phase: "restore_point".into(),
+                current: 100,
+                total: 100,
+                message: "System Restore Point created successfully!".into(),
+            });
+        }
+        _ => {
+            let _ = app.emit("purge-progress", ProgressPayload {
+                phase: "restore_point_warning".into(),
+                current: 0,
+                total: 100,
+                message: "Failed to create Restore Point (System Protection might be disabled, or a checkpoint was created recently)".into(),
+            });
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn get_startup_items() -> Result<Vec<crate::startup_manager::StartupItem>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::startup_manager::list_startup_items()
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn set_startup_item_status(id: String, enabled: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::startup_manager::set_startup_item_status(id, enabled)
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn delete_startup_item(id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::startup_manager::delete_startup_item(id)
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[derive(Debug, Serialize, serde::Deserialize, Clone)]
+pub struct QuarantineItem {
+    pub id: String,
+    pub name: String,
+    pub original_path: String,
+    pub quarantine_path: String,
+    pub created_at: String,
+}
+
+#[tauri::command]
+pub async fn list_quarantine_items() -> Result<Vec<QuarantineItem>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let db_path = crate::db::get_db_path();
+        let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
+        let mut stmt = conn.prepare("SELECT id, name, original_path, quarantine_path, created_at FROM quarantine ORDER BY created_at DESC")
+            .map_err(|e| e.to_string())?;
+        
+        let rows = stmt.query_map([], |row| {
+            Ok(QuarantineItem {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                original_path: row.get(2)?,
+                quarantine_path: row.get(3)?,
+                created_at: row.get(4)?,
+            })
+        }).map_err(|e| e.to_string())?;
+
+        let mut items = Vec::new();
+        for item in rows {
+            if let Ok(i) = item {
+                items.push(i);
+            }
+        }
+        Ok(items)
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn restore_quarantine_item(id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let db_path = crate::db::get_db_path();
+        let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
+        
+        // Find quarantine item
+        let item: QuarantineItem = conn.query_row(
+            "SELECT id, name, original_path, quarantine_path, created_at FROM quarantine WHERE id = ?1",
+            [&id],
+            |row| {
+                Ok(QuarantineItem {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    original_path: row.get(2)?,
+                    quarantine_path: row.get(3)?,
+                    created_at: row.get(4)?,
+                })
+            }
+        ).map_err(|e| format!("Quarantine item not found: {}", e))?;
+
+        let src_path = std::path::Path::new(&item.quarantine_path);
+        if !src_path.exists() {
+            return Err("Quarantined file does not exist on disk".to_string());
+        }
+
+        let dest_path = std::path::Path::new(&item.original_path);
+        
+        // Admin pre-check if restoring to protected system folders
+        let dest_upper = item.original_path.to_uppercase();
+        let is_system = dest_upper.contains("PROGRAM FILES") 
+            || dest_upper.contains("WINDOWS") 
+            || dest_upper.starts_with("C:\\PROGRAMDATA");
+            
+        if is_system && !crate::settings::check_is_admin() {
+            return Err("Restoring system files requires Administrator privileges. Please restart the application as Administrator.".to_string());
+        }
+
+        // Create parent directories if they don't exist
+        if let Some(parent) = dest_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        // Try renaming first
+        if std::fs::rename(src_path, dest_path).is_err() {
+            // Fallback: copy and delete
+            if src_path.is_dir() {
+                let status = std::process::Command::new("cmd")
+                    .creation_flags(0x08000000)
+                    .args(&["/C", &format!("xcopy /E /I /Y \"{}\" \"{}\"", item.quarantine_path, item.original_path)])
+                    .status();
+                if status.map_or(false, |s| s.success()) {
+                    let _ = std::fs::remove_dir_all(src_path);
+                } else {
+                    return Err("Failed to restore directory".to_string());
+                }
+            } else {
+                std::fs::copy(src_path, dest_path).map_err(|e| format!("Failed to copy file for restoration: {}", e))?;
+                let _ = std::fs::remove_file(src_path);
+            }
+        }
+
+        // Remove row from DB
+        conn.execute("DELETE FROM quarantine WHERE id = ?1", [&id]).map_err(|e| e.to_string())?;
+
+        Ok(())
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn delete_quarantine_item(id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let db_path = crate::db::get_db_path();
+        let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
+        
+        let item: QuarantineItem = conn.query_row(
+            "SELECT id, name, original_path, quarantine_path, created_at FROM quarantine WHERE id = ?1",
+            [&id],
+            |row| {
+                Ok(QuarantineItem {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    original_path: row.get(2)?,
+                    quarantine_path: row.get(3)?,
+                    created_at: row.get(4)?,
+                })
+            }
+        ).map_err(|e| format!("Quarantine item not found: {}", e))?;
+
+        let q_path = std::path::Path::new(&item.quarantine_path);
+        if q_path.exists() {
+            if q_path.is_dir() {
+                std::fs::remove_dir_all(q_path).map_err(|e| format!("Failed to delete directory: {}", e))?;
+            } else {
+                std::fs::remove_file(q_path).map_err(|e| format!("Failed to delete file: {}", e))?;
+            }
+        }
+
+        conn.execute("DELETE FROM quarantine WHERE id = ?1", [&id]).map_err(|e| e.to_string())?;
+
+        Ok(())
     }).await.map_err(|e| e.to_string())?
 }

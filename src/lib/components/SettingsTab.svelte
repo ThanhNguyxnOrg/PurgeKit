@@ -1,17 +1,63 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Shield, HardDrive, Info, Heart, RefreshCw, Bug, ExternalLink, CheckCircle } from "@lucide/svelte";
+  import { Shield, HardDrive, Info, Heart, RefreshCw, Bug, ExternalLink, CheckCircle, Trash2 } from "@lucide/svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { invoke } from "@tauri-apps/api/core";
-  import { toast } from "../toast";
+  import { toast } from "../toast.svelte";
 
   let scanLevel = $state("safe");
   let autoBackup = $state(true);
+  let createRestorePoint = $state(true);
   let forceUnlock = $state(false);
   let isAdmin = $state(false);
 
   let isCheckingUpdates = $state(false);
   let updateMessage = $state<{ type: "success" | "error"; text: string } | null>(null);
+
+  interface QuarantineItem {
+    id: string;
+    name: string;
+    original_path: string;
+    quarantine_path: string;
+    created_at: string;
+  }
+
+  let quarantineItems = $state<QuarantineItem[]>([]);
+  let isLoadingQuarantine = $state(false);
+
+  async function loadQuarantine() {
+    isLoadingQuarantine = true;
+    try {
+      quarantineItems = await invoke<QuarantineItem[]>("list_quarantine_items");
+    } catch (e) {
+      console.error("Failed to load quarantine items:", e);
+    } finally {
+      isLoadingQuarantine = false;
+    }
+  }
+
+  async function restoreQuarantine(id: string) {
+    try {
+      await invoke("restore_quarantine_item", { id });
+      toast.show("File restored from quarantine successfully!", "success");
+      await loadQuarantine();
+    } catch (e: any) {
+      toast.show(`Restoration failed: ${e.toString()}`, "error");
+    }
+  }
+
+  async function deleteQuarantine(id: string) {
+    if (!confirm("Are you sure you want to permanently delete this file? This action cannot be undone.")) {
+      return;
+    }
+    try {
+      await invoke("delete_quarantine_item", { id });
+      toast.show("File deleted permanently successfully!", "success");
+      await loadQuarantine();
+    } catch (e: any) {
+      toast.show(`Failed to delete: ${e.toString()}`, "error");
+    }
+  }
 
   async function loadSettings() {
     try {
@@ -19,10 +65,12 @@
         enable_undocumented_force_unlock: boolean;
         scan_level: string;
         backup_before_delete: boolean;
+        create_restore_point: boolean;
       }>("get_settings");
       
       scanLevel = settings.scan_level;
       autoBackup = settings.backup_before_delete;
+      createRestorePoint = settings.create_restore_point;
       forceUnlock = settings.enable_undocumented_force_unlock;
       
       isAdmin = await invoke<boolean>("check_is_admin");
@@ -37,12 +85,13 @@
         settings: {
           enable_undocumented_force_unlock: forceUnlock,
           scan_level: scanLevel,
-          backup_before_delete: autoBackup
+          backup_before_delete: autoBackup,
+          create_restore_point: createRestorePoint
         }
       });
-      toast.show("Cấu hình settings đã được lưu thành công!", "success");
+      toast.show("Settings configuration saved successfully!", "success");
     } catch (e: any) {
-      toast.show(`Lỗi khi lưu settings: ${e.toString()}`, "error");
+      toast.show(`Error saving settings: ${e.toString()}`, "error");
     }
   }
 
@@ -69,6 +118,7 @@
 
   onMount(() => {
     loadSettings();
+    loadQuarantine();
   });
 </script>
 
@@ -124,6 +174,20 @@
           />
         </div>
 
+        <!-- System Restore Point -->
+        <div class="flex items-center justify-between py-3 border-b border-border-default">
+          <div>
+            <label for="create-restore-point" class="text-sm font-medium text-text-secondary">Create System Restore Point</label>
+            <span class="block text-xs text-text-muted mt-0.5">Create a Windows System Restore Point before purging remnants (requires Admin).</span>
+          </div>
+          <input
+            type="checkbox"
+            id="create-restore-point"
+            bind:checked={createRestorePoint}
+            class="w-4 h-4 rounded accent-accent bg-app-bg border-border-default focus:ring-accent/30 cursor-pointer"
+          />
+        </div>
+
         <!-- Hidden setting: force unlock -->
         <div class="flex items-center justify-between py-3">
           <div>
@@ -162,6 +226,60 @@
             <span class="text-xs font-bold text-text-primary">Standard Mode Active</span>
             <span class="text-[10px] text-text-muted font-mono">Running as standard user. Some clean features will be restricted.</span>
           </div>
+        </div>
+      {/if}
+    </section>
+
+    <!-- Quarantine Manager Section -->
+    <section class="border border-border-default rounded-lg bg-surface-bg/30 p-5 space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="text-sm font-bold text-text-primary flex items-center gap-2">
+          <svg class="w-4 h-4 text-accent animate-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+            <line x1="9" y1="9" x2="15" y2="15"/>
+            <line x1="15" y1="9" x2="9" y2="15"/>
+          </svg>
+          Quarantine Manager
+        </h3>
+        <button
+          onclick={loadQuarantine}
+          disabled={isLoadingQuarantine}
+          class="p-1.5 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg transition-colors cursor-pointer"
+        >
+          <RefreshCw class="w-3.5 h-3.5 text-text-secondary {isLoadingQuarantine ? 'animate-spin text-accent' : ''}" />
+        </button>
+      </div>
+
+      {#if quarantineItems.length === 0}
+        <div class="py-6 text-center border border-dashed border-border-default rounded-lg bg-surface-bg/10 text-xs text-text-muted">
+          No files in quarantine.
+        </div>
+      {:else}
+        <div class="space-y-3 max-h-[300px] overflow-y-auto pr-1">
+          {#each quarantineItems as item}
+            <div class="flex items-center justify-between p-3 rounded-lg bg-app-bg border border-border-default text-xs gap-3">
+              <div class="flex flex-col min-w-0 flex-1">
+                <span class="font-bold text-text-primary truncate">{item.name}</span>
+                <span class="text-[10px] text-text-muted truncate mt-0.5" title={item.original_path}>{item.original_path}</span>
+                <span class="text-[9px] text-accent/70 font-mono mt-0.5">{item.created_at}</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <button
+                  onclick={() => restoreQuarantine(item.id)}
+                  class="px-2.5 py-1.5 rounded-lg bg-accent/10 hover:bg-accent hover:text-white text-accent border border-accent/20 transition-all font-semibold active:scale-95 cursor-pointer text-[11px]"
+                >
+                  Restore
+                </button>
+                <button
+                  onclick={() => deleteQuarantine(item.id)}
+                  class="p-1.5 rounded-lg bg-danger/10 hover:bg-danger hover:text-white text-danger border border-danger/20 transition-all active:scale-95 cursor-pointer"
+                  title="Delete permanently"
+                >
+                  <Trash2 class="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          {/each}
         </div>
       {/if}
     </section>

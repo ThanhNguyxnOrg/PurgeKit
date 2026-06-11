@@ -10,7 +10,7 @@ pub mod msi;
 
 pub use registry::{InstalledApp, scan_registry};
 pub use uwp::scan_uwp_apps;
-pub use cli_dev::{DevToolInfo, scan_dev_tools, GlobalCliPackage, scan_global_npm_packages, uninstall_global_npm_package};
+pub use cli_dev::{DevToolInfo, scan_dev_tools, GlobalCliPackage, scan_global_cli_packages, uninstall_global_cli_package, get_cli_package_bin_names, get_cli_package_remnants};
 pub use remnants::{RemnantItem, scan_app_remnants, purge_all_remnants};
 pub use path_cleaner::{PathEntry, get_path_entries, set_path_entries};
 

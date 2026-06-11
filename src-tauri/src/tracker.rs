@@ -29,7 +29,11 @@ pub unsafe fn query_current_usn(drive: char) -> Result<u64, String> {
     );
     
     if handle == INVALID_HANDLE_VALUE {
-        return Err(format!("Failed to open volume handle for drive {}: {}", drive, std::io::Error::last_os_error()));
+        let err = std::io::Error::last_os_error();
+        if err.raw_os_error() == Some(5) {
+            return Err(format!("Access to volume '{}' was denied. Installation tracking via USN Journal requires Administrator privileges.", drive));
+        }
+        return Err(format!("Failed to open volume handle for drive {}: {}", drive, err));
     }
     
     #[repr(C)]
@@ -81,7 +85,11 @@ pub unsafe fn read_usn_changes(drive: char, start_usn: u64) -> Result<Vec<String
     );
     
     if handle == INVALID_HANDLE_VALUE {
-        return Err(format!("Failed to open volume: {}", std::io::Error::last_os_error()));
+        let err = std::io::Error::last_os_error();
+        if err.raw_os_error() == Some(5) {
+            return Err(format!("Access to volume '{}' was denied. Installation tracking via USN Journal requires Administrator privileges.", drive));
+        }
+        return Err(format!("Failed to open volume for drive {}: {}", drive, err));
     }
     
     #[repr(C)]

@@ -3224,7 +3224,6 @@ dependencies = [
  "chrono",
  "clap",
  "is_elevated",
- "rayon",
  "rusqlite",
  "serde",
  "serde_json",

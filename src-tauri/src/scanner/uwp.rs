@@ -4,6 +4,7 @@ use std::os::windows::process::CommandExt;
 use std::fs;
 use std::path::Path;
 use super::registry::InstalledApp;
+use base64::{Engine as _, engine::general_purpose};
 
 // Hiding console window flag for Windows process execution
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -29,11 +30,15 @@ pub fn scan_uwp_apps() -> Vec<InstalledApp> {
 
     // Run PowerShell command to get appx packages. We filter out framework packages to keep the list clean.
     // Framework packages like VCLibs, .NET, etc. are not uninstallable by typical users.
-    let script = r#"Get-AppxPackage | Where-Object { -not $_.IsFramework -and $_.NonRemovable -ne $true } | Select-Object Name, PublisherId, Version, InstallLocation, PackageFamilyName, PackageFullName | ConvertTo-Json -Compress"#;
+    // We try to query all users (-AllUsers) if running as admin, else fall back to the current user.
+    let script = r#"$apps = try { Get-AppxPackage -AllUsers -ErrorAction Stop } catch { Get-AppxPackage }; $apps | Where-Object { -not $_.IsFramework -and $_.NonRemovable -ne $true } | Select-Object Name, PublisherId, Version, InstallLocation, PackageFamilyName, PackageFullName | ConvertTo-Json -Compress"#;
     
-    let output = match Command::new("powershell")
+    let windir = std::env::var("SystemRoot").or_else(|_| std::env::var("windir")).unwrap_or_else(|_| "C:\\Windows".to_string());
+    let powershell_path = Path::new(&windir).join("System32").join("WindowsPowerShell").join("v1.0").join("powershell.exe");
+
+    let output = match Command::new(powershell_path)
         .creation_flags(CREATE_NO_WINDOW)
-        .args(&["-NoProfile", "-Command", script])
+        .args(["-NoProfile", "-Command", script])
         .output()
     {
         Ok(out) => out,
@@ -68,7 +73,13 @@ pub fn scan_uwp_apps() -> Vec<InstalledApp> {
             None => continue,
         };
         let package_full = match raw.package_full_name {
-            Some(pf) => pf,
+            Some(pf) => {
+                if pf.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '_' || c == '-') {
+                    pf
+                } else {
+                    continue; // Skip invalid or malicious PackageFullName
+                }
+            }
             None => continue,
         };
 
@@ -101,6 +112,7 @@ pub fn scan_uwp_apps() -> Vec<InstalledApp> {
             registry_path: format!(r"UWP\{}", package_family),
             hive: "UWP".to_string(),
             is_uwp: true,
+            is_verified: Some(true),
         });
     }
 
@@ -108,22 +120,83 @@ pub fn scan_uwp_apps() -> Vec<InstalledApp> {
 }
 
 fn clean_uwp_display_name(name: &str) -> String {
-    // Basic cleanup of Microsoft / Publisher prefixes
     let mut clean = name.to_string();
-    if clean.starts_with("Microsoft.") {
-        clean = clean.replacen("Microsoft.", "", 1);
+    
+    // List of common publisher prefixes to strip
+    let prefixes = [
+        "MicrosoftCorporationII.",
+        "Microsoft.Windows.",
+        "MicrosoftWindows.",
+        "Microsoft.",
+        "System.",
+        "PythonSoftwareFoundation.",
+    ];
+    for prefix in &prefixes {
+        if clean.starts_with(prefix) {
+            clean = clean.replacen(prefix, "", 1);
+            break;
+        }
     }
     
-    // Add spaces before uppercase letters for readability, except for first letter
+    // Also if the name is publisher.appName where appName is similar (e.g., Clipchamp.Clipchamp -> Clipchamp)
+    if let Some(dot_idx) = clean.find('.') {
+        let (pub_part, app_part) = clean.split_at(dot_idx);
+        let app_part_clean = &app_part[1..]; // skip the dot
+        if pub_part.eq_ignore_ascii_case(app_part_clean) {
+            clean = app_part_clean.to_string();
+        } else if pub_part == "C27EB4BA" { // Dropbox OEM prefix
+            clean = app_part_clean.to_string();
+        }
+    }
+    
+    // Replace remaining dots with spaces, but keep them if they are part of version numbers like "3.13" or "1.8"
+    let mut dot_cleaned = String::new();
+    let chars: Vec<char> = clean.chars().collect();
+    for i in 0..chars.len() {
+        let c = chars[i];
+        if c == '.' {
+            // Check if it's between digits
+            let is_version_dot = i > 0 && i < chars.len() - 1 
+                && chars[i - 1].is_ascii_digit() 
+                && chars[i + 1].is_ascii_digit();
+            if is_version_dot {
+                dot_cleaned.push('.');
+            } else {
+                dot_cleaned.push(' ');
+            }
+        } else {
+            dot_cleaned.push(c);
+        }
+    }
+    clean = dot_cleaned;
+    
+    // Space out CamelCase names (e.g., WindowsStore -> Windows Store)
     let mut spaced = String::new();
-    for (i, c) in clean.chars().enumerate() {
+    let chars: Vec<char> = clean.chars().collect();
+    for i in 0..chars.len() {
+        let c = chars[i];
         if i > 0 && c.is_uppercase() {
-            spaced.push(' ');
+            if let Some(prev) = chars.get(i - 1) {
+                // Add space if preceding char is not a space/dash/dot AND not an uppercase letter
+                // (so we don't space out acronyms like HEIF or OEM or VP9)
+                if *prev != ' ' && *prev != '-' && *prev != '.' && !prev.is_uppercase() && !prev.is_ascii_digit() {
+                    spaced.push(' ');
+                }
+            }
         }
         spaced.push(c);
     }
     
-    spaced
+    // Collapse multiple spaces and trim
+    let mut final_name = String::new();
+    for word in spaced.split_whitespace() {
+        if !final_name.is_empty() {
+            final_name.push(' ');
+        }
+        final_name.push_str(word);
+    }
+    
+    final_name
 }
 
 fn get_uwp_icon_base64(install_location: &str) -> Option<String> {
@@ -132,70 +205,69 @@ fn get_uwp_icon_base64(install_location: &str) -> Option<String> {
         return None;
     }
     
-    // Check Assets folder first, then root folder
-    let assets_path = path.join("Assets");
-    let search_dir = if assets_path.exists() {
-        assets_path
-    } else {
-        path.to_path_buf()
-    };
-    
-    if let Ok(entries) = fs::read_dir(search_dir) {
-        let mut candidates = Vec::new();
-        for entry in entries.filter_map(|e| e.ok()) {
-            let p = entry.path();
-            if p.is_file() && p.extension().map_or(false, |ext| ext == "png") {
-                if let Some(name) = p.file_name().and_then(|n| n.to_str()).map(|n| n.to_lowercase()) {
-                    let score = if name.contains("storelogo") || name.contains("store_logo") {
-                        10
-                    } else if name.contains("square44x44logo") || name.contains("targetsize-44") {
-                        8
-                    } else if name.contains("square150x150logo") {
-                        6
-                    } else if name.contains("logo") || name.contains("icon") {
-                        4
-                    } else {
-                        1
-                    };
-                    candidates.push((score, p));
+    // We walk up to depth 3 recursively to find png assets
+    let mut candidates = Vec::new();
+    for entry in walkdir::WalkDir::new(path)
+        .max_depth(3)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let p = entry.path();
+        if p.is_file() && p.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("png")) {
+            if let Some(name) = p.file_name().and_then(|n| n.to_str()).map(|n| n.to_lowercase()) {
+                let is_high_contrast = name.contains("contrast-black") || name.contains("contrast-white") 
+                    || name.contains("hc-black") || name.contains("hc-white");
+                let is_altform = name.contains("altform");
+                
+                let mut score = if name.contains("storelogo") || name.contains("store_logo") || name.contains("storestorelogo") {
+                    100
+                } else if name.contains("square150x150logo") || name.contains("square150") {
+                    80
+                } else if name.contains("square44x44logo") || name.contains("square44") {
+                    60
+                } else if name.contains("targetsize-44") || name.contains("targetsize-48") || name.contains("targetsize-256") {
+                    50
+                } else if name.contains("logo") {
+                    30
+                } else if name.contains("icon") {
+                    20
+                } else {
+                    10
+                };
+                
+                if is_high_contrast {
+                    score -= 40;
                 }
+                if is_altform {
+                    score -= 10;
+                }
+                
+                candidates.push((score, p.to_path_buf()));
             }
         }
-        
-        candidates.sort_by(|a, b| b.0.cmp(&a.0));
-        if let Some((_, best_path)) = candidates.first() {
-            if let Ok(bytes) = fs::read(best_path) {
-                return Some(base64_encode(&bytes));
-            }
+    }
+    
+    candidates.sort_by_key(|b| std::cmp::Reverse(b.0));
+    if let Some((_, best_path)) = candidates.first() {
+        if let Ok(bytes) = fs::read(best_path) {
+            return Some(general_purpose::STANDARD.encode(&bytes));
         }
     }
     None
 }
 
-fn base64_encode(input: &[u8]) -> String {
-    const CHARSET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::with_capacity((input.len() + 2) / 3 * 4);
-    let mut chunks = input.chunks_exact(3);
-    while let Some(chunk) = chunks.next() {
-        let n = ((chunk[0] as u32) << 16) | ((chunk[1] as u32) << 8) | (chunk[2] as u32);
-        result.push(CHARSET[((n >> 18) & 63) as usize] as char);
-        result.push(CHARSET[((n >> 12) & 63) as usize] as char);
-        result.push(CHARSET[((n >> 6) & 63) as usize] as char);
-        result.push(CHARSET[(n & 63) as usize] as char);
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_scan_uwp_apps() {
+        let apps = scan_uwp_apps();
+        println!("Found {} UWP apps", apps.len());
+        for app in &apps {
+            println!("App: {} ({}) - {}", app.display_name, app.id, app.install_location.as_deref().unwrap_or(""));
+        }
+        assert!(!apps.is_empty(), "UWP apps list should not be empty on Windows 10/11");
     }
-    let remainder = chunks.remainder();
-    if remainder.len() == 1 {
-        let n = (remainder[0] as u32) << 16;
-        result.push(CHARSET[((n >> 18) & 63) as usize] as char);
-        result.push(CHARSET[((n >> 12) & 63) as usize] as char);
-        result.push('=');
-        result.push('=');
-    } else if remainder.len() == 2 {
-        let n = ((remainder[0] as u32) << 16) | ((remainder[1] as u32) << 8);
-        result.push(CHARSET[((n >> 18) & 63) as usize] as char);
-        result.push(CHARSET[((n >> 12) & 63) as usize] as char);
-        result.push(CHARSET[((n >> 6) & 63) as usize] as char);
-        result.push('=');
-    }
-    result
 }
+

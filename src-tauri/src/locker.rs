@@ -54,7 +54,7 @@ pub fn delete_file_with_escalation(path: &str) -> DeleteResult {
         }
     }
 
-    DeleteResult::Failed("Tất cả các biện pháp mở khoá và xoá tập tin đều thất bại.".to_string())
+    DeleteResult::Failed("All unlocking and file deletion methods failed.".to_string())
 }
 
 pub fn unlock_file_restart_manager(file_path: &str) -> Result<(), String> {

@@ -2,6 +2,7 @@
   import Sidebar from "$lib/components/Sidebar.svelte";
   import AppsTab from "$lib/components/AppsTab.svelte";
   import DevToolsTab from "$lib/components/DevToolsTab.svelte";
+  import StartupTab from "$lib/components/StartupTab.svelte";
   import SnapshotsTab from "$lib/components/SnapshotsTab.svelte";
   import PathCleanerTab from "$lib/components/PathCleanerTab.svelte";
   import SettingsTab from "$lib/components/SettingsTab.svelte";
@@ -9,22 +10,29 @@
   let activeTab = $state("apps");
 </script>
 
-<div class="flex h-screen w-screen overflow-hidden bg-app-bg text-text-primary font-sans">
+<div class="flex h-screen w-screen overflow-hidden bg-app-bg text-text-primary font-sans pl-16">
   <!-- Sidebar Navigation -->
   <Sidebar bind:activeTab={activeTab} />
 
   <!-- Main Content Viewer -->
-  <main class="flex-1 ml-16 h-screen overflow-hidden flex flex-col bg-app-bg relative transition-all duration-300">
-    {#if activeTab === "apps"}
+  <main class="flex-1 h-screen overflow-hidden flex flex-col bg-app-bg relative transition-all duration-300">
+    <div class="flex-1 flex flex-col h-full {activeTab === 'apps' ? '' : 'hidden'}">
       <AppsTab />
-    {:else if activeTab === "devtools"}
+    </div>
+    <div class="flex-1 flex flex-col h-full {activeTab === 'devtools' ? '' : 'hidden'}">
       <DevToolsTab />
-    {:else if activeTab === "snapshots"}
+    </div>
+    <div class="flex-1 flex flex-col h-full {activeTab === 'startup' ? '' : 'hidden'}">
+      <StartupTab />
+    </div>
+    <div class="flex-1 flex flex-col h-full {activeTab === 'snapshots' ? '' : 'hidden'}">
       <SnapshotsTab />
-    {:else if activeTab === "pathcleaner"}
+    </div>
+    <div class="flex-1 flex flex-col h-full {activeTab === 'pathcleaner' ? '' : 'hidden'}">
       <PathCleanerTab />
-    {:else if activeTab === "settings"}
+    </div>
+    <div class="flex-1 flex flex-col h-full {activeTab === 'settings' ? '' : 'hidden'}">
       <SettingsTab />
-    {/if}
+    </div>
   </main>
 </div>

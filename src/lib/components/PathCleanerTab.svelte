@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { ShieldAlert, Trash2, CheckCircle2, ShieldCheck, RefreshCw, FolderSearch, CheckSquare, Square } from "@lucide/svelte";
-  import { toast } from "../toast";
+  import { toast } from "../toast.svelte";
 
   interface PathEntry {
     value: string;
@@ -31,8 +31,7 @@
         }
       });
     } catch (e) {
-      console.error("Failed to load PATH entries:", e);
-      toast.show("Lỗi khi tải danh sách PATH!", "error");
+      toast.show("Error loading PATH list!", "error");
     } finally {
       isLoading = false;
     }
@@ -49,7 +48,7 @@
   async function cleanSelectedPaths() {
     const pathsToRemove = Object.keys(selectedPaths).filter((key) => selectedPaths[key]);
     if (pathsToRemove.length === 0) {
-      toast.show("Vui lòng chọn ít nhất một đường dẫn để dọn dẹp.", "warning");
+      toast.show("Please select at least one path to clean.", "warning");
       return;
     }
 
@@ -79,10 +78,10 @@
         });
       }
 
-      toast.show("Đã dọn dẹp các đường dẫn lỗi/trùng lặp thành công!", "success");
+      toast.show("Cleaned invalid/duplicate paths successfully!", "success");
       await loadPaths();
     } catch (e: any) {
-      toast.show(`Dọn dẹp thất bại: ${e.toString()}`, "error");
+      toast.show(`Failed to clean: ${e.toString()}`, "error");
     } finally {
       isSaving = false;
     }
@@ -129,8 +128,8 @@
           <FolderSearch class="w-5 h-5 text-accent" />
         </div>
         <div>
-          <span class="block text-[10px] text-text-muted font-mono uppercase">Tổng số phân tích</span>
-          <span class="text-lg font-bold text-text-primary">{envPaths.length} mục</span>
+          <span class="block text-[10px] text-text-muted font-mono uppercase">Total Scanned</span>
+          <span class="text-lg font-bold text-text-primary">{envPaths.length} items</span>
         </div>
       </div>
 
@@ -139,8 +138,8 @@
           <ShieldAlert class="w-5 h-5 text-danger" />
         </div>
         <div>
-          <span class="block text-[10px] text-text-muted font-mono uppercase">Vấn đề phát hiện</span>
-          <span class="text-lg font-bold text-danger">{envPaths.filter(p => !p.is_valid || p.is_duplicate || p.is_overlap).length} lỗi</span>
+          <span class="block text-[10px] text-text-muted font-mono uppercase">Issues Detected</span>
+          <span class="text-lg font-bold text-danger">{envPaths.filter(p => !p.is_valid || p.is_duplicate || p.is_overlap).length} errors</span>
         </div>
       </div>
 
@@ -149,8 +148,8 @@
           <CheckCircle2 class="w-5 h-5 text-success" />
         </div>
         <div>
-          <span class="block text-[10px] text-text-muted font-mono uppercase">Đường dẫn sạch</span>
-          <span class="text-lg font-bold text-success">{envPaths.filter(p => p.is_valid && !p.is_duplicate && !p.is_overlap).length} mục</span>
+          <span class="block text-[10px] text-text-muted font-mono uppercase">Clean Entries</span>
+          <span class="text-lg font-bold text-success">{envPaths.filter(p => p.is_valid && !p.is_duplicate && !p.is_overlap).length} items</span>
         </div>
       </div>
     </div>
@@ -215,22 +214,22 @@
                     {#if !p.is_valid}
                       <span class="px-2 py-0.5 rounded bg-danger/10 text-danger border border-danger/20 flex items-center gap-1 w-max">
                         <ShieldAlert class="w-3.5 h-3.5" />
-                        Bị hỏng
+                        Broken
                       </span>
                     {:else if p.is_duplicate}
                       <span class="px-2 py-0.5 rounded bg-amber-950/30 text-amber-400 border border-amber-800/40 flex items-center gap-1 w-max">
                         <ShieldAlert class="w-3.5 h-3.5" />
-                        Trùng lặp
+                        Duplicate
                       </span>
                     {:else if p.is_overlap}
                       <span class="px-2 py-0.5 rounded bg-blue-950/30 text-blue-400 border border-blue-800/40 flex items-center gap-1 w-max">
                         <ShieldAlert class="w-3.5 h-3.5" />
-                        Lặp thừa
+                        Redundant
                       </span>
                     {:else}
                       <span class="px-2 py-0.5 rounded bg-emerald-950/30 text-emerald-400 border border-emerald-800/40 flex items-center gap-1 w-max">
                         <CheckCircle2 class="w-3.5 h-3.5" />
-                        Hợp lệ
+                        Valid
                       </span>
                     {/if}
                   </td>

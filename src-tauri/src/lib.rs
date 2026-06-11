@@ -8,6 +8,7 @@ pub mod broadcast;
 pub mod locker;
 pub mod tracker;
 pub mod winutil;
+pub mod startup_manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -30,13 +31,21 @@ pub fn run() {
             commands::get_path_entries,
             commands::save_path_entries,
             commands::run_uninstall_command,
-            commands::get_global_npm_packages,
-            commands::uninstall_global_npm_package,
+            commands::get_global_cli_packages,
+            commands::uninstall_global_cli_package,
+            commands::get_cli_package_bin_names,
+            commands::get_cli_package_remnants,
             commands::get_settings,
             commands::save_settings,
             commands::check_is_admin,
             commands::start_install_tracking,
-            commands::stop_install_tracking
+            commands::stop_install_tracking,
+            commands::get_startup_items,
+            commands::set_startup_item_status,
+            commands::delete_startup_item,
+            commands::list_quarantine_items,
+            commands::restore_quarantine_item,
+            commands::delete_quarantine_item,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

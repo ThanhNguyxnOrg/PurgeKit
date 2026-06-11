@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { Camera, Calendar, ArrowRight, Shield, Layers, RefreshCw, Database, FileText, CheckCircle, Trash2, X, Play, Square, Activity } from "@lucide/svelte";
-  import { toast } from "../toast";
+  import { toast } from "../toast.svelte";
 
   interface SnapshotRecord {
     id: string;
@@ -43,7 +43,7 @@
       snapshots = await invoke<SnapshotRecord[]>("list_snapshots");
     } catch (e) {
       console.error("Failed to load snapshots:", e);
-      toast.show("Lỗi khi tải danh sách snapshots!", "error");
+      toast.show("Error loading snapshots list!", "error");
     } finally {
       isLoading = false;
     }
@@ -55,19 +55,19 @@
 
   async function handleCreateSnapshot() {
     if (newSnapshotName.trim() === "") {
-      toast.show("Vui lòng nhập tên cho snapshot.", "warning");
+      toast.show("Please enter a name for the snapshot.", "warning");
       return;
     }
 
     isCreating = true;
     try {
       await invoke("take_snapshot", { name: newSnapshotName });
-      toast.show(`Đã tạo snapshot "${newSnapshotName}" thành công!`, "success");
+      toast.show(`Snapshot "${newSnapshotName}" created successfully!`, "success");
       newSnapshotName = "";
       showCreateModal = false;
       await loadSnapshots();
     } catch (e: any) {
-      toast.show(`Không thể tạo snapshot: ${e.toString()}`, "error");
+      toast.show(`Failed to create snapshot: ${e.toString()}`, "error");
     } finally {
       isCreating = false;
     }
@@ -75,7 +75,7 @@
 
   async function handleStartTracking() {
     if (trackSessionName.trim() === "") {
-      toast.show("Vui lòng nhập tên cho phiên cài đặt.", "warning");
+      toast.show("Please enter a name for the installation session.", "warning");
       return;
     }
 
@@ -84,9 +84,9 @@
       await invoke("start_install_tracking", { name: trackSessionName });
       isTracking = true;
       showTrackModal = false;
-      toast.show(`Bắt đầu theo dõi cài đặt cho "${trackSessionName}"!`, "success");
+      toast.show(`Started installation tracking for "${trackSessionName}"!`, "success");
     } catch (e: any) {
-      toast.show(`Không thể bắt đầu theo dõi: ${e.toString()}`, "error");
+      toast.show(`Failed to start tracking: ${e.toString()}`, "error");
     } finally {
       isStartingTrack = false;
     }
@@ -97,11 +97,11 @@
     try {
       const snap: any = await invoke("stop_install_tracking");
       isTracking = false;
-      toast.show(`Đã hoàn tất theo dõi cài đặt cho "${trackSessionName}"! Đã tạo snapshot "${snap.name}".`, "success");
+      toast.show(`Finished installation tracking for "${trackSessionName}"! Snapshot "${snap.name}" created.`, "success");
       trackSessionName = "";
       await loadSnapshots();
     } catch (e: any) {
-      toast.show(`Lỗi khi dừng theo dõi cài đặt: ${e.toString()}`, "error");
+      toast.show(`Error stopping installation tracking: ${e.toString()}`, "error");
     } finally {
       isStoppingTrack = false;
     }
@@ -109,12 +109,12 @@
 
   async function handleCompare() {
     if (!selectedBefore || !selectedAfter) {
-      toast.show("Vui lòng chọn cả snapshot TRƯỚC và SAU để so sánh.", "warning");
+      toast.show("Please select both BEFORE and AFTER snapshots to compare.", "warning");
       return;
     }
 
     if (selectedBefore === selectedAfter) {
-      toast.show("Vui lòng chọn hai snapshot khác nhau để so sánh.", "warning");
+      toast.show("Please select two different snapshots to compare.", "warning");
       return;
     }
 
@@ -125,24 +125,24 @@
         beforeId: selectedBefore,
         afterId: selectedAfter,
       });
-      toast.show("So sánh snapshots hoàn tất!", "success");
+      toast.show("Snapshot comparison completed!", "success");
     } catch (e: any) {
-      toast.show(`So sánh thất bại: ${e.toString()}`, "error");
+      toast.show(`Comparison failed: ${e.toString()}`, "error");
     } finally {
       isComparing = false;
     }
   }
 
   async function handleDeleteSnapshot(id: string) {
-    if (!confirm("Bạn có chắc chắn muốn xoá snapshot này không?")) return;
+    if (!confirm("Are you sure you want to delete this snapshot?")) return;
     try {
       await invoke("delete_snapshot", { id });
-      toast.show("Đã xoá snapshot thành công!", "success");
+      toast.show("Snapshot deleted successfully!", "success");
       if (selectedBefore === id) selectedBefore = "";
       if (selectedAfter === id) selectedAfter = "";
       await loadSnapshots();
     } catch (e: any) {
-      toast.show(`Không thể xoá snapshot: ${e.toString()}`, "error");
+      toast.show(`Failed to delete snapshot: ${e.toString()}`, "error");
     }
   }
 

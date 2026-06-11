@@ -1,6 +1,6 @@
 <!-- src/lib/components/Toast.svelte -->
 <script lang="ts">
-  import { toast } from "../toast";
+  import { toast } from "../toast.svelte";
   import { CheckCircle, AlertTriangle, Info, AlertOctagon, X } from "@lucide/svelte";
 </script>
 

@@ -3,7 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { Search, RefreshCw, Trash2, Laptop, ShoppingBag, Eye, X, CheckSquare, Square, Folder, Database, File } from "@lucide/svelte";
-  import { toast } from "../toast";
+  import { toast } from "../toast.svelte";
 
   interface InstalledApp {
     id: string;
@@ -20,6 +20,7 @@
     hive: string;
     is_uwp: boolean;
     icon_base64?: string | null;
+    is_verified?: boolean | null;
   }
 
   interface RemnantItem {
@@ -52,7 +53,7 @@
       apps = await invoke<InstalledApp[]>("get_installed_apps");
     } catch (e) {
       console.error("Failed to load apps:", e);
-      toast.show("Lỗi khi quét danh sách ứng dụng!", "error");
+      toast.show("Error scanning application list!", "error");
     } finally {
       isLoading = false;
     }
@@ -148,7 +149,7 @@
         await invoke("run_uninstall_command", { uninstallString: app.uninstall_string });
       } catch (e: any) {
         console.error("Official uninstaller failed or was closed:", e);
-        toast.show("Trình gỡ cài đặt chính thức trả về mã lỗi hoặc đã bị đóng.", "warning");
+        toast.show("The official uninstaller returned an error or was closed.", "warning");
       }
     }
 
@@ -170,7 +171,7 @@
       });
     } catch (e) {
       console.error("Failed to scan remnants:", e);
-      toast.show("Lỗi khi quét các tệp tin thừa trên hệ thống!", "error");
+      toast.show("Error scanning remnant files on the system!", "error");
     } finally {
       isScanningRemnants = false;
       uninstallStep = "remnants_list";
@@ -193,7 +194,7 @@
   async function performPurge() {
     const itemsToPurge = remnants.filter((r) => selectedRemnants[r.path]);
     if (itemsToPurge.length === 0) {
-      toast.show("Vui lòng chọn ít nhất một thư mục/khoá thừa để dọn dẹp.", "warning");
+      toast.show("Please select at least one remnant item to clean.", "warning");
       return;
     }
 
@@ -203,11 +204,11 @@
         items: itemsToPurge,
       });
       purgeResult = result;
-      toast.show(`Dọn dẹp hoàn tất! Đã xoá ${result.success} mục thừa thành công.`, "success");
+      toast.show(`Purge completed! Successfully removed ${result.success} remnant items.`, "success");
       // Reload apps list
       await loadApps();
     } catch (e: any) {
-      toast.show(`Lỗi khi dọn dẹp remnants: ${e.toString()}`, "error");
+      toast.show(`Error purging remnants: ${e.toString()}`, "error");
     } finally {
       isPurging = false;
     }
@@ -221,6 +222,57 @@
     purgeResult = null;
     uninstallStep = "idle";
   }
+
+  function exportApps(format: "csv" | "json") {
+    if (filteredApps.length === 0) {
+      toast.show("No application data to export!", "warning");
+      return;
+    }
+
+    let content = "";
+    let mimeType = "";
+    let filename = "";
+
+    if (format === "json") {
+      content = JSON.stringify(filteredApps, null, 2);
+      mimeType = "application/json";
+      filename = `purgekit_apps_${new Date().toISOString().slice(0, 10)}.json`;
+    } else {
+      const headers = ["ID", "Name", "Version", "Publisher", "InstallLocation", "RegistryPath", "Hive", "IsStore", "IsVerified"];
+      const rows = filteredApps.map((app) => [
+        app.id,
+        app.display_name,
+        app.display_version || "",
+        app.publisher || "",
+        app.install_location || "",
+        app.registry_path,
+        app.hive,
+        app.is_uwp ? "TRUE" : "FALSE",
+        app.is_verified === true ? "TRUE" : app.is_verified === false ? "FALSE" : "UNKNOWN"
+      ]);
+      
+      const csvContent = [
+        headers.join(","),
+        ...rows.map((row) => row.map((val) => `"${val.replace(/"/g, '""')}"`).join(","))
+      ].join("\n");
+      
+      content = "\uFEFF" + csvContent;
+      mimeType = "text/csv;charset=utf-8;";
+      filename = `purgekit_apps_${new Date().toISOString().slice(0, 10)}.csv`;
+    }
+
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", filename);
+    link.style.visibility = "hidden";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    toast.show(`Successfully exported report to ${format.toUpperCase()}!`, "success");
+  }
 </script>
 
 <div class="flex-1 flex flex-col h-screen bg-app-bg text-text-primary relative">
@@ -233,14 +285,44 @@
       <p class="text-xs text-text-muted mt-1">Manage and clean standard desktop apps & Windows Store apps</p>
     </div>
 
-    <button
-      onclick={loadApps}
-      disabled={isLoading}
-      class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-bg border border-border-default hover:bg-elevated-bg hover:border-border-strong disabled:opacity-50 transition-all text-text-primary"
-    >
-      <RefreshCw class="w-3.5 h-3.5 {isLoading ? 'animate-spin' : ''}" />
-      Reload List
-    </button>
+    <div class="flex items-center gap-2">
+      <button
+        onclick={loadApps}
+        disabled={isLoading}
+        class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-surface-bg border border-border-default hover:bg-elevated-bg hover:border-border-strong disabled:opacity-50 transition-all text-text-primary cursor-pointer active:scale-95"
+      >
+        <RefreshCw class="w-3.5 h-3.5 {isLoading ? 'animate-spin' : ''}" />
+        Reload List
+      </button>
+
+      <!-- Export Dropdown -->
+      <div class="relative inline-block text-left group">
+        <button
+          class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-surface-bg border border-border-default hover:bg-elevated-bg text-text-primary cursor-pointer active:scale-95"
+        >
+          <svg class="w-3.5 h-3.5 text-text-secondary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          Export
+        </button>
+        <div class="absolute right-0 mt-1.5 w-32 rounded-lg bg-surface-bg border border-border-default shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-150 z-50 p-1 flex flex-col gap-0.5">
+          <button
+            onclick={() => exportApps("csv")}
+            class="w-full text-left px-2.5 py-1.5 rounded-md hover:bg-elevated-bg text-xs text-text-secondary hover:text-text-primary transition-colors font-sans font-semibold cursor-pointer"
+          >
+            Export to CSV
+          </button>
+          <button
+            onclick={() => exportApps("json")}
+            class="w-full text-left px-2.5 py-1.5 rounded-md hover:bg-elevated-bg text-xs text-text-secondary hover:text-text-primary transition-colors font-sans font-semibold cursor-pointer"
+          >
+            Export to JSON
+          </button>
+        </div>
+      </div>
+    </div>
   </header>
 
   <!-- Filter Toolbar -->
@@ -324,7 +406,17 @@
                     {/if}
                   </div>
                   <div class="flex flex-col">
-                    <span class="text-text-primary group-hover:text-white transition-colors">{app.display_name}</span>
+                    <div class="flex items-center gap-1.5">
+                      <span class="text-text-primary group-hover:text-white transition-colors">{app.display_name}</span>
+                      {#if app.is_verified}
+                        <span class="inline-flex items-center" title="Verified Publisher Certificate">
+                          <svg class="w-3.5 h-3.5 text-emerald-400 fill-emerald-400/20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                            <path d="m9 11 2 2 4-4"/>
+                          </svg>
+                        </span>
+                      {/if}
+                    </div>
                     <span class="text-[10px] text-text-muted font-mono mt-0.5 max-w-[200px] truncate" title={app.registry_path}>
                       {app.id}
                     </span>
