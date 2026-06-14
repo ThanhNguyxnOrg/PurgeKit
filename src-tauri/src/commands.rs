@@ -210,8 +210,7 @@ pub async fn clean_dev_tool_cache(app: AppHandle, name: String) -> Result<u64, S
         });
 
         Ok(freed)
-    })
-}.await.map_err(|e| e.to_string())?
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
