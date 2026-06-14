@@ -1,6 +1,6 @@
-# 📐 PurgeKit Technical Architecture (v1.0.0)
+# 📐 PurgeKit Technical Architecture
 
-This document describes the design architecture, project structure, database schema, and communication protocols of **PurgeKit v1.0.0**.
+This document describes the design architecture, project structure, database schema, and communication protocols of **PurgeKit**.
 
 ---
 
@@ -78,24 +78,41 @@ The frontend communicates with the Rust backend using Tauri's asynchronous `invo
 | Command | Arguments | Return Type | Description |
 |---|---|---|---|
 | `get_installed_apps` | None | `Vec<InstalledApp>` | Queries uninstallation registries and UWP packages |
+| `get_dev_tools` | None | `Vec<DevToolInfo>` | Returns dynamic cache sizes, locations, and versions |
+| `clean_dev_tool_cache` | `name: String` | `u64` | Clears cache for a developer tool; returns bytes freed |
 | `get_app_remnants` | `appName: String`, `publisher: String`, `installLocation: String` | `Vec<RemnantItem>` | Scans Registry and folders for leftovers |
 | `purge_remnants` | `items: Vec<RemnantItem>` | `PurgeResult` | Permanently deletes selected leftover items |
-| `get_dev_tools` | None | `Vec<DevToolInfo>` | Returns cache sizes, locations, and versions |
-| `clean_dev_tool_cache` | `name: String` | `u64` | Clears cache for a tool; returns bytes freed |
-| `list_snapshots` | None | `Vec<SnapshotRecord>` | Retrieves all system snapshot records from SQLite |
 | `take_snapshot` | `name: String` | `String` | Recursively indexes OS state and saves JSON |
-| `compare_snapshots` | `beforeId: String`, `afterId: String` | `SnapshotDiff` | Compares registry/files to identify additions |
+| `list_snapshots` | None | `Vec<SnapshotRecord>` | Retrieves all system snapshot records from SQLite |
 | `delete_snapshot` | `id: String` | None | Wipes snapshot files from disk and database |
+| `compare_snapshots` | `beforeId: String`, `afterId: String` | `SnapshotDiff` | Compares registry/files to identify additions |
 | `get_path_entries` | None | `Vec<PathEntry>` | Reads User and System PATH values from registry |
 | `save_path_entries` | `remainingValues: Vec<String>`, `scope: String` | None | Writes PATH array to registry and broadcasts update |
+| `run_uninstall_command` | `uninstallString: String` | None | Spawns uninstaller command with safety checks |
+| `get_global_cli_packages` | None | `Vec<CliPackageInfo>` | Lists globally installed npm/pip/cargo CLI packages |
+| `uninstall_global_cli_package` | `name: String`, `manager: String` | None | Uninstalls global CLI packages with remnant cleansing |
+| `get_cli_package_bin_names` | `name: String` | `Vec<String>` | Gets binary/exe names associated with a CLI package |
+| `get_cli_package_remnants` | `name: String`, `binNames: Vec<String>` | `Vec<RemnantItem>` | Scans for remnants of uninstalled CLI packages |
+| `get_settings` | None | `Settings` | Retrieves active user preferences and policies |
+| `save_settings` | `settings: Settings` | None | Saves updated user preferences to local JSON |
+| `check_is_admin` | None | `bool` | Returns true if the process is elevated as Administrator |
+| `start_install_tracking` | None | None | Initiates installation tracking baseline snapshot |
+| `stop_install_tracking` | `name: String` | `String` | Concludes tracking and builds system snapshot diff |
+| `get_startup_items` | None | `Vec<StartupItem>` | Lists all startup run keys, directories, and scheduled tasks |
+| `set_startup_item_status` | `id: String`, `enabled: bool` | None | Enables or disables a startup registry, folder, or task item |
+| `delete_startup_item` | `id: String` | None | Deletes startup entries permanently with safety checks |
+| `list_quarantine_items` | None | `Vec<QuarantineItem>` | Retrieves quarantined files and registries from SQLite |
+| `restore_quarantine_item` | `id: String` | None | Restores a quarantined folder or key back to its origin |
+| `delete_quarantine_item` | `id: String` | None | Wipes a quarantined item permanently from disk/database |
+| `run_bulk_silent_uninstall` | `apps: Vec<InstalledApp>` | None | Runs batch silent uninstallations, streaming progress events |
 | `scan_project_directories` | `roots: Vec<String>`, `folderTypes: Vec<String>` | `Vec<ProjectFolder>` | Traverses workspace roots for build files |
 | `delete_project_directories`| `paths: Vec<String>` | `Record<String, String>` | Batch purges selected folders and files |
+| `check_directory_exists` | `path: String` | `bool` | Checks if a path directory exists on the system |
 | `get_wsl_distros` | None | `Vec<WslDistroInfo>` | Returns WSL distributions and virtual disk paths |
 | `compact_wsl_distro` | `name: String`, `vhdxPath: String` | `String` | Shuts down WSL and runs DiskPart compaction |
 | `set_wsl_distro_sparse_mode`| `name: String`, `sparse: bool` | None | Configures WSL VHDX drive sparse property |
 | `get_toolchain_versions` | None | `Vec<ToolchainVersion>` | Scans Rustup, NVM, and FNM version directories |
 | `delete_toolchain_version` | `manager: String`, `version: String`, `path: String` | None | Uninstalls runtime versions with folder-purge fallback |
-| `check_directory_exists` | `path: String` | `bool` | Checks if a path directory exists on the system |
 
 ---
 

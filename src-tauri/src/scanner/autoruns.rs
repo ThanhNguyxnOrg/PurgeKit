@@ -306,3 +306,40 @@ fn scan_firewall_rules(app_token: &str, install_dir: Option<&str>, remnants: &mu
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn test_scan_tasks_dir_recursive() {
+        let temp_dir = std::env::temp_dir().join("purgekit_test_autoruns");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let task_xml = r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Actions Context="Author">
+    <Exec>
+      <Command>"C:\Program Files\MyCoolApp\app.exe"</Command>
+      <Arguments>--silent</Arguments>
+    </Exec>
+  </Actions>
+</Task>"#;
+
+        let task_file = temp_dir.join("MyCoolAppTask");
+        fs::write(&task_file, task_xml).unwrap();
+
+        let mut remnants = Vec::new();
+        scan_tasks_dir_recursive(&temp_dir, "MyCoolApp", Some(r"C:\Program Files\MyCoolApp"), &mut remnants, 0);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+
+        assert!(!remnants.is_empty(), "Should find the mock task by install dir");
+        let item = &remnants[0];
+        assert_eq!(item.item_type, "File");
+        assert!(item.path.contains("MyCoolAppTask"));
+        assert!(item.score >= 80);
+    }
+}
+

@@ -161,21 +161,36 @@ pub unsafe fn read_usn_changes(drive: char, start_usn: u64) -> Result<Vec<String
     if success != 0 && bytes_returned > 8 {
         let mut offset = 8usize;
         while offset < bytes_returned as usize {
+            // Ensure we have at least 60 bytes (minimum size of USN_RECORD_V2 header) to parse safely
+            if offset + 60 > bytes_returned as usize {
+                break;
+            }
+
             let record_ptr = buf.as_ptr().add(offset);
             let length = std::ptr::read_unaligned(record_ptr as *const u32);
             if length == 0 { break; }
-            
+
+            // Ensure record length is valid and fits within bytes_returned
+            if length < 60 || offset + (length as usize) > bytes_returned as usize {
+                break;
+            }
+
             let file_name_length = std::ptr::read_unaligned(record_ptr.add(56) as *const u16) as usize;
             let file_name_offset = std::ptr::read_unaligned(record_ptr.add(58) as *const u16) as usize;
-            
+
+            // Ensure the filename starts and ends within the bounds of the record
+            if file_name_offset + file_name_length > length as usize {
+                break;
+            }
+
             let file_name_ptr = record_ptr.add(file_name_offset) as *const u16;
             let file_name_slice = std::slice::from_raw_parts(file_name_ptr, file_name_length / 2);
             let name = String::from_utf16_lossy(file_name_slice);
-            
+
             if !name.starts_with('$') {
                 files.push(name);
             }
-            
+
             offset += length as usize;
         }
     }

@@ -24,9 +24,9 @@
     selectedPaths = {};
     try {
       envPaths = await invoke<PathEntry[]>("get_path_entries");
-      // Select all broken, duplicate, or overlapping paths by default for cleaning
+      // Select all broken or duplicate paths by default for cleaning
       envPaths.forEach((entry) => {
-        if (!entry.is_valid || entry.is_duplicate || entry.is_overlap) {
+        if (!entry.is_valid || entry.is_duplicate) {
           selectedPaths[entry.value] = true;
         }
       });
@@ -139,7 +139,7 @@
         </div>
         <div>
           <span class="block text-[10px] text-text-muted font-mono uppercase">Issues Detected</span>
-          <span class="text-lg font-bold text-danger">{envPaths.filter(p => !p.is_valid || p.is_duplicate || p.is_overlap).length} errors</span>
+          <span class="text-lg font-bold text-danger">{envPaths.filter(p => !p.is_valid || p.is_duplicate).length} errors</span>
         </div>
       </div>
 
@@ -149,7 +149,7 @@
         </div>
         <div>
           <span class="block text-[10px] text-text-muted font-mono uppercase">Clean Entries</span>
-          <span class="text-lg font-bold text-success">{envPaths.filter(p => p.is_valid && !p.is_duplicate && !p.is_overlap).length} items</span>
+          <span class="text-lg font-bold text-success">{envPaths.filter(p => p.is_valid && !p.is_duplicate).length} items</span>
         </div>
       </div>
     </div>
@@ -221,11 +221,6 @@
                       <span class="px-2 py-0.5 rounded bg-amber-950/30 text-amber-400 border border-amber-800/40 flex items-center gap-1 w-max">
                         <ShieldAlert class="w-3.5 h-3.5" />
                         Duplicate
-                      </span>
-                    {:else if p.is_overlap}
-                      <span class="px-2 py-0.5 rounded bg-blue-950/30 text-blue-400 border border-blue-800/40 flex items-center gap-1 w-max">
-                        <ShieldAlert class="w-3.5 h-3.5" />
-                        Redundant
                       </span>
                     {:else}
                       <span class="px-2 py-0.5 rounded bg-emerald-950/30 text-emerald-400 border border-emerald-800/40 flex items-center gap-1 w-max">

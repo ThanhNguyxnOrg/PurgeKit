@@ -92,6 +92,28 @@
       return;
     }
 
+    const upperPath = trimmed.toUpperCase().replace(/\//g, "\\");
+    
+    // Block drive roots (like C:\ or D:)
+    const driveRootRegex = /^[A-Z]:\\?$/;
+    if (driveRootRegex.test(upperPath)) {
+      toast.show("Scanning drive roots directly is blocked for safety. Please select a specific folder inside the drive.", "error");
+      return;
+    }
+
+    // Block base system folders and user profile roots
+    const blockedDirs = [
+      "C:\\WINDOWS",
+      "C:\\PROGRAM FILES",
+      "C:\\PROGRAM FILES (x86)",
+      "C:\\PROGRAMDATA",
+      "C:\\USERS"
+    ];
+    if (blockedDirs.some(dir => upperPath === dir || (upperPath.startsWith(dir + "\\") && upperPath.split("\\").length <= 3))) {
+      toast.show("Protected system or base user profile directory cannot be swept directly for security reasons.", "error");
+      return;
+    }
+
     try {
       // Validate path existence on the backend
       const exists = await invoke<boolean>("check_directory_exists", { path: trimmed });

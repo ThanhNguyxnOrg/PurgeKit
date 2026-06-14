@@ -82,6 +82,14 @@ where
     ];
 
     for root in roots {
+        let expanded = crate::winutil::expand_env_strings(root);
+        let target = crate::winutil::canonicalize_path_safety(&expanded);
+        let target_str = target.to_string_lossy().to_string();
+
+        if let Err(e) = crate::winutil::is_safe_to_delete(&target_str) {
+            return Err(format!("Scanning blocked: '{}' is a protected directory and cannot be swept.", root));
+        }
+
         let path = PathBuf::from(root);
         if path.exists() && path.is_dir() {
             queue.push_back((path, 0));

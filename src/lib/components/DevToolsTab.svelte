@@ -421,37 +421,38 @@
         </div>
 
         <!-- Tools Grid -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {#each tools as tool}
-            <div class="border rounded-lg p-5 flex flex-col bg-surface-bg/50 transition-all duration-200 relative overflow-hidden group
-              {tool.detected 
-                ? 'border-border-default hover:border-border-strong' 
-                : 'border-border-subtle opacity-40 bg-surface-bg/10'}">
-              
-              <!-- Card Header -->
-              <div class="flex items-center justify-between">
-                <div class="flex items-center gap-3">
-                  <div class="w-10 h-10 rounded-lg bg-app-bg border border-border-default flex items-center justify-center shadow-sm">
-                    <Terminal class="w-5 h-5 {tool.detected ? 'text-accent' : 'text-text-disabled'}" />
-                  </div>
-                  <div>
-                    <h3 class="text-base font-bold font-sans capitalize text-text-primary">{tool.name}</h3>
-                    <span class="text-[10px] font-mono {tool.detected ? 'text-success' : 'text-text-muted'}">
-                      {tool.detected ? `Version ${tool.version}` : 'Not Detected'}
-                    </span>
-                  </div>
-                </div>
+        {#if tools.filter(t => t.detected).length === 0}
+          <div class="p-8 text-center border border-dashed border-border-default rounded-lg bg-surface-bg/30 flex flex-col items-center justify-center py-16">
+            <Terminal class="w-8 h-8 text-text-muted mb-3 animate-pulse" />
+            <span class="text-sm font-sans text-text-primary font-medium">No Developer Caches Detected</span>
+            <span class="text-xs text-text-muted mt-1 max-w-sm">We couldn't find any supported developer toolchains (like npm, cargo, docker, conda, etc.) in your system's PATH.</span>
+          </div>
+        {:else}
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {#each tools.filter(t => t.detected) as tool}
+              <div class="border border-border-default hover:border-border-strong rounded-lg p-5 flex flex-col bg-surface-bg/50 transition-all duration-200 relative overflow-hidden group">
                 
-                {#if tool.detected}
+                <!-- Card Header -->
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-lg bg-app-bg border border-border-default flex items-center justify-center shadow-sm">
+                      <Terminal class="w-5 h-5 text-accent" />
+                    </div>
+                    <div>
+                      <h3 class="text-base font-bold font-sans capitalize text-text-primary">{tool.name}</h3>
+                      <span class="text-[10px] font-mono text-success">
+                        Version {tool.version}
+                      </span>
+                    </div>
+                  </div>
+                  
                   <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-success/10 text-success border border-success/20">
                     Ready
                   </span>
-                {/if}
-              </div>
+                </div>
 
-              <!-- Path details -->
-              <div class="mt-4 flex-1 space-y-2.5 text-xs">
-                {#if tool.detected}
+                <!-- Path details -->
+                <div class="mt-4 flex-1 space-y-2.5 text-xs">
                   <div class="space-y-1">
                     <span class="text-text-muted font-mono text-[9px] uppercase tracking-wide">Cache Path</span>
                     <div class="flex items-center gap-1.5 text-text-secondary bg-app-bg p-2 rounded-lg border border-border-default font-mono text-[10px] select-all truncate" title={tool.cache_path}>
@@ -469,15 +470,9 @@
                       {formatSize(tool.cache_size)}
                     </span>
                   </div>
-                {:else}
-                  <p class="text-text-muted italic py-6 text-center font-sans">
-                    This tool was not found in your system's PATH. No caches to manage.
-                  </p>
-                {/if}
-              </div>
+                </div>
 
-              <!-- Actions -->
-              {#if tool.detected}
+                <!-- Actions -->
                 <div class="mt-5 pt-4 border-t border-border-default flex gap-2">
                   <button
                     onclick={() => cleanCache(tool.name)}
@@ -493,10 +488,10 @@
                     {/if}
                   </button>
                 </div>
-              {/if}
-            </div>
-          {/each}
-        </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
       {/if}
 
     {:else if activeSubTab === 'packages'}

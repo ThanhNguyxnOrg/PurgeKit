@@ -137,102 +137,58 @@ pub async fn clean_dev_tool_cache(app: AppHandle, name: String) -> Result<u64, S
             message: format!("Purging cache for '{}'...", name).into(),
         });
 
-        // Specially handle cargo
-        if name == "cargo" {
-            if let Some(ref path_str) = tool.cache_path {
-                let cargo_dir = Path::new(path_str);
-                let cache_dir = cargo_dir.join("registry").join("cache");
-                let git_db_dir = cargo_dir.join("git").join("db");
-                
-                let mut freed = 0;
-                if cache_dir.exists() {
-                    freed += scanner::cli_dev::calculate_dir_size(&cache_dir);
-                    let _ = fs::remove_dir_all(&cache_dir);
-                    let _ = fs::create_dir_all(&cache_dir);
+        // Load rules to find resolved cache paths
+        let rules = scanner::cli_dev::load_dev_tools_rules();
+        let rule = rules.iter().find(|r| r.name == name)
+            .ok_or_else(|| format!("Rule configuration not found for '{}'", name))?;
+
+        let mut resolved_paths = Vec::new();
+        if let Some(ref dyn_cmd) = rule.dynamic_cache_cmd {
+            if let Some(dyn_path) = scanner::cli_dev::get_single_dynamic_cache_path(&name, dyn_cmd) {
+                resolved_paths.push(dyn_path);
+            }
+        }
+        if resolved_paths.is_empty() {
+            if let Some(ref templates) = rule.cache_path_templates {
+                for temp in templates {
+                    if let Some(p) = scanner::cli_dev::resolve_template_path(temp) {
+                        if p.exists() {
+                            resolved_paths.push(p);
+                        }
+                    }
                 }
-                if git_db_dir.exists() {
-                    freed += scanner::cli_dev::calculate_dir_size(&git_db_dir);
-                    let _ = fs::remove_dir_all(&git_db_dir);
-                    let _ = fs::create_dir_all(&git_db_dir);
-                }
-                return Ok(freed);
             }
         }
 
-        // Specially handle gradle
-        if name == "gradle" {
-            if let Some(ref path_str) = tool.cache_path {
-                let cache_dir = Path::new(path_str);
-                let mut freed = 0;
-                if cache_dir.exists() {
-                    freed += scanner::cli_dev::calculate_dir_size(&cache_dir);
-                    let _ = fs::remove_dir_all(&cache_dir);
-                    let _ = fs::create_dir_all(&cache_dir);
+        let mut cleaned_via_cmd = false;
+
+        if let Some(ref clean_cmd) = rule.clean_command {
+            if SAFE_DEV_TOOL_CLEAN_COMMANDS.contains(&clean_cmd.as_str()) {
+                let secure_path = crate::winutil::get_secure_system_path();
+                let output = Command::new("cmd")
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .env("PATH", &secure_path)
+                    .args(&["/C", clean_cmd])
+                    .output()
+                    .map_err(|e| format!("Failed to execute clean command: {}", e))?;
+
+                if !output.status.success() {
+                    let err_msg = String::from_utf8_lossy(&output.stderr);
+                    return Err(format!("Clean command failed: {}", err_msg.trim()));
                 }
-                return Ok(freed);
+                cleaned_via_cmd = true;
             }
         }
 
-        // Specially handle maven
-        if name == "maven" {
-            if let Some(ref path_str) = tool.cache_path {
-                let cache_dir = Path::new(path_str);
-                let mut freed = 0;
-                if cache_dir.exists() {
-                    freed += scanner::cli_dev::calculate_dir_size(&cache_dir);
-                    let _ = fs::remove_dir_all(&cache_dir);
-                    let _ = fs::create_dir_all(&cache_dir);
+        // If not cleaned via whitelisted command, execute safe directory purging
+        if !cleaned_via_cmd {
+            for p in &resolved_paths {
+                if p.exists() {
+                    crate::winutil::is_safe_to_delete(&p.to_string_lossy()).map_err(|e| e.to_string())?;
+                    let _ = fs::remove_dir_all(p);
+                    let _ = fs::create_dir_all(p);
                 }
-                return Ok(freed);
             }
-        }
-
-        // Specially handle vscode
-        if name == "vscode" {
-            if let Some(ref path_str) = tool.cache_path {
-                let vscode_dir = Path::new(path_str);
-                let cache_dir = vscode_dir.join("Cache");
-                let cached_data_dir = vscode_dir.join("CachedData");
-                let workspace_storage_dir = vscode_dir.join("User").join("workspaceStorage");
-                
-                let mut freed = 0;
-                if cache_dir.exists() {
-                    freed += scanner::cli_dev::calculate_dir_size(&cache_dir);
-                    let _ = fs::remove_dir_all(&cache_dir);
-                    let _ = fs::create_dir_all(&cache_dir);
-                }
-                if cached_data_dir.exists() {
-                    freed += scanner::cli_dev::calculate_dir_size(&cached_data_dir);
-                    let _ = fs::remove_dir_all(&cached_data_dir);
-                    let _ = fs::create_dir_all(&cached_data_dir);
-                }
-                if workspace_storage_dir.exists() {
-                    freed += scanner::cli_dev::calculate_dir_size(&workspace_storage_dir);
-                    let _ = fs::remove_dir_all(&workspace_storage_dir);
-                    let _ = fs::create_dir_all(&workspace_storage_dir);
-                }
-                return Ok(freed);
-            }
-        }
-
-
-        // Standard CLI tools cache cleaning
-        let clean_cmd = tool.clean_command.as_ref()
-            .ok_or_else(|| format!("No clean command defined for '{}'", name))?;
-
-        if !SAFE_DEV_TOOL_CLEAN_COMMANDS.contains(&clean_cmd.as_str()) {
-            return Err(format!("Clean command '{}' is not in the safe whitelist (Command Injection Blocked)!", clean_cmd));
-        }
-
-        let output = Command::new("cmd")
-            .creation_flags(CREATE_NO_WINDOW)
-            .args(&["/C", clean_cmd])
-            .output()
-            .map_err(|e| format!("Failed to execute clean command: {}", e))?;
-
-        if !output.status.success() {
-            let err_msg = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("Clean command failed: {}", err_msg.trim()));
         }
 
         // Re-scan to compute the new size
@@ -254,7 +210,8 @@ pub async fn clean_dev_tool_cache(app: AppHandle, name: String) -> Result<u64, S
         });
 
         Ok(freed)
-    }).await.map_err(|e| e.to_string())?
+    })
+}.await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -432,16 +389,24 @@ pub async fn run_uninstall_command(uninstall_string: String) -> Result<(), Strin
     let is_uwp = uninstall_string.starts_with("powershell -NoProfile -Command \"Remove-AppxPackage -Package ") 
         && uninstall_string.ends_with('"');
         
+    let secure_path = crate::winutil::get_secure_system_path();
+
     if is_uwp {
         let prefix = "powershell -NoProfile -Command \"Remove-AppxPackage -Package ";
-        let package_full = uninstall_string[prefix.len()..uninstall_string.len() - 1].to_string();
+        let package_full = uninstall_string
+            .strip_prefix(prefix)
+            .and_then(|s| s.strip_suffix('"'))
+            .ok_or_else(|| "Malformed UWP uninstall string".to_string())?
+            .to_string();
         if !package_full.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '_' || c == '-') {
             return Err("Invalid UWP package name or contains unsafe characters".to_string());
         }
         
+        let path_clone = secure_path.clone();
         return tauri::async_runtime::spawn_blocking(move || {
             let mut child = Command::new("powershell")
                 .creation_flags(CREATE_NO_WINDOW)
+                .env("PATH", &path_clone)
                 .args(&["-NoProfile", "-Command", &format!("Remove-AppxPackage -Package {}", package_full)])
                 .spawn()
                 .map_err(|e| format!("Failed to spawn powershell: {}", e))?;
@@ -454,8 +419,13 @@ pub async fn run_uninstall_command(uninstall_string: String) -> Result<(), Strin
         return Err("Uninstall command contains invalid or unsafe characters (Command Injection Blocked)".to_string());
     }
     
+    if let Err(e) = validate_uninstall_command_safety(&uninstall_string) {
+        return Err(e);
+    }
+    
     tauri::async_runtime::spawn_blocking(move || {
         let mut child = Command::new("cmd")
+            .env("PATH", &secure_path)
             .args(&["/C", &uninstall_string])
             .spawn()
             .map_err(|e| format!("Failed to spawn uninstaller: {}", e))?;
@@ -660,6 +630,44 @@ fn is_safe_uninstall_string(s: &str) -> bool {
     !s.chars().any(|c| dangerous_chars.contains(&c))
 }
 
+fn validate_uninstall_command_safety(cmd_str: &str) -> Result<(), String> {
+    let exe_path = crate::winutil::extract_executable_path(cmd_str);
+    let exe_lower = exe_path.to_lowercase();
+    
+    let is_shell = exe_lower.ends_with("cmd.exe") || exe_lower == "cmd" 
+        || exe_lower.ends_with("powershell.exe") || exe_lower == "powershell"
+        || exe_lower.ends_with("pwsh.exe") || exe_lower == "pwsh";
+
+    if is_shell {
+        let cmd_lower = cmd_str.to_lowercase();
+        if cmd_lower.contains("users\\") || cmd_lower.contains("appdata") || cmd_lower.contains("temp\\") {
+            return Err("Execution blocked: Uninstaller command uses a shell wrapper targeting user-writable folders. This could lead to privilege escalation.".to_string());
+        }
+    }
+
+    let user_profile = std::env::var("USERPROFILE").unwrap_or_default().to_lowercase();
+    if !user_profile.is_empty() && exe_lower.starts_with(&user_profile) {
+        let path = std::path::Path::new(&exe_path);
+        if !path.exists() {
+            return Err(format!("Uninstaller executable does not exist: {}", exe_path));
+        }
+        
+        let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+        if ext != "exe" {
+            return Err(format!("Execution blocked: Uninstaller uses a non-executable script/file ({}) from a user-writable folder.", ext));
+        }
+
+        if is_elevated::is_elevated() && !crate::winutil::verify_file_signature(&exe_path) {
+            return Err(format!(
+                "Security Block: The uninstaller executable '{}' resides in a user-writable folder and is UNSIGNED. Running this elevated poses a Local Privilege Escalation risk.",
+                exe_path
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 fn remnant_requires_admin(item: &RemnantItem) -> bool {
     if item.item_type == "RegistryKey" || item.item_type == "RegistryValue" {
         return item.path.to_uppercase().starts_with("HKLM");
@@ -691,8 +699,10 @@ fn create_system_restore_point(app: &AppHandle) {
         return;
     }
 
+    let secure_path = crate::winutil::get_secure_system_path();
     let status = Command::new("powershell")
         .creation_flags(CREATE_NO_WINDOW)
+        .env("PATH", &secure_path)
         .args(&[
             "-NoProfile",
             "-Command",
@@ -806,6 +816,10 @@ pub async fn restore_quarantine_item(id: String) -> Result<(), String> {
 
         let dest_path = std::path::Path::new(&item.original_path);
         
+        if let Err(e) = crate::winutil::is_safe_to_delete(&item.original_path) {
+            return Err(format!("Restoration blocked: {}", e));
+        }
+        
         // Admin pre-check if restoring to protected system folders
         let dest_upper = item.original_path.to_uppercase();
         let is_system = dest_upper.contains("PROGRAM FILES") 
@@ -825,8 +839,10 @@ pub async fn restore_quarantine_item(id: String) -> Result<(), String> {
         if std::fs::rename(src_path, dest_path).is_err() {
             // Fallback: copy and delete
             if src_path.is_dir() {
+                let secure_path = crate::winutil::get_secure_system_path();
                 let status = std::process::Command::new("cmd")
                     .creation_flags(0x08000000)
+                    .env("PATH", &secure_path)
                     .args(&["/C", &format!("xcopy /E /I /Y \"{}\" \"{}\"", item.quarantine_path, item.original_path)])
                     .status();
                 if status.map_or(false, |s| s.success()) {
@@ -973,14 +989,15 @@ pub async fn run_bulk_silent_uninstall(
                 message: format!("Uninstalling {} silently...", app_name),
             });
 
+            let secure_path = crate::winutil::get_secure_system_path();
             let uninstall_success = if target_app.is_uwp {
                 if let Some(ref uninst_str) = target_app.uninstall_string {
                     let prefix = "powershell -NoProfile -Command \"Remove-AppxPackage -Package ";
-                    if uninst_str.starts_with(prefix) && uninst_str.ends_with('"') {
-                        let package_full = uninst_str[prefix.len()..uninst_str.len() - 1].to_string();
+                    if let Some(package_full) = uninst_str.strip_prefix(prefix).and_then(|s| s.strip_suffix('"')) {
                         if package_full.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '_' || c == '-') {
                             let status = Command::new("powershell")
                                 .creation_flags(CREATE_NO_WINDOW)
+                                .env("PATH", &secure_path)
                                 .args(&["-NoProfile", "-Command", &format!("Remove-AppxPackage -Package {}", package_full)])
                                 .status();
                             status.map(|s| s.success()).unwrap_or(false)
@@ -994,9 +1011,10 @@ pub async fn run_bulk_silent_uninstall(
                     false
                 }
             } else if let Some(silent_cmd) = get_silent_uninstall_command(target_app) {
-                if is_safe_uninstall_string(&silent_cmd) {
+                if is_safe_uninstall_string(&silent_cmd) && validate_uninstall_command_safety(&silent_cmd).is_ok() {
                     let status = Command::new("cmd")
                         .creation_flags(CREATE_NO_WINDOW)
+                        .env("PATH", &secure_path)
                         .args(&["/C", &silent_cmd])
                         .status();
                     status.map(|s| s.success()).unwrap_or(false)

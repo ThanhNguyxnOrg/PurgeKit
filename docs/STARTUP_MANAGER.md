@@ -4,33 +4,40 @@ The **Startup Manager** in PurgeKit allows you to audit, disable, enable, and de
 
 ---
 
-## 🔎 Scanning Hives & Paths
+## 🔎 Scanning Hives, Paths & Tasks
 
-PurgeKit scans two primary mechanisms Windows uses to trigger startup programs: the **System Registry** and **Startup Directories**.
+PurgeKit scans three primary mechanisms Windows uses to trigger startup programs: the **System Registry**, **Startup Directories**, and **Scheduled Tasks**.
 
 ```mermaid
 graph TD
     Scan[List Startup Items] --> Reg[Registry Hives]
     Scan --> Files[Startup Folders]
+    Scan --> Tasks[Scheduled Tasks]
 
-    Reg --> HKCU[HKCU SOFTWARE\...\Run & RunOnce]
-    Reg --> HKLM[HKLM SOFTWARE\...\Run & RunOnce]
+    Reg --> HKCU[HKCU Run / RunOnce / RunServices / RunServicesOnce]
+    Reg --> HKLM[HKLM Run / RunOnce / RunServices / RunServicesOnce]
     Reg --> HKLM32[HKLM Wow6432Node\...\Run & RunOnce]
 
     Files --> UserFolder[User Startup: %AppData%\...\Startup]
     Files --> CommonFolder[Common Startup: %ProgramData%\...\Startup]
+
+    Tasks --> TaskFolder[Scheduled Tasks: C:\Windows\System32\Tasks]
 ```
 
 ---
 
-## 🔒 Security Hives Detail
+## 🔒 Security Hives & Scheduled Tasks Detail
 
-### 1. Registry Run & RunOnce Keys
+### 1. Registry Run, RunOnce & RunServices Keys
 PurgeKit queries the following registry subkeys (both for 32-bit and 64-bit application environments):
 *   `HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
 *   `HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce`
+*   `HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\RunServices`
+*   `HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\RunServicesOnce`
 *   `HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
 *   `HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce`
+*   `HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\RunServices`
+*   `HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\RunServicesOnce`
 *   `HKEY_LOCAL_MACHINE\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Run`
 *   `HKEY_LOCAL_MACHINE\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\RunOnce`
 
@@ -40,6 +47,13 @@ PurgeKit queries the following registry subkeys (both for 32-bit and 64-bit appl
 PurgeKit searches the physical folders where Windows looks for shortcuts (`.lnk`) or executables (`.exe`) to run on login:
 *   **User Profile**: `%AppData%\Microsoft\Windows\Start Menu\Programs\Startup`
 *   **All Users**: `%ProgramData%\Microsoft\Windows\Start Menu\Programs\Startup`
+
+---
+
+### 3. Scheduled Tasks (Logon & Boot Triggers)
+PurgeKit recursively scans task configuration XML files located under the Windows Tasks directory:
+*   **Path**: `C:\Windows\System32\Tasks`
+*   **Trigger Heuristics**: The scanner reads the XML tags of each task file using a character-boundary-safe tag extractor. It parses the commands, arguments, and triggers. If the task contains a `<LogonTrigger>` or a `<BootTrigger>`, it is registered as an active startup item of type `"task"`.
 
 ---
 
@@ -68,10 +82,21 @@ Disabled (Discord is toggled OFF in PurgeKit)
 
 ---
 
+### 📅 Scheduled Tasks Toggles
+*   **Disabling**: PurgeKit renames the XML configuration file inside `C:\Windows\System32\Tasks`, appending `.disabled` to its filename. For example, `GoogleUpdateTaskMachineUA` becomes `GoogleUpdateTaskMachineUA.disabled`. Windows Task Scheduler ignores files ending in `.disabled`.
+*   **Enabling**: It renames the file back, removing the `.disabled` suffix.
+
+---
+
 ## 🛡️ Deletion & Privilege Guardrails
 
-*   **Permanently Deleting**: If you click the trash icon, PurgeKit deletes the registry value from both the active Run key and the `PurgeKit_Disabled` subkey, or permanently deletes the shortcut file using `fs::remove_file`.
+*   **Permanently Deleting**: If you click the trash icon, PurgeKit deletes the registry value from both the active Run key and the `PurgeKit_Disabled` subkey, permanently deletes the shortcut file, or deletes the task XML file.
 *   **UAC Admin Enforcement**:
     *   Startup items stored in `HKEY_CURRENT_USER` or the User Startup Folder can be modified by non-elevated users.
-    *   Startup items stored in `HKEY_LOCAL_MACHINE` or the Common/All Users Startup Folder (`%ProgramData%`) affect all users and **require Administrator privileges**.
-    *   If you attempt to modify HKLM keys or Common Startup files without launching PurgeKit as Administrator, the operation will cancel and prompt you to run as Administrator.
+    *   Startup items stored in `HKEY_LOCAL_MACHINE`, the Common/All Users Startup Folder (`%ProgramData%`), and the Scheduled Tasks directory (`C:\Windows\System32\Tasks`) affect all users and **require Administrator privileges**.
+    *   If you attempt to modify these without launching PurgeKit as Administrator, the operation is blocked and returns a UAC elevation error prompt.
+*   **Path Confinement Safeguard**:
+    *   To prevent path traversal and arbitrary file deletion/renaming vulnerabilities, all filesystem operations are strictly confined:
+        - Startup shortcut toggles/deletions must reside inside `%AppData%\Microsoft\Windows\Start Menu\Programs\Startup` or `%ProgramData%\Microsoft\Windows\Start Menu\Programs\Startup`.
+        - Scheduled task toggles/deletions must reside inside `C:\Windows\System32\Tasks`.
+        - Any filesystem deletion is passed to the safety checker (`winutil::is_safe_to_delete`) to verify it doesn't target critical system directories.

@@ -1,6 +1,6 @@
-# ✨ PurgeKit Detailed Features Guide (v1.0.0)
+# ✨ PurgeKit Detailed Features Guide
 
-This document provides a comprehensive, developer-level breakdown of all core features available in **PurgeKit v1.0.0** and how they interact with the Windows operating system, filesystem, and registry under the hood.
+This document provides a comprehensive, developer-level breakdown of all core features available in **PurgeKit** and how they interact with the Windows operating system, filesystem, and registry under the hood.
 
 ---
 
@@ -89,11 +89,7 @@ PurgeKit automates the complex manual compaction steps:
    ```
 4. **Elevation & Terminal Log**: Spawns DiskPart as Administrator (`runas` command equivalent via Tauri) and hooks stdout/stderr, streaming logs line-by-line in real-time to a Svelte console view.
 
-<<<<<<< HEAD
-### 🍃 Auto-Shrink (Sparse Mode)
-=======
 ### ⚖️ Auto-Shrink (Sparse Mode)
->>>>>>> 529a812beaf99ec34a058655123f656da2ca7246
 For Windows 11 systems, PurgeKit allows toggling the native sparse property:
 `wsl --manage [DistroName] --set-sparse true`
 This enables Windows to automatically reclaim unused space from the WSL2 virtual disk in the background, eliminating the need for manual compactions.

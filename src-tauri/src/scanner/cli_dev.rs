@@ -11,6 +11,21 @@ use winreg::RegKey;
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+fn get_secure_system_path() -> String {
+    crate::winutil::get_secure_system_path()
+}
+
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DevToolRule {
+    pub name: String,
+    pub cmd_to_run: Option<String>,
+    pub args: Vec<String>,
+    pub clean_command: Option<String>,
+    pub cache_path_templates: Option<Vec<String>>,
+    pub dynamic_cache_cmd: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DevToolInfo {
     pub name: String,
@@ -22,54 +37,258 @@ pub struct DevToolInfo {
     pub clean_command: Option<String>,
 }
 
+pub fn get_devtools_rules_path() -> PathBuf {
+    let localappdata = env::var_os("LOCALAPPDATA").map(PathBuf::from)
+        .unwrap_or_else(|| env::temp_dir());
+    localappdata.join("PurgeKit").join("devtools_rules.json")
+}
+
+pub fn resolve_template_path(template: &str) -> Option<PathBuf> {
+    let appdata = env::var_os("APPDATA").map(PathBuf::from);
+    let localappdata = env::var_os("LOCALAPPDATA").map(PathBuf::from);
+    let userprofile = env::var_os("USERPROFILE").map(PathBuf::from);
+
+    let mut path_str = template.to_string();
+    if path_str.contains("{APPDATA}") {
+        if let Some(ref p) = appdata {
+            path_str = path_str.replace("{APPDATA}", &p.to_string_lossy());
+        } else {
+            return None;
+        }
+    }
+    if path_str.contains("{LOCALAPPDATA}") {
+        if let Some(ref p) = localappdata {
+            path_str = path_str.replace("{LOCALAPPDATA}", &p.to_string_lossy());
+        } else {
+            return None;
+        }
+    }
+    if path_str.contains("{USERPROFILE}") {
+        if let Some(ref p) = userprofile {
+            path_str = path_str.replace("{USERPROFILE}", &p.to_string_lossy());
+        } else {
+            return None;
+        }
+    }
+
+    Some(PathBuf::from(path_str))
+}
+
+pub fn get_single_dynamic_cache_path(name: &str, cmd: &str) -> Option<PathBuf> {
+    let secure_path = get_secure_system_path();
+    if let Ok(output) = Command::new("cmd")
+        .creation_flags(CREATE_NO_WINDOW)
+        .env("PATH", &secure_path)
+        .args(&["/C", cmd])
+        .output()
+    {
+        if output.status.success() {
+            let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path_str.is_empty() {
+                let p = PathBuf::from(path_str);
+                if p.exists() {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn get_default_rules() -> Vec<DevToolRule> {
+    vec![
+        DevToolRule {
+            name: "npm".to_string(),
+            cmd_to_run: Some("npm".to_string()),
+            args: vec!["--version".to_string()],
+            clean_command: Some("npm cache clean --force".to_string()),
+            cache_path_templates: Some(vec!["{APPDATA}\\npm-cache".to_string()]),
+            dynamic_cache_cmd: Some("npm config get cache".to_string()),
+        },
+        DevToolRule {
+            name: "pnpm".to_string(),
+            cmd_to_run: Some("pnpm".to_string()),
+            args: vec!["--version".to_string()],
+            clean_command: Some("pnpm store prune".to_string()),
+            cache_path_templates: Some(vec![
+                "{LOCALAPPDATA}\\pnpm\\store".to_string(),
+                "{LOCALAPPDATA}\\pnpm-store".to_string(),
+            ]),
+            dynamic_cache_cmd: Some("pnpm store path".to_string()),
+        },
+        DevToolRule {
+            name: "yarn".to_string(),
+            cmd_to_run: Some("yarn".to_string()),
+            args: vec!["--version".to_string()],
+            clean_command: Some("yarn cache clean".to_string()),
+            cache_path_templates: Some(vec!["{LOCALAPPDATA}\\Yarn\\Cache".to_string()]),
+            dynamic_cache_cmd: None,
+        },
+        DevToolRule {
+            name: "pip".to_string(),
+            cmd_to_run: Some("pip".to_string()),
+            args: vec!["--version".to_string()],
+            clean_command: Some("pip cache purge".to_string()),
+            cache_path_templates: Some(vec!["{LOCALAPPDATA}\\pip\\cache".to_string()]),
+            dynamic_cache_cmd: Some("pip cache dir".to_string()),
+        },
+        DevToolRule {
+            name: "cargo".to_string(),
+            cmd_to_run: Some("cargo".to_string()),
+            args: vec!["--version".to_string()],
+            clean_command: Some("cargo clean".to_string()),
+            cache_path_templates: Some(vec![
+                "{USERPROFILE}\\.cargo\\registry\\cache".to_string(),
+                "{USERPROFILE}\\.cargo\\git\\db".to_string(),
+            ]),
+            dynamic_cache_cmd: None,
+        },
+        DevToolRule {
+            name: "go".to_string(),
+            cmd_to_run: Some("go".to_string()),
+            args: vec!["version".to_string()],
+            clean_command: Some("go clean -cache -modcache".to_string()),
+            cache_path_templates: Some(vec!["{LOCALAPPDATA}\\go-build".to_string()]),
+            dynamic_cache_cmd: Some("go env GOCACHE".to_string()),
+        },
+        DevToolRule {
+            name: "bun".to_string(),
+            cmd_to_run: Some("bun".to_string()),
+            args: vec!["--version".to_string()],
+            clean_command: Some("bun pm clean".to_string()),
+            cache_path_templates: Some(vec!["{LOCALAPPDATA}\\bun\\install\\cache".to_string()]),
+            dynamic_cache_cmd: None,
+        },
+        DevToolRule {
+            name: "deno".to_string(),
+            cmd_to_run: Some("deno".to_string()),
+            args: vec!["--version".to_string()],
+            clean_command: Some("deno clean".to_string()),
+            cache_path_templates: Some(vec!["{LOCALAPPDATA}\\deno".to_string()]),
+            dynamic_cache_cmd: None,
+        },
+        DevToolRule {
+            name: "gradle".to_string(),
+            cmd_to_run: Some("gradle".to_string()),
+            args: vec!["--version".to_string()],
+            clean_command: Some("gradle clean".to_string()),
+            cache_path_templates: Some(vec!["{USERPROFILE}\\.gradle\\caches".to_string()]),
+            dynamic_cache_cmd: None,
+        },
+        DevToolRule {
+            name: "maven".to_string(),
+            cmd_to_run: Some("mvn".to_string()),
+            args: vec!["--version".to_string()],
+            clean_command: Some("mvn clean".to_string()),
+            cache_path_templates: Some(vec!["{USERPROFILE}\\.m2\\repository".to_string()]),
+            dynamic_cache_cmd: None,
+        },
+        DevToolRule {
+            name: "dotnet".to_string(),
+            cmd_to_run: Some("dotnet".to_string()),
+            args: vec!["--version".to_string()],
+            clean_command: Some("dotnet nuget locals all --clear".to_string()),
+            cache_path_templates: Some(vec!["{USERPROFILE}\\.nuget\\packages".to_string()]),
+            dynamic_cache_cmd: None,
+        },
+        DevToolRule {
+            name: "docker".to_string(),
+            cmd_to_run: Some("docker".to_string()),
+            args: vec!["--version".to_string()],
+            clean_command: Some("docker system prune -f".to_string()),
+            cache_path_templates: None,
+            dynamic_cache_cmd: None,
+        },
+        DevToolRule {
+            name: "conda".to_string(),
+            cmd_to_run: Some("conda".to_string()),
+            args: vec!["--version".to_string()],
+            clean_command: Some("conda clean -a -y".to_string()),
+            cache_path_templates: Some(vec![
+                "{USERPROFILE}\\.conda".to_string(),
+                "{USERPROFILE}\\anaconda3\\pkgs".to_string(),
+                "{USERPROFILE}\\miniconda3\\pkgs".to_string(),
+            ]),
+            dynamic_cache_cmd: None,
+        },
+        DevToolRule {
+            name: "gem".to_string(),
+            cmd_to_run: Some("gem".to_string()),
+            args: vec!["--version".to_string()],
+            clean_command: Some("gem cleanup".to_string()),
+            cache_path_templates: Some(vec!["{USERPROFILE}\\.gem".to_string()]),
+            dynamic_cache_cmd: None,
+        },
+        DevToolRule {
+            name: "flutter".to_string(),
+            cmd_to_run: Some("flutter".to_string()),
+            args: vec!["--version".to_string()],
+            clean_command: Some("flutter pub cache clean --force".to_string()),
+            cache_path_templates: Some(vec!["{LOCALAPPDATA}\\Pub\\Cache".to_string()]),
+            dynamic_cache_cmd: None,
+        },
+        DevToolRule {
+            name: "vscode".to_string(),
+            cmd_to_run: Some("code".to_string()),
+            args: vec!["--version".to_string()],
+            clean_command: None,
+            cache_path_templates: Some(vec![
+                "{APPDATA}\\Code\\Cache".to_string(),
+                "{APPDATA}\\Code\\CachedData".to_string(),
+                "{APPDATA}\\Code\\User\\workspaceStorage".to_string(),
+            ]),
+            dynamic_cache_cmd: None,
+        },
+    ]
+}
+
+pub fn load_dev_tools_rules() -> Vec<DevToolRule> {
+    let path = get_devtools_rules_path();
+    if !path.exists() {
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let defaults = get_default_rules();
+        if let Ok(json_str) = serde_json::to_string_pretty(&defaults) {
+            let _ = fs::write(&path, json_str);
+        }
+        return defaults;
+    }
+    
+    if let Ok(content) = fs::read_to_string(&path) {
+        if let Ok(rules) = serde_json::from_str::<Vec<DevToolRule>>(&content) {
+            return rules;
+        }
+    }
+    get_default_rules()
+}
+
 pub fn scan_dev_tools() -> Vec<DevToolInfo> {
+    let rules = load_dev_tools_rules();
     let mut tools = Vec::new();
 
-    // List of 12 dev tools to check
-    let tool_checks = vec![
-        ("npm", vec!["--version"], "npm cache clean --force"),
-        ("pnpm", vec!["--version"], "pnpm store prune"),
-        ("yarn", vec!["--version"], "yarn cache clean"),
-        ("pip", vec!["--version"], "pip cache purge"),
-        ("cargo", vec!["--version"], "cargo clean"),
-        ("go", vec!["version"], "go clean -cache -modcache"),
-        ("bun", vec!["--version"], "bun pm clean"),
-        ("deno", vec!["--version"], "deno clean"),
-        ("gradle", vec!["--version"], "gradle clean"),
-        ("maven", vec!["--version"], "mvn clean"),
-        ("dotnet", vec!["--version"], "dotnet nuget locals all --clear"),
-        ("docker", vec!["--version"], "docker system prune -f"),
-        ("conda", vec!["--version"], "conda clean -a -y"),
-        ("gem", vec!["--version"], "gem cleanup"),
-        ("flutter", vec!["--version"], "flutter pub cache clean --force"),
-        ("vscode", vec!["--version"], "code --version"),
-    ];
-
-    for (name, args, clean_cmd) in tool_checks {
+    for rule in rules {
+        let name = rule.name.clone();
+        let cmd_to_run = rule.cmd_to_run.as_deref().unwrap_or(&name);
+        
         let mut info = DevToolInfo {
-            name: name.to_string(),
+            name: name.clone(),
             detected: false,
             version: None,
             path: None,
             cache_path: None,
             cache_size: None,
-            clean_command: Some(clean_cmd.to_string()),
-        };
-
-        let cmd_to_run = if name == "maven" { 
-            "mvn" 
-        } else if name == "vscode" {
-            "code"
-        } else { 
-            name 
+            clean_command: rule.clean_command.clone(),
         };
 
         // Run through `cmd /C`: npm, pnpm, yarn, gradle and mvn ship as
         // .cmd/.bat shims on Windows, which CreateProcess (Command::new)
         // cannot launch directly, so detection always failed for them.
-        let version_cmd = format!("{} {}", cmd_to_run, args.join(" "));
+        let secure_path = get_secure_system_path();
+        let version_cmd = format!("{} {}", cmd_to_run, rule.args.join(" "));
         if let Ok(output) = Command::new("cmd")
             .creation_flags(CREATE_NO_WINDOW)
+            .env("PATH", &secure_path)
             .args(&["/C", &version_cmd])
             .output()
         {
@@ -81,6 +300,7 @@ pub fn scan_dev_tools() -> Vec<DevToolInfo> {
                 // Find executable location
                 if let Ok(where_output) = Command::new("where")
                     .creation_flags(CREATE_NO_WINDOW)
+                    .env("PATH", &secure_path)
                     .arg(cmd_to_run)
                     .output()
                 {
@@ -104,6 +324,7 @@ pub fn scan_dev_tools() -> Vec<DevToolInfo> {
                 let version_cmd = format!("\"{}\" --version", code_path.to_string_lossy());
                 if let Ok(output) = Command::new("cmd")
                     .creation_flags(CREATE_NO_WINDOW)
+                    .env("PATH", &secure_path)
                     .args(&["/C", &version_cmd])
                     .output()
                 {
@@ -117,33 +338,32 @@ pub fn scan_dev_tools() -> Vec<DevToolInfo> {
 
         // If detected, find cache path and calculate its size
         if info.detected {
-            let cache_path = get_cache_path(name);
-            if let Some(ref path) = cache_path {
-                if path.exists() {
-                    info.cache_path = Some(path.to_string_lossy().to_string());
-                    
-                    // Special size calculations for vscode and cargo to match their custom purges
-                    let size = if name == "vscode" {
-                        let mut total = 0;
-                        let cache_dir = path.join("Cache");
-                        let cached_data_dir = path.join("CachedData");
-                        let workspace_storage_dir = path.join("User").join("workspaceStorage");
-                        if cache_dir.exists() { total += calculate_dir_size(&cache_dir); }
-                        if cached_data_dir.exists() { total += calculate_dir_size(&cached_data_dir); }
-                        if workspace_storage_dir.exists() { total += calculate_dir_size(&workspace_storage_dir); }
-                        total
-                    } else if name == "cargo" {
-                        let mut total = 0;
-                        let cache_dir = path.join("registry").join("cache");
-                        let git_db_dir = path.join("git").join("db");
-                        if cache_dir.exists() { total += calculate_dir_size(&cache_dir); }
-                        if git_db_dir.exists() { total += calculate_dir_size(&git_db_dir); }
-                        total
-                    } else {
-                        calculate_dir_size(path)
-                    };
-                    info.cache_size = Some(size);
+            let mut resolved_paths = Vec::new();
+            if let Some(ref dyn_cmd) = rule.dynamic_cache_cmd {
+                if let Some(dyn_path) = get_single_dynamic_cache_path(&name, dyn_cmd) {
+                    resolved_paths.push(dyn_path);
                 }
+            }
+            if resolved_paths.is_empty() {
+                if let Some(ref templates) = rule.cache_path_templates {
+                    for temp in templates {
+                        if let Some(p) = resolve_template_path(temp) {
+                            if p.exists() {
+                                resolved_paths.push(p);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !resolved_paths.is_empty() {
+                info.cache_path = Some(resolved_paths[0].to_string_lossy().to_string());
+                
+                let mut total_size = 0;
+                for p in &resolved_paths {
+                    total_size += calculate_dir_size(p);
+                }
+                info.cache_size = Some(total_size);
             }
         }
 
@@ -151,65 +371,6 @@ pub fn scan_dev_tools() -> Vec<DevToolInfo> {
     }
 
     tools
-}
-
-fn get_dynamic_cache_path(name: &str) -> Option<PathBuf> {
-    let cmd = match name {
-        "pnpm" => "pnpm store path",
-        "npm" => "npm config get cache",
-        "pip" => "pip cache dir",
-        "go" => "go env GOCACHE",
-        _ => return None,
-    };
-
-    if let Ok(output) = Command::new("cmd")
-        .creation_flags(CREATE_NO_WINDOW)
-        .args(&["/C", cmd])
-        .output()
-    {
-        if output.status.success() {
-            let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path_str.is_empty() {
-                let p = PathBuf::from(path_str);
-                if p.exists() {
-                    return Some(p);
-                }
-            }
-        }
-    }
-    None
-}
-
-fn get_cache_path(name: &str) -> Option<PathBuf> {
-    if let Some(dyn_path) = get_dynamic_cache_path(name) {
-        return Some(dyn_path);
-    }
-
-    let appdata = env::var_os("APPDATA").map(PathBuf::from);
-    let localappdata = env::var_os("LOCALAPPDATA").map(PathBuf::from);
-    let userprofile = env::var_os("USERPROFILE").map(PathBuf::from);
-
-    match name {
-        "npm" => appdata.map(|p| p.join("npm-cache")),
-        "pnpm" => localappdata.clone().map(|p| p.join("pnpm").join("store"))
-            .or_else(|| localappdata.map(|p| p.join("pnpm-store"))),
-        "yarn" => localappdata.map(|p| p.join("Yarn").join("Cache")),
-        "pip" => localappdata.map(|p| p.join("pip").join("cache")),
-        "cargo" => userprofile.map(|p| p.join(".cargo")),
-        "go" => localappdata.map(|p| p.join("go-build")),
-        "bun" => localappdata.map(|p| p.join("bun").join("install").join("cache")),
-        "deno" => localappdata.map(|p| p.join("deno")),
-        "gradle" => userprofile.clone().map(|p| p.join(".gradle").join("caches")),
-        "maven" => userprofile.map(|p| p.join(".m2").join("repository")),
-        "dotnet" => userprofile.map(|p| p.join(".nuget").join("packages")),
-        "conda" => userprofile.clone().map(|p| p.join(".conda"))
-            .or_else(|| userprofile.clone().map(|p| p.join("anaconda3").join("pkgs")))
-            .or_else(|| userprofile.clone().map(|p| p.join("miniconda3").join("pkgs"))),
-        "gem" => userprofile.map(|p| p.join(".gem")),
-        "flutter" => localappdata.map(|p| p.join("Pub").join("Cache")),
-        "vscode" => appdata.map(|p| p.join("Code")),
-        _ => None,
-    }
 }
 
 fn find_vscode_fallback_path() -> Option<PathBuf> {
@@ -747,6 +908,20 @@ fn scan_go_packages(packages: &mut Vec<GlobalCliPackage>) {
     }
 }
 
+fn safe_remove_dir_all(path: &Path) -> std::io::Result<()> {
+    if let Err(e) = crate::winutil::is_safe_to_delete(&path.to_string_lossy()) {
+        return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, e));
+    }
+    fs::remove_dir_all(path)
+}
+
+fn safe_remove_file(path: &Path) -> std::io::Result<()> {
+    if let Err(e) = crate::winutil::is_safe_to_delete(&path.to_string_lossy()) {
+        return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, e));
+    }
+    fs::remove_file(path)
+}
+
 pub fn uninstall_global_cli_package(name: &str, manager: &str) -> Result<(), String> {
     // SECURITY: the name is interpolated into a `cmd /C` string. Without
     // validation, a crafted name like "pkg & calc.exe" would be executed as
@@ -754,6 +929,7 @@ pub fn uninstall_global_cli_package(name: &str, manager: &str) -> Result<(), Str
     let is_valid = !name.is_empty()
         && name.len() <= 214
         && !name.starts_with('.')
+        && !name.contains("..")
         && name.matches('/').count() <= 1
         && name.chars().all(|c| {
             c.is_ascii_lowercase() || c.is_ascii_uppercase() || c.is_ascii_digit()
@@ -777,8 +953,10 @@ pub fn uninstall_global_cli_package(name: &str, manager: &str) -> Result<(), Str
     };
 
     if !cmd_arg.is_empty() {
+        let secure_path = get_secure_system_path();
         let output = Command::new("cmd")
             .creation_flags(CREATE_NO_WINDOW)
+            .env("PATH", &secure_path)
             .args(&["/C", &cmd_arg])
             .output()
             .map_err(|e| format!("Failed to execute uninstall command: {}", e))?;
@@ -797,7 +975,7 @@ pub fn uninstall_global_cli_package(name: &str, manager: &str) -> Result<(), Str
             if let Some(ref p) = appdata {
                 let path = p.join("npm").join("node_modules").join(name);
                 if path.exists() {
-                    let _ = fs::remove_dir_all(&path);
+                    let _ = safe_remove_dir_all(&path);
                 }
             }
         }
@@ -808,7 +986,7 @@ pub fn uninstall_global_cli_package(name: &str, manager: &str) -> Result<(), Str
             ];
             for p_opt in paths.into_iter().flatten() {
                 if p_opt.exists() {
-                    let _ = fs::remove_dir_all(&p_opt);
+                    let _ = safe_remove_dir_all(&p_opt);
                 }
             }
         }
@@ -819,7 +997,7 @@ pub fn uninstall_global_cli_package(name: &str, manager: &str) -> Result<(), Str
             ];
             for p_opt in paths.into_iter().flatten() {
                 if p_opt.exists() {
-                    let _ = fs::remove_dir_all(&p_opt);
+                    let _ = safe_remove_dir_all(&p_opt);
                 }
             }
         }
@@ -827,30 +1005,30 @@ pub fn uninstall_global_cli_package(name: &str, manager: &str) -> Result<(), Str
             if let Some(ref p) = userprofile {
                 let path = p.join(".bun").join("install").join("global").join("node_modules").join(name);
                 if path.exists() {
-                    let _ = fs::remove_dir_all(&path);
+                    let _ = safe_remove_dir_all(&path);
                 }
             }
         }
         "deno" => {
             if let Some(ref p) = userprofile {
                 let bin_dir = p.join(".deno").join("bin");
-                let _ = fs::remove_file(bin_dir.join(name));
-                let _ = fs::remove_file(bin_dir.join(format!("{}.cmd", name)));
-                let _ = fs::remove_file(bin_dir.join(format!("{}.ps1", name)));
+                let _ = safe_remove_file(&bin_dir.join(name));
+                let _ = safe_remove_file(&bin_dir.join(format!("{}.cmd", name)));
+                let _ = safe_remove_file(&bin_dir.join(format!("{}.ps1", name)));
             }
         }
         "go" => {
             if let Some(ref p) = userprofile {
                 let bin_dir = p.join("go").join("bin");
-                let _ = fs::remove_file(bin_dir.join(name));
-                let _ = fs::remove_file(bin_dir.join(format!("{}.exe", name)));
+                let _ = safe_remove_file(&bin_dir.join(name));
+                let _ = safe_remove_file(&bin_dir.join(format!("{}.exe", name)));
             }
         }
         "cargo" => {
             if let Some(ref p) = userprofile {
                 let bin_dir = p.join(".cargo").join("bin");
-                let _ = fs::remove_file(bin_dir.join(name));
-                let _ = fs::remove_file(bin_dir.join(format!("{}.exe", name)));
+                let _ = safe_remove_file(&bin_dir.join(name));
+                let _ = safe_remove_file(&bin_dir.join(format!("{}.exe", name)));
             }
         }
         "pip" => {
@@ -870,7 +1048,7 @@ pub fn uninstall_global_cli_package(name: &str, manager: &str) -> Result<(), Str
                                         if let Some(folder_name) = path.file_name().and_then(|n| n.to_str()) {
                                             let clean_folder = folder_name.split('-').next().unwrap_or(folder_name);
                                             if clean_folder.eq_ignore_ascii_case(name) {
-                                                let _ = fs::remove_dir_all(&path);
+                                                let _ = safe_remove_dir_all(&path);
                                             }
                                         }
                                     }
@@ -884,19 +1062,19 @@ pub fn uninstall_global_cli_package(name: &str, manager: &str) -> Result<(), Str
         "dotnet" => {
             if let Some(ref p) = userprofile {
                 let store_dir = p.join(".dotnet").join("tools").join(".store");
-                let _ = fs::remove_dir_all(store_dir.join(name));
+                let _ = safe_remove_dir_all(&store_dir.join(name));
                 let bin_dir = p.join(".dotnet").join("tools");
-                let _ = fs::remove_file(bin_dir.join(name));
-                let _ = fs::remove_file(bin_dir.join(format!("{}.exe", name)));
+                let _ = safe_remove_file(&bin_dir.join(name));
+                let _ = safe_remove_file(&bin_dir.join(format!("{}.exe", name)));
             }
         }
         "composer" => {
             if let Some(ref p) = appdata {
                 let comp_dir = p.join("Composer").join("vendor");
-                let _ = fs::remove_dir_all(comp_dir.join(name));
+                let _ = safe_remove_dir_all(&comp_dir.join(name));
                 let bin_dir = comp_dir.join("bin");
-                let _ = fs::remove_file(bin_dir.join(name));
-                let _ = fs::remove_file(bin_dir.join(format!("{}.bat", name)));
+                let _ = safe_remove_file(&bin_dir.join(name));
+                let _ = safe_remove_file(&bin_dir.join(format!("{}.bat", name)));
             }
         }
         _ => {}
@@ -1178,6 +1356,96 @@ pub fn get_cli_package_remnants(
         }
     }
 
+    // 4. Scan Environment Variables for remnants
+    let env_locations = vec![
+        ("HKCU", "Environment"),
+        ("HKLM", r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+    ];
+
+    for (hive_name, subpath) in env_locations {
+        let hive = match hive_name {
+            "HKCU" => RegKey::predef(HKEY_CURRENT_USER),
+            "HKLM" => RegKey::predef(HKEY_LOCAL_MACHINE),
+            _ => continue,
+        };
+
+        if let Ok(key) = hive.open_subkey_with_flags(subpath, KEY_READ) {
+            for (val_name, val_data) in key.enum_values().filter_map(|x| x.ok()) {
+                let val_name_upper = val_name.to_uppercase();
+                let clean_name_upper = clean_name.to_uppercase();
+                
+                let is_match = val_name_upper == clean_name_upper 
+                    || val_name_upper.starts_with(&format!("{}_", clean_name_upper))
+                    || val_name_upper.ends_with(&format!("_{}", clean_name_upper));
+                
+                if is_match && val_name_upper != "PATH" && val_name_upper != "TEMP" && val_name_upper != "TMP" {
+                    let full_reg_path = format!(r"{}\{}", subpath, val_name);
+                    if crate::winutil::is_safe_registry_key(hive_name, &full_reg_path).is_ok() {
+                        remnants.push(RemnantItem {
+                            path: format!(r"{}\{}\{}", hive_name, subpath, val_name),
+                            item_type: "RegistryValue".to_string(),
+                            size: val_data.bytes.len() as u64,
+                            confidence: "High".to_string(),
+                            score: 85,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // 5. Scan npm cache _npx folder
+    if let Some(ref p) = appdata {
+        let npx_cache = p.join("npm-cache").join("_npx");
+        if npx_cache.exists() {
+            if let Ok(entries) = fs::read_dir(&npx_cache) {
+                for entry in entries.filter_map(|e| e.ok()) {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        let pkg_json = path.join("package.json");
+                        let mut matches_pkg = false;
+                        if pkg_json.exists() {
+                            if let Ok(content) = fs::read_to_string(&pkg_json) {
+                                if content.contains(&format!("\"{}\"", name)) {
+                                    matches_pkg = true;
+                                }
+                            }
+                        }
+                        if matches_pkg {
+                            let path_str = path.to_string_lossy().to_string();
+                            if crate::winutil::is_safe_to_delete(&path_str).is_ok() {
+                                let size = calculate_dir_size(&path);
+                                remnants.push(RemnantItem {
+                                    path: path_str,
+                                    item_type: "Directory".to_string(),
+                                    size,
+                                    confidence: "High".to_string(),
+                                    score: 90,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Centralized Safety Gate Filter
+    remnants.retain(|item| {
+        match item.item_type.as_str() {
+            "File" | "Directory" => crate::winutil::is_safe_to_delete(&item.path).is_ok(),
+            "RegistryKey" | "RegistryValue" => {
+                let parts: Vec<&str> = item.path.splitn(2, '\\').collect();
+                if parts.len() >= 2 {
+                    crate::winutil::is_safe_registry_key(parts[0], parts[1]).is_ok()
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    });
+
     remnants
 }
 
@@ -1210,6 +1478,36 @@ mod tests {
         println!("Dynamic pip path: {:?}", pip_path);
         let go_path = get_dynamic_cache_path("go");
         println!("Dynamic go path: {:?}", go_path);
+    }
+
+    #[test]
+    fn test_uninstall_global_cli_package_validation() {
+        let valid_names = vec![
+            "express",
+            "@types/node",
+            "lodash-es",
+            "my_pkg_123",
+            "~some-pkg"
+        ];
+        for name in valid_names {
+            let res = uninstall_global_cli_package(name, "nonexistent");
+            assert_eq!(res.unwrap_err(), "Unsupported package manager: nonexistent");
+        }
+
+        let invalid_names = vec![
+            "express & calc.exe",
+            "express; calc.exe",
+            "express | calc.exe",
+            "../express",
+            "express/nested/deep",
+            ".hidden",
+            "",
+        ];
+        for name in invalid_names {
+            let res = uninstall_global_cli_package(name, "npm");
+            assert!(res.is_err());
+            assert!(res.unwrap_err().contains("Invalid package name"));
+        }
     }
 }
 

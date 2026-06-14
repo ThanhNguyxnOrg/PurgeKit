@@ -151,3 +151,20 @@ pub fn scan_typelib_orphans(app_token: &str) -> Vec<RemnantItem> {
     remnants
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_scan_com_orphans_no_crash() {
+        let result = scan_com_orphans("nonexistentappnamexyz", None);
+        println!("Scan COM orphans returned {} items", result.len());
+    }
+
+    #[test]
+    fn test_scan_typelib_orphans_no_crash() {
+        let result = scan_typelib_orphans("nonexistentappnamexyz");
+        println!("Scan Typelib orphans returned {} items", result.len());
+    }
+}
+

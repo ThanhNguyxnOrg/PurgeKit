@@ -138,6 +138,14 @@ pub fn delete_snapshot_by_id(id: &str) -> Result<(), String> {
     
     let path = Path::new(&data_file_path);
     if path.exists() {
+        let snap_dir = get_snapshots_dir();
+        let path_norm = crate::winutil::canonicalize_path_safety(&data_file_path);
+        let snap_dir_norm = crate::winutil::canonicalize_path_safety(&snap_dir.to_string_lossy());
+
+        if !path_norm.starts_with(&snap_dir_norm) {
+            return Err("Access Denied: Snapshot file resides outside designated snapshots directory.".to_string());
+        }
+
         let _ = fs::remove_file(path);
     }
     
@@ -234,6 +242,21 @@ fn scan_files_recursive(dir: &Path, max_depth: usize, files: &mut Vec<String>) {
         .filter_map(|e| e.ok())
     {
         files.push(entry.path().to_string_lossy().to_string());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_delete_snapshot_outside_dir_denied() {
+        let snap_dir = get_snapshots_dir();
+        let malicious_path = "C:\\Windows\\System32\\cmd.exe";
+        let path_norm = crate::winutil::canonicalize_path_safety(malicious_path);
+        let snap_dir_norm = crate::winutil::canonicalize_path_safety(&snap_dir.to_string_lossy());
+
+        assert!(!path_norm.starts_with(&snap_dir_norm), "Protected path must be recognized as outside snapshot folder");
     }
 }
 

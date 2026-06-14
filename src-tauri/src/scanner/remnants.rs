@@ -65,12 +65,15 @@ fn get_scan_locations(level: &str) -> Vec<ScanTarget> {
         targets.push(dir_target(localappdata.clone(), 60));
         targets.push(dir_target(localappdata.join("Programs"), 60));
     }
+    if let Some(userprofile) = env::var_os("USERPROFILE").map(PathBuf::from) {
+        targets.push(dir_target(userprofile.join("AppData").join("LocalLow"), 60));
+    }
     if let Some(programdata) = env::var_os("ProgramData").map(PathBuf::from) {
         targets.push(dir_target(programdata.clone(), 55));
         targets.push(dir_target(programdata.join(r"Microsoft\Windows\Start Menu\Programs"), 65));
     }
 
-    // ═══ TIER 3: User Profile (base_score: 40) ═══
+    // ═══ TIER 3: User Profile & Public (base_score: 40) ═══
     if let Some(userprofile) = env::var_os("USERPROFILE").map(PathBuf::from) {
         targets.push(dir_target(userprofile.clone(), 40));
         targets.push(dir_target(userprofile.join(".config"), 45));
@@ -78,8 +81,11 @@ fn get_scan_locations(level: &str) -> Vec<ScanTarget> {
         targets.push(dir_target(userprofile.join("Saved Games"), 40));
         targets.push(dir_target(userprofile.join("Desktop"), 60));
     }
-    if let Some(public_desktop) = env::var_os("PUBLIC").map(PathBuf::from) {
-        targets.push(dir_target(public_desktop.join("Desktop"), 55));
+    if let Some(public_dir) = env::var_os("PUBLIC").map(PathBuf::from) {
+        targets.push(dir_target(public_dir.clone(), 35));
+        targets.push(dir_target(public_dir.join("Documents"), 35));
+        targets.push(dir_target(public_dir.join("Downloads"), 35));
+        targets.push(dir_target(public_dir.join("Desktop"), 55));
     }
 
     // ═══ TIER 6: Registry SOFTWARE (base_score: 50) ═══
@@ -88,9 +94,6 @@ fn get_scan_locations(level: &str) -> Vec<ScanTarget> {
     targets.push(reg_target(HKEY_LOCAL_MACHINE, "HKLM", r"SOFTWARE\Wow6432Node", 50));
 
     // Uninstall keys (ghost entries)
-    // NOTE: use real hive names so purge_remnant_item and `reg export` backups
-    // can resolve these paths (HKLM_UNINSTALL/HKCU_UNINSTALL were unsupported
-    // hives, so purging ghost uninstall entries always failed).
     targets.push(reg_target(HKEY_LOCAL_MACHINE, "HKLM", &format!(r"SOFTWARE\{}", unsub), 70));
     targets.push(reg_target(HKEY_CURRENT_USER, "HKCU", &format!(r"SOFTWARE\{}", unsub), 70));
 
@@ -136,7 +139,7 @@ pub fn scan_app_remnants(
         }
     }
 
-    // Process targets in standard iterator (parallel not possible due to raw HKEY pointer)
+    // Process targets in standard iterator
     let mut fs_remnants: Vec<RemnantItem> = scan_targets.into_iter()
         .flat_map(|target| {
             let mut local_remnants = Vec::new();
@@ -154,8 +157,13 @@ pub fn scan_app_remnants(
         })
         .collect();
 
-
     remnants.append(&mut fs_remnants);
+
+    if settings.scan_level != "safe" {
+        let mut deep_remnants = Vec::new();
+        scan_deep_system_remnants(app_name, publisher, install_location, &mut deep_remnants);
+        remnants.append(&mut deep_remnants);
+    }
 
     if settings.scan_level == "aggressive" {
         let mut com_orphans = super::com_purger::scan_com_orphans(&match_token, install_location);
@@ -168,7 +176,6 @@ pub fn scan_app_remnants(
         remnants.append(&mut asep_remnants);
         remnants.append(&mut msi_remnants);
     }
-
 
     // Calculate confidence for each remnant
     for item in &mut remnants {
@@ -184,6 +191,22 @@ pub fn scan_app_remnants(
             unique_remnants.push(item);
         }
     }
+
+    // Centralized Safety Gate Filter
+    unique_remnants.retain(|item| {
+        match item.item_type.as_str() {
+            "File" | "Directory" => crate::winutil::is_safe_to_delete(&item.path).is_ok(),
+            "RegistryKey" | "RegistryValue" => {
+                let parts: Vec<&str> = item.path.splitn(2, '\\').collect();
+                if parts.len() >= 2 {
+                    crate::winutil::is_safe_registry_key(parts[0], parts[1]).is_ok()
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    });
 
     // Sort by confidence score (highest first)
     unique_remnants.sort_by(|a, b| b.score.cmp(&a.score));
@@ -213,13 +236,233 @@ fn clean_match_token(app_name: &str) -> String {
     kept.join(" ").trim().to_lowercase()
 }
 
+fn is_remnant_match(name: &str, token: &str, strict: bool) -> bool {
+    let name_lower = name.to_lowercase();
+    let token_lower = token.to_lowercase();
+
+    if name_lower == token_lower {
+        return true;
+    }
+
+    if name_lower == format!(".{}", token_lower) {
+        return true;
+    }
+
+    if strict {
+        return false;
+    }
+
+    let normalize = |s: &str| s.replace(' ', "").replace('-', "").replace('_', "");
+    if normalize(&name_lower) == normalize(&token_lower) {
+        return true;
+    }
+
+    let words: Vec<&str> = name_lower.split(|c: char| c.is_whitespace() || c == '-' || c == '_' || c == '.').collect();
+    if words.contains(&token_lower.as_str()) {
+        return true;
+    }
+
+    false
+}
+
+fn is_sensitive_directory(path: &Path) -> bool {
+    let path_str = path.to_string_lossy().to_string().to_lowercase();
+    let path_canon = crate::winutil::canonicalize_path_safety(&path_str);
+    let path_canon_str = path_canon.to_string_lossy().to_string().to_lowercase();
+
+    let user_profile = env::var("USERPROFILE").unwrap_or_default().to_lowercase();
+    if user_profile.is_empty() {
+        return false;
+    }
+
+    let sensitive_folders = vec![
+        user_profile.clone(),
+        format!(r"{}\documents", user_profile),
+        format!(r"{}\desktop", user_profile),
+        format!(r"{}\saved games", user_profile),
+        format!(r"{}\downloads", user_profile),
+        format!(r"{}\pictures", user_profile),
+        format!(r"{}\music", user_profile),
+        format!(r"{}\videos", user_profile),
+    ];
+
+    for folder in sensitive_folders {
+        let folder_canon = crate::winutil::canonicalize_path_safety(&folder);
+        let folder_canon_str = folder_canon.to_string_lossy().to_string().to_lowercase();
+        
+        if path_canon_str == folder_canon_str || path_canon_str.starts_with(&format!("{}\\", folder_canon_str)) {
+            let appdata_path = format!(r"{}\appdata", user_profile);
+            let appdata_canon = crate::winutil::canonicalize_path_safety(&appdata_path);
+            let appdata_canon_str = appdata_canon.to_string_lossy().to_string().to_lowercase();
+            if path_canon_str.starts_with(&appdata_canon_str) {
+                return false;
+            }
+            return true;
+        }
+    }
+
+    false
+}
+
+fn scan_deep_system_remnants(
+    app_name: &str,
+    publisher: Option<&str>,
+    install_location: Option<&str>,
+    remnants: &mut Vec<RemnantItem>,
+) {
+    let token = app_name.to_lowercase();
+    let install_loc_lower = install_location.map(|l| l.to_lowercase());
+
+    let path_belongs_to_app = |exe_path: &str| -> bool {
+        if let Some(ref loc) = install_loc_lower {
+            if !loc.is_empty() {
+                let e_lower = exe_path.to_lowercase();
+                return e_lower.starts_with(loc) || e_lower.contains(&format!("\\{}\\\\", loc));
+            }
+        }
+        false
+    };
+
+    // 1. Scan Scheduled Tasks
+    let tasks_dir = Path::new(r"C:\Windows\System32\Tasks");
+    if tasks_dir.exists() {
+        if let Ok(entries) = fs::read_dir(tasks_dir) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let path = entry.path();
+                if path.is_file() {
+                    let task_name = match path.file_name().and_then(|n| n.to_str()) {
+                        Some(n) => n.to_lowercase(),
+                        None => continue,
+                    };
+                    
+                    let mut matches = false;
+                    if task_name == token || task_name == format!("{}_updater", token) || task_name.starts_with(&format!("{}-", token)) {
+                        matches = true;
+                    }
+                    
+                    if !matches {
+                        if let Ok(content) = fs::read_to_string(&path) {
+                            if let Some(ref loc) = install_loc_lower {
+                                if !loc.is_empty() && content.to_lowercase().contains(loc) {
+                                    matches = true;
+                                }
+                            }
+                        }
+                    }
+
+                    if matches {
+                        let path_str = path.to_string_lossy().to_string();
+                        remnants.push(RemnantItem {
+                            path: path_str,
+                            item_type: "File".to_string(),
+                            size: entry.metadata().map(|m| m.len()).unwrap_or(0),
+                            confidence: "High".to_string(),
+                            score: 85,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Scan Windows Services
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let services_path = r"SYSTEM\CurrentControlSet\Services";
+    if let Ok(services_key) = hklm.open_subkey_with_flags(services_path, KEY_READ) {
+        for subkey_name in services_key.enum_keys().filter_map(|x| x.ok()) {
+            let subkey_name_lower = subkey_name.to_lowercase();
+            let mut matches = false;
+
+            if subkey_name_lower == token {
+                matches = true;
+            }
+
+            let full_service_path = format!(r"{}\{}", services_path, subkey_name);
+            if !matches {
+                if let Ok(service_key) = hklm.open_subkey_with_flags(&full_service_path, KEY_READ) {
+                    if let Ok(image_path) = service_key.get_value::<String, _>("ImagePath") {
+                        if path_belongs_to_app(&image_path) {
+                            matches = true;
+                        }
+                    }
+                }
+            }
+
+            if matches {
+                let registry_path = format!(r"HKLM\{}", full_service_path);
+                remnants.push(RemnantItem {
+                    path: registry_path,
+                    item_type: "RegistryKey".to_string(),
+                    size: 0,
+                    confidence: "High".to_string(),
+                    score: 85,
+                });
+            }
+        }
+    }
+
+    // 3. Scan COM Classes & ProgIDs
+    let class_hives = vec![
+        ("HKCU", r"Software\Classes"),
+        ("HKLM", r"SOFTWARE\Classes"),
+    ];
+
+    for (hive_name, subpath) in class_hives {
+        let hive = match hive_name {
+            "HKCU" => RegKey::predef(HKEY_CURRENT_USER),
+            "HKLM" => RegKey::predef(HKEY_LOCAL_MACHINE),
+            _ => continue,
+        };
+
+        if let Ok(classes_key) = hive.open_subkey_with_flags(subpath, KEY_READ) {
+            for subkey_name in classes_key.enum_keys().filter_map(|x| x.ok()) {
+                let subkey_name_lower = subkey_name.to_lowercase();
+                let is_progid_match = subkey_name_lower.starts_with(&format!("{}.", token));
+                
+                if is_progid_match {
+                    let full_class_path = format!(r"{}\{}", subpath, subkey_name);
+                    remnants.push(RemnantItem {
+                        path: format!(r"{}\{}", hive_name, full_class_path),
+                        item_type: "RegistryKey".to_string(),
+                        size: 0,
+                        confidence: "High".to_string(),
+                        score: 80,
+                    });
+                }
+            }
+
+            let clsid_path = format!(r"{}\CLSID", subpath);
+            if let Ok(clsid_key) = hive.open_subkey_with_flags(&clsid_path, KEY_READ) {
+                for guid in clsid_key.enum_keys().filter_map(|x| x.ok()) {
+                    let localserver = format!(r"{}\{}\LocalServer32", clsid_path, guid);
+                    if let Ok(server_key) = hive.open_subkey_with_flags(&localserver, KEY_READ) {
+                        if let Ok(server_path) = server_key.get_value::<String, _>("") {
+                            if path_belongs_to_app(&server_path) {
+                                let full_clsid_path = format!(r"{}\{}", clsid_path, guid);
+                                remnants.push(RemnantItem {
+                                    path: format!(r"{}\{}", hive_name, full_clsid_path),
+                                    item_type: "RegistryKey".to_string(),
+                                    size: 0,
+                                    confidence: "High".to_string(),
+                                    score: 90,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn scan_directory_remnants_recursive(
     parent_dir: &Path,
     token: &str,
     base_score: i32,
     remnants: &mut Vec<RemnantItem>,
 ) {
-    scan_directory_remnants_recursive_impl(parent_dir, token, base_score, remnants, 0, 3);
+    let strict = is_sensitive_directory(parent_dir);
+    scan_directory_remnants_recursive_impl(parent_dir, token, base_score, remnants, 0, 3, strict);
 }
 
 fn scan_directory_remnants_recursive_impl(
@@ -229,6 +472,7 @@ fn scan_directory_remnants_recursive_impl(
     remnants: &mut Vec<RemnantItem>,
     depth: u32,
     max_depth: u32,
+    strict: bool,
 ) {
     if depth > max_depth {
         return;
@@ -242,11 +486,23 @@ fn scan_directory_remnants_recursive_impl(
     for entry in entries.filter_map(|e| e.ok()) {
         let path = entry.path();
         let name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n.to_lowercase(),
+            Some(n) => n,
             None => continue,
         };
 
-        if name.contains(token) {
+        let mut matches = is_remnant_match(name, token, strict);
+        if matches && name.starts_with('.') && strict {
+            let user_profile = env::var("USERPROFILE").unwrap_or_default().to_lowercase();
+            let parent_lower = parent_dir.to_string_lossy().to_string().to_lowercase();
+            let parent_canon = crate::winutil::canonicalize_path_safety(&parent_lower);
+            let user_profile_canon = crate::winutil::canonicalize_path_safety(&user_profile);
+            
+            if parent_canon != user_profile_canon {
+                matches = false;
+            }
+        }
+
+        if matches {
             let item_type = if path.is_dir() { "Directory" } else { "File" };
             let size = if path.is_dir() {
                 super::cli_dev::calculate_dir_size(&path)
@@ -262,7 +518,8 @@ fn scan_directory_remnants_recursive_impl(
                 score: base_score,
             });
         } else if path.is_dir() {
-            scan_directory_remnants_recursive_impl(&path, token, base_score, remnants, depth + 1, max_depth);
+            let new_strict = is_sensitive_directory(&path);
+            scan_directory_remnants_recursive_impl(&path, token, base_score, remnants, depth + 1, max_depth, new_strict);
         }
     }
 }
@@ -477,6 +734,16 @@ pub fn purge_remnant_item(item: &RemnantItem) -> Result<(), String> {
             } else {
                 path_str
             };
+
+            let check_hive = if hive_name == "HKLM_WOW6432" {
+                "HKLM"
+            } else {
+                &hive_name
+            };
+
+            if let Err(e) = crate::winutil::is_safe_registry_key(check_hive, &normalized_path) {
+                return Err(e);
+            }
 
             let last_backslash = normalized_path.rfind('\\')
                 .ok_or_else(|| format!("Invalid registry path: {}", normalized_path))?;

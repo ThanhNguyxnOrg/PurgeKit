@@ -237,11 +237,7 @@ fn scan_uninstall_key(
                                         }
 
                                         let mut score = 0;
-                                        let name_without_ext = if file_name.len() > 4 {
-                                            &file_name[..file_name.len() - 4]
-                                        } else {
-                                            &file_name
-                                        };
+                                        let name_without_ext = file_name.strip_suffix(".exe").unwrap_or(&file_name);
 
                                         if app_name_lower.contains(name_without_ext) || name_without_ext.contains(&app_name_lower) {
                                             score += 100;
@@ -457,13 +453,49 @@ fn get_executable_from_uninstall_string(s: &str) -> Option<String> {
         }
     }
     
-    let first_space = s.find(' ').unwrap_or(s.len());
-    let mut exe = s[..first_space].to_string();
-    if !exe.to_lowercase().ends_with(".exe") && s.to_lowercase().contains(".exe") {
-        if let Some(exe_idx) = s.to_lowercase().find(".exe") {
-            exe = s[..exe_idx + 4].to_string();
-        }
+    let s_lower = s.to_lowercase();
+    if let Some(idx_in_lower) = s_lower.find(".exe") {
+        let char_count = s_lower[..idx_in_lower + 4].chars().count();
+        let exe: String = s.chars().take(char_count).collect();
+        return Some(exe);
     }
-    Some(exe)
+    
+    let first_space = s.find(' ').unwrap_or(s.len());
+    Some(s[..first_space].to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_executable_from_uninstall_string() {
+        assert_eq!(
+            get_executable_from_uninstall_string(r#""C:\Program Files\App\uninst.exe" /S"#),
+            Some(r"C:\Program Files\App\uninst.exe".to_string())
+        );
+        assert_eq!(
+            get_executable_from_uninstall_string(r#"C:\Program Files\App\uninst.exe /S"#),
+            Some(r"C:\Program Files\App\uninst.exe".to_string())
+        );
+        assert_eq!(
+            get_executable_from_uninstall_string(r#"C:\Windows\System32\cmd.exe"#),
+            Some(r"C:\Windows\System32\cmd.exe".to_string())
+        );
+        assert_eq!(
+            get_executable_from_uninstall_string(r#"C:\ChươngTrình\uninstall.exe /S"#),
+            Some(r"C:\ChươngTrình\uninstall.exe".to_string())
+        );
+        assert_eq!(
+            get_executable_from_uninstall_string(""),
+            None
+        );
+    }
+
+    #[test]
+    fn test_scan_registry_no_crash() {
+        let apps = scan_registry();
+        println!("Scan registry returned {} apps", apps.len());
+    }
 }
 

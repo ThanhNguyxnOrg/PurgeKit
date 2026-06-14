@@ -132,8 +132,10 @@ pub fn run_wsl_shutdown(app: &AppHandle) -> Result<(), String> {
         message: "Requesting WSL shutdown (wsl --shutdown)...".into(),
     });
 
+    let secure_path = crate::winutil::get_secure_system_path();
     let status = Command::new("wsl")
         .creation_flags(CREATE_NO_WINDOW)
+        .env("PATH", &secure_path)
         .arg("--shutdown")
         .status();
 
@@ -145,6 +147,21 @@ pub fn run_wsl_shutdown(app: &AppHandle) -> Result<(), String> {
 }
 
 pub fn compact_vhdx_diskpart(app: &AppHandle, vhdx_path: &str) -> Result<String, String> {
+    // Validate path security and injection prevention
+    if vhdx_path.contains('"') || vhdx_path.contains('\n') || vhdx_path.contains('\r') {
+        return Err("VHDX path contains invalid or dangerous characters (Diskpart Injection Blocked)".to_string());
+    }
+
+    let path = std::path::Path::new(vhdx_path);
+    if !path.exists() || !path.is_file() {
+        return Err(format!("VHDX file does not exist: {}", vhdx_path));
+    }
+
+    let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    if ext != "vhdx" {
+        return Err("File path must point to a valid .vhdx virtual disk.".to_string());
+    }
+
     // 1. Shutdown WSL to release file lock
     run_wsl_shutdown(app)?;
 
@@ -167,8 +184,10 @@ pub fn compact_vhdx_diskpart(app: &AppHandle, vhdx_path: &str) -> Result<String,
     });
 
     // 3. Run diskpart
+    let secure_path = crate::winutil::get_secure_system_path();
     let output = Command::new("diskpart")
         .creation_flags(CREATE_NO_WINDOW)
+        .env("PATH", &secure_path)
         .arg("/s")
         .arg(&script_path)
         .output();
@@ -214,14 +233,20 @@ pub fn compact_vhdx_diskpart(app: &AppHandle, vhdx_path: &str) -> Result<String,
 }
 
 pub fn set_wsl_distro_sparse(app: &AppHandle, distro_name: &str, sparse: bool) -> Result<(), String> {
+    if distro_name.chars().any(|c| c.is_control() || c == ' ' || c == '&' || c == '|' || c == '"') {
+        return Err("Invalid WSL distribution name".to_string());
+    }
+
     // 1. Shutdown WSL first
     run_wsl_shutdown(app)?;
 
     // 2. Set sparse flag
     let status_str = if sparse { "true" } else { "false" };
     
+    let secure_path = crate::winutil::get_secure_system_path();
     let status = Command::new("wsl")
         .creation_flags(CREATE_NO_WINDOW)
+        .env("PATH", &secure_path)
         .args(&["--manage", distro_name, "--set-sparse", status_str])
         .status();
 

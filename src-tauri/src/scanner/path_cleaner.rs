@@ -39,69 +39,7 @@ pub fn get_path_entries() -> Result<Vec<PathEntry>, String> {
     }
 
     // Validate entries
-    let mut results = Vec::new();
-    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-
-    // Prepare overlap detection
-    let mut sorted: Vec<(usize, String)> = raw_entries.iter().enumerate()
-        .map(|(i, (p, _))| {
-            let expanded = crate::winutil::expand_env_strings(p);
-            (i, expanded.to_lowercase().trim_end_matches('\\').to_string())
-        })
-        .collect();
-    // Sort by path length to easily find prefix relationships
-    sorted.sort_by(|a, b| a.1.len().cmp(&b.1.len()));
-
-    let mut overlaps = std::collections::HashSet::new();
-    for i in 0..sorted.len() {
-        for j in i+1..sorted.len() {
-            let parent = &sorted[i].1;
-            let child = &sorted[j].1;
-            if !parent.is_empty() && !child.is_empty() && (child.starts_with(&format!("{}\\", parent)) || child == parent) {
-                if sorted[j].0 != sorted[i].0 {
-                    overlaps.insert(sorted[j].0);
-                }
-            }
-        }
-    }
-
-    for (idx, (raw, scope)) in raw_entries.into_iter().enumerate() {
-        let expanded = crate::winutil::expand_env_strings(&raw);
-        let normalized = expanded.to_lowercase().trim_end_matches('\\').to_string();
-        let exists = Path::new(&expanded).is_dir();
-
-        let dead = !exists;
-        
-        let (is_dup, dup_of) = if let Some(&first) = seen.get(&normalized) {
-            (true, Some(first))
-        } else {
-            seen.insert(normalized.clone(), idx);
-            (false, None)
-        };
-
-        let is_overlap = overlaps.contains(&idx);
-
-        let issue = if dead {
-            "Directory does not exist".to_string()
-        } else if is_dup {
-            format!("Duplicate of line #{}", dup_of.unwrap() + 1)
-        } else if is_overlap {
-            "Redundant subdirectory of another PATH entry".to_string()
-        } else {
-            "Valid".to_string()
-        };
-
-        results.push(PathEntry {
-            value: raw,
-            expanded,
-            is_valid: exists,
-            is_duplicate: is_dup,
-            is_overlap,
-            scope,
-            issue_reason: issue,
-        });
-    }
-
+    let results = validate_path_entries(raw_entries);
     Ok(results)
 }
 
@@ -149,5 +87,89 @@ fn write_path_to_registry(hkey: winreg::HKEY, subpath: &str, value: &str) -> Res
         .map_err(|e| format!("Failed to write Registry key: {}", e))?;
 
     Ok(())
+}
+
+fn validate_path_entries(raw_entries: Vec<(String, String)>) -> Vec<PathEntry> {
+    let mut results = Vec::new();
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+
+    for (idx, (raw, scope)) in raw_entries.into_iter().enumerate() {
+        let expanded = crate::winutil::expand_env_strings(&raw);
+        let normalized = expanded.to_lowercase().trim_end_matches('\\').to_string();
+        let exists = Path::new(&expanded).is_dir();
+
+        let dead = !exists;
+        
+        let (is_dup, dup_of) = if let Some(&first) = seen.get(&normalized) {
+            (true, Some(first))
+        } else {
+            seen.insert(normalized.clone(), idx);
+            (false, None)
+        };
+
+        let is_overlap = false;
+
+        let issue = if dead {
+            "Directory does not exist".to_string()
+        } else if is_dup {
+            format!("Duplicate of line #{}", dup_of.unwrap() + 1)
+        } else {
+            "Valid".to_string()
+        };
+
+        results.push(PathEntry {
+            value: raw,
+            expanded,
+            is_valid: exists,
+            is_duplicate: is_dup,
+            is_overlap,
+            scope,
+            issue_reason: issue,
+        });
+    }
+    results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_path_entries() {
+        let temp_dir = std::env::temp_dir().join("purgekit_test_path_cleaner");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let sub_dir = temp_dir.join("sub");
+        std::fs::create_dir_all(&sub_dir).unwrap();
+
+        let raw_entries = vec![
+            (sub_dir.to_string_lossy().to_string(), "User".to_string()),
+            (sub_dir.to_string_lossy().to_string(), "System".to_string()), // duplicate
+            (temp_dir.join("non_existent").to_string_lossy().to_string(), "User".to_string()), // dead
+        ];
+
+        let results = validate_path_entries(raw_entries);
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        assert_eq!(results.len(), 3);
+
+        // First is valid
+        assert!(results[0].is_valid);
+        assert!(!results[0].is_duplicate);
+        assert_eq!(results[0].issue_reason, "Valid");
+
+        // Second is duplicate
+        assert!(results[1].is_valid);
+        assert!(results[1].is_duplicate);
+        assert!(results[1].issue_reason.contains("Duplicate"));
+
+        // Third is dead
+        assert!(!results[2].is_valid);
+        assert!(!results[2].is_duplicate);
+        assert_eq!(results[2].issue_reason, "Directory does not exist");
+    }
 }
 

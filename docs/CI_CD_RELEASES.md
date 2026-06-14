@@ -4,11 +4,7 @@ PurgeKit features a fully automated Continuous Integration & Continuous Delivery
 
 ---
 
-<<<<<<< HEAD
-## 🛠️ Release Automation Architecture
-=======
 ## 🚀 Release Automation Architecture
->>>>>>> 529a812beaf99ec34a058655123f656da2ca7246
 
 ```mermaid
 graph TD
@@ -68,7 +64,7 @@ The pipeline uses `tauri-apps/tauri-action` to:
 *   Package the app into:
     *   **`.msi`**: Windows Installer package.
     *   **`.exe`**: Standalone executable.
-*   Automatically create the Git version tag (e.g. `v1.0.0`) on the target commit.
+*   Automatically create the Git version tag (e.g. `vX.Y.Z`) on the target commit.
 *   Create a draft release on GitHub with compiled binaries attached.
 
 ---
@@ -77,10 +73,10 @@ The pipeline uses `tauri-apps/tauri-action` to:
 
 To trigger a release:
 1. Update versions in files (`package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`).
-2. Document new items in [CHANGELOG.md](file:///d:/Code/PurgeKit/CHANGELOG.md) under a header matching your version (e.g., `## [1.0.0]`).
+2. Document new items in [CHANGELOG.md](file:///d:/Code/PurgeKit/CHANGELOG.md) under a header matching your version (e.g., `## [X.Y.Z]`).
 3. Commit and push your changes to `main` with a release tag in your commit message:
    ```bash
-   git commit -m "Release v1.0.0"
+   git commit -m "release: vX.Y.Z"
    git push origin main
    ```
 4. The pipeline will automatically build, create the git tag, and create the draft release for you!

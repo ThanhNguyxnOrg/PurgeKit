@@ -1,4 +1,4 @@
-# 🔧 PurgeKit Development Guide (v1.0.0)
+# 🔧 PurgeKit Development Guide
 
 This guide describes how to configure your local development environment, add new features, compile the binaries, and manage Administrator elevation requests on Windows.
 
@@ -47,59 +47,31 @@ To ensure the compiled application always requests elevation via Windows User Ac
 
 ## 🧹 Adding a New Developer Cache
 
-To add a new tool to the **Dev Tools Cache** panel:
+To add a new tool to the **Dev Tools Cache** panel, you no longer need to write Rust code. You can simply add a new rule entry to the dynamic devtools rules JSON configuration file:
 
-### 1. Register the Tool in Rust Backend (`src-tauri/src/scanner/cli_dev.rs`)
-Add your tool specifications inside `get_dev_tools()`:
-```rust
-// Example: Adding Python Poetry Cache
-let mut poetry_info = DevToolInfo {
-    name: "poetry".to_string(),
-    detected: false,
-    version: None,
-    path: None,
-    cache_path: None,
-    cache_size: None,
-    clean_command: Some("poetry cache clear --all .".to_string()),
-};
+### 1. Add Entry to `devtools_rules.json`
+Locate the rules file at:
+`%LocalAppData%\PurgeKit\devtools_rules.json`
 
-// 1. Check if the tool is installed in the system PATH
-if let Ok(poetry_path) = which::which("poetry") {
-    poetry_info.detected = true;
-    poetry_info.path = Some(poetry_path.to_string_lossy().to_string());
-    
-    // 2. Resolve the tool version by spawning poetry --version
-    if let Ok(version_output) = std::process::Command::new("poetry")
-        .arg("--version")
-        .output() {
-        if version_output.status.success() {
-            poetry_info.version = Some(String::from_utf8_lossy(&version_output.stdout).trim().to_string());
-        }
-    }
-
-    // 3. Set the cache directory and calculate its size
-    if let Some(mut cache_dir) = dirs::cache_dir() {
-        cache_dir.push("pypoetry");
-        cache_dir.push("cache");
-        poetry_info.cache_path = Some(cache_dir.to_string_lossy().to_string());
-        poetry_info.cache_size = Some(get_dir_size(&cache_dir));
-    }
+Add a new JSON object to the array. For example, to add the **Python Poetry** cache:
+```json
+{
+  "name": "poetry",
+  "cmd_to_run": "poetry",
+  "args": ["--version"],
+  "clean_command": "",
+  "cache_path_templates": ["{APPDATA}\\pypoetry\\cache"],
+  "dynamic_cache_cmd": ""
 }
 ```
 
-### 2. Implement the Cleaning Command (`clean_dev_tool_cache`)
-In the command handler inside `cli_dev.rs`, add the deletion rule to purge the cache folder safely:
-```rust
-if name == "poetry" {
-    if let Some(mut cache_dir) = dirs::cache_dir() {
-        cache_dir.push("pypoetry");
-        cache_dir.push("cache");
-        if cache_dir.exists() {
-            std::fs::remove_dir_all(&cache_dir)?;
-        }
-    }
-}
-```
+### 2. Field Guide for New Entries
+- **`name`**: The display name of the developer tool.
+- **`cmd_to_run`**: (Optional) The executable name used to check if the tool is installed. If omitted, defaults to `name`.
+- **`args`**: Array of arguments passed to check installation (e.g. `["--version"]`).
+- **`clean_command`**: (Optional) Standard shell clean command. Note that only whitelisted commands will execute via shell. If you want PurgeKit to purge the folder directly, leave this empty or unwhitelisted.
+- **`cache_path_templates`**: (Optional) List of cache directories to purge. You can use placeholders like `{APPDATA}`, `{LOCALAPPDATA}`, and `{USERPROFILE}`.
+- **`dynamic_cache_cmd`**: (Optional) A command to run to query the cache path dynamically.
 
 ---
 

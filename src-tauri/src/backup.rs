@@ -38,8 +38,10 @@ pub fn backup_registry_key(key_path: &str) -> Result<PathBuf, String> {
     let file_name = format!("{}_{}.reg", timestamp, cleaned_name);
     let backup_file = get_backups_dir().join(file_name);
     
+    let secure_path = crate::winutil::get_secure_system_path();
     let output = Command::new("reg")
         .creation_flags(CREATE_NO_WINDOW)
+        .env("PATH", &secure_path)
         .args(&["export", key_path, &backup_file.to_string_lossy(), "/y"])
         .output()
         .map_err(|e| format!("Failed to run reg export command: {}", e))?;
@@ -69,7 +71,12 @@ fn copy_dir_all(src: impl AsRef<std::path::Path>, dst: impl AsRef<std::path::Pat
     fs::create_dir_all(&dst)?;
     for entry in fs::read_dir(src)? {
         let entry = entry?;
-        let ty = entry.file_type()?;
+        let metadata = entry.metadata()?;
+        let ty = metadata.file_type();
+        if ty.is_symlink() {
+            // Skip symlinks and junction points to prevent TOCTOU and directory traversal out of range.
+            continue;
+        }
         if ty.is_dir() {
             copy_dir_all(entry.path(), dst.as_ref().join(entry.file_name()))?;
         } else {
@@ -80,6 +87,10 @@ fn copy_dir_all(src: impl AsRef<std::path::Path>, dst: impl AsRef<std::path::Pat
 }
 
 pub fn quarantine_file_or_directory(path_str: &str) -> Result<PathBuf, String> {
+    if let Err(e) = crate::winutil::is_safe_to_delete(path_str) {
+        return Err(e);
+    }
+
     let src_path = std::path::Path::new(path_str);
     if !src_path.exists() {
         return Ok(PathBuf::new());
@@ -98,15 +109,23 @@ pub fn quarantine_file_or_directory(path_str: &str) -> Result<PathBuf, String> {
         // Fallback: Copy recursively then remove
         if src_path.is_dir() {
             if copy_dir_all(src_path, &dest_path).is_ok() {
-                let _ = fs::remove_dir_all(src_path);
-                true
+                if fs::remove_dir_all(src_path).is_ok() {
+                    true
+                } else {
+                    let _ = fs::remove_dir_all(&dest_path);
+                    false
+                }
             } else {
                 false
             }
         } else {
             if fs::copy(src_path, &dest_path).is_ok() {
-                let _ = fs::remove_file(src_path);
-                true
+                if fs::remove_file(src_path).is_ok() {
+                    true
+                } else {
+                    let _ = fs::remove_file(&dest_path);
+                    false
+                }
             } else {
                 false
             }
@@ -130,5 +149,42 @@ pub fn quarantine_file_or_directory(path_str: &str) -> Result<PathBuf, String> {
         Ok(dest_path)
     } else {
         Err("Failed to move item to quarantine".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn test_quarantine_file() {
+        let temp_dir = std::env::temp_dir().join("purgekit_test_quarantine");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let test_file = temp_dir.join("test_quarantine_file.txt");
+        fs::write(&test_file, "quarantine contents").unwrap();
+
+        // Initialize the DB first
+        let _ = crate::db::init_db();
+
+        let test_file_str = test_file.to_string_lossy().to_string();
+        let res = quarantine_file_or_directory(&test_file_str);
+        assert!(res.is_ok(), "Quarantine should succeed");
+
+        let q_path = res.unwrap();
+        assert!(q_path.exists(), "Quarantined file should exist at destination");
+        assert!(!test_file.exists(), "Source file should have been removed");
+
+        // Clean up
+        let _ = fs::remove_file(&q_path);
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_quarantine_protected_denied() {
+        let res = quarantine_file_or_directory(r"C:\Windows\System32\cmd.exe");
+        assert!(res.is_err(), "Quarantining protected system file should be blocked");
     }
 }

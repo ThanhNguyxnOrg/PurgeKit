@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0] - 2026-06-14
+
+### 🔒 Security Hardening & LPE Prevention
+* **🛡️ Secure PATH Utility**: Implemented a centralized secure system PATH lookup querying admin-writable `HKLM` hives, overriding the PATH variable in all spawned process executions (PowerShell, CMD, WSL, DiskPart, XCopy, Registry Export) to block path hijacking attacks.
+* **🚧 Confinement & Safety Gates**:
+  - Integrated `winutil::is_safe_to_delete` checks into dev tool cache purging and CLI package uninstallation workflows.
+  - Added strict path confinement (`is_in_startup_dir` and `is_in_tasks_dir`) to restrict file operations in Startup Manager to valid directories, returning `Access Denied` on unauthorized paths.
+  - Safe Unicode and UWP package name parsing to prevent crashes/panics on multi-byte characters in uninstall strings.
+* **📂 Dotfolder Repository Protection**: Remnants scans now strictly ignore dotfolders/dotfiles (like `.git`, `.vscode`, `.idea`, `.gradle`) inside sensitive user directories (`Desktop`, `Documents`, `Downloads`), protecting local code repos and IDE configurations from accidental cleanup.
+
+### ⚙️ Dynamic Developer Tools Rules
+* **📝 Data-Driven Configuration**: Dev tools definitions are now loaded dynamically from `%LOCALAPPDATA%\PurgeKit\devtools_rules.json` (auto-created with 16 defaults if missing).
+* **⚡ Template Resolution**: Supports environment templates (`{APPDATA}`, `{LOCALAPPDATA}`, `{USERPROFILE}`) and dynamic cache command resolution.
+* **🛡️ Safe Fallback Purging**: Custom user rules bypass command execution entirely to prevent LPE. Instead, they trigger secure direct directory purging using safe deletion gates.
+
+### 🚀 Advanced Startup Manager & Scheduled Tasks
+* **🔍 Registry Hives Expansion**: Expanded Startup Manager scanning to cover `Wow6432Node` user run keys and legacy `RunServices`/`RunServicesOnce` hives under both `HKCU` and `HKLM`.
+* **⏰ Logon & Boot Scheduled Tasks**:
+  - Recursively scans `C:\Windows\System32\Tasks` for Scheduled Tasks triggered at boot/logon.
+  - Parses XML task actions safely for `<Command>`, `<Arguments>`, and COM `<ClassId>` actions.
+  - Supports enabling/disabling tasks by appending/removing `.disabled` to task files under strict Admin validation.
+
+### 🐛 GitHub Integration & Reporting
+* **📝 Dynamic Bug Reporting**: Split reports into dedicated Bug Reports (automatically gathers OS version, Admin status, and app version for GitHub pre-population) and Feature Suggestions.
+
+---
+
 ## [1.0.0] - 2026-06-11
 
 ### 🎉 Welcome to PurgeKit v1.0.0! 🚀

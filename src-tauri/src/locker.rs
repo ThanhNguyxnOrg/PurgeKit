@@ -14,6 +14,10 @@ pub enum DeleteResult {
 }
 
 pub fn delete_file_with_escalation(path: &str) -> DeleteResult {
+    if let Err(e) = crate::winutil::is_safe_to_delete(path) {
+        return DeleteResult::Failed(e);
+    }
+
     let path_buf = Path::new(path);
     if !path_buf.exists() {
         return DeleteResult::Deleted;

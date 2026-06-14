@@ -27,9 +27,64 @@ fn calculate_dir_size(path: &Path) -> u64 {
     size
 }
 
+fn is_in_toolchain_dir(manager: &str, path_str: &str) -> bool {
+    let path = Path::new(path_str);
+    let path_norm = crate::winutil::canonicalize_path_safety(&path.to_string_lossy());
+    let path_norm_str = path_norm.to_string_lossy().to_lowercase();
+
+    let userprofile = std::env::var("USERPROFILE").map(PathBuf::from).ok();
+
+    let mut allowed_parents = Vec::new();
+    match manager {
+        "rustup" => {
+            if let Some(up) = &userprofile {
+                allowed_parents.push(up.join(".rustup").join("toolchains"));
+            }
+        }
+        "nvm" => {
+            if let Ok(nvm_home) = std::env::var("NVM_HOME").map(PathBuf::from) {
+                allowed_parents.push(nvm_home);
+            }
+            if let Some(up) = &userprofile {
+                allowed_parents.push(up.join("AppData").join("Roaming").join("nvm"));
+            }
+        }
+        "fnm" => {
+            if let Ok(fnm_dir) = std::env::var("FNM_DIR").map(PathBuf::from) {
+                allowed_parents.push(fnm_dir.join("node-versions"));
+            }
+            if let Some(up) = &userprofile {
+                allowed_parents.push(up.join(".fnm").join("node-versions"));
+                allowed_parents.push(up.join(".local").join("share").join("fnm").join("node-versions"));
+            }
+            if let Some(appdata) = std::env::var("APPDATA").map(PathBuf::from).ok() {
+                allowed_parents.push(appdata.join("fnm").join("node-versions"));
+            }
+            if let Some(localappdata) = std::env::var("LOCALAPPDATA").map(PathBuf::from).ok() {
+                allowed_parents.push(localappdata.join("fnm").join("node-versions"));
+            }
+        }
+        _ => return false,
+    }
+
+    for parent in allowed_parents {
+        let parent_norm = crate::winutil::canonicalize_path_safety(&parent.to_string_lossy());
+        let parent_norm_str = parent_norm.to_string_lossy().to_lowercase();
+        if path_norm_str.starts_with(&parent_norm_str) {
+            let remain = &path_norm_str[parent_norm_str.len()..];
+            if remain.is_empty() || remain.starts_with('\\') || remain.starts_with('/') {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn get_active_node_version() -> Option<String> {
+    let secure_path = crate::winutil::get_secure_system_path();
     let output = Command::new("cmd")
         .creation_flags(CREATE_NO_WINDOW)
+        .env("PATH", &secure_path)
         .args(&["/C", "node -v"])
         .output()
         .ok()?;
@@ -41,8 +96,10 @@ fn get_active_node_version() -> Option<String> {
 }
 
 fn get_active_rust_version() -> Option<String> {
+    let secure_path = crate::winutil::get_secure_system_path();
     let output = Command::new("cmd")
         .creation_flags(CREATE_NO_WINDOW)
+        .env("PATH", &secure_path)
         .args(&["/C", "rustup show active-toolchain"])
         .output()
         .ok()?;
@@ -174,22 +231,39 @@ pub fn scan_toolchain_versions() -> Vec<ToolchainVersion> {
 }
 
 pub fn uninstall_toolchain_version(manager: &str, version: &str, path: &str) -> Result<(), String> {
+    let is_valid_version = !version.is_empty()
+        && version.len() <= 100
+        && version.chars().all(|c| {
+            c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' || c == '@'
+        });
+    if !is_valid_version {
+        return Err(format!("Invalid toolchain version name: {}", version));
+    }
+
+    if !is_in_toolchain_dir(manager, path) {
+        return Err("Access Denied: Toolchain directory path is invalid or outside allowed manager directories.".to_string());
+    }
+
+    let secure_path = crate::winutil::get_secure_system_path();
     let status = match manager {
         "rustup" => {
             Command::new("rustup")
                 .creation_flags(CREATE_NO_WINDOW)
+                .env("PATH", &secure_path)
                 .args(&["toolchain", "uninstall", version])
                 .status()
         }
         "nvm" => {
             Command::new("nvm")
                 .creation_flags(CREATE_NO_WINDOW)
+                .env("PATH", &secure_path)
                 .args(&["uninstall", version])
                 .status()
         }
         "fnm" => {
             Command::new("fnm")
                 .creation_flags(CREATE_NO_WINDOW)
+                .env("PATH", &secure_path)
                 .args(&["uninstall", version])
                 .status()
         }
@@ -223,12 +297,37 @@ mod tests {
 
     #[test]
     fn test_scan_toolchain_versions_no_crash() {
-        // Just verify scanning works without crashing on target test environment
         let results = scan_toolchain_versions();
-        // Check active nodes and rustups match
         for item in results {
             assert!(!item.version.is_empty());
             assert!(!item.path.is_empty());
         }
+    }
+
+    #[test]
+    fn test_is_in_toolchain_dir() {
+        let userprofile = std::env::var("USERPROFILE").ok().map(PathBuf::from);
+        if let Some(up) = userprofile {
+            let rust_path = up.join(".rustup").join("toolchains").join("stable-x86_64-pc-windows-msvc");
+            assert!(is_in_toolchain_dir("rustup", &rust_path.to_string_lossy()));
+            
+            let sub_file = rust_path.join("bin").join("rustc.exe");
+            assert!(is_in_toolchain_dir("rustup", &sub_file.to_string_lossy()));
+        }
+
+        assert!(!is_in_toolchain_dir("rustup", r"C:\Windows\System32\cmd.exe"));
+        assert!(!is_in_toolchain_dir("rustup", r"C:\Users\Public\Documents"));
+        assert!(!is_in_toolchain_dir("invalid_manager", r"C:\Users"));
+    }
+
+    #[test]
+    fn test_uninstall_toolchain_version_validation() {
+        let res1 = uninstall_toolchain_version("rustup", "stable & calc.exe", "C:\\invalid_path");
+        assert!(res1.is_err());
+        assert!(res1.unwrap_err().contains("Invalid toolchain version name"));
+
+        let res2 = uninstall_toolchain_version("rustup", "stable", r"C:\Windows\System32\cmd.exe");
+        assert!(res2.is_err());
+        assert!(res2.unwrap_err().contains("Access Denied"));
     }
 }

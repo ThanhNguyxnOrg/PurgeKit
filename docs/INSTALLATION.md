@@ -1,10 +1,6 @@
 # 📥 PurgeKit Installation & Setup Guide (Windows)
 
-<<<<<<< HEAD
-Welcome to **PurgeKit v1.0.0**! This guide walk you through installing, upgrading, and initializing PurgeKit on your system.
-=======
-Welcome to **PurgeKit v1.0.0**! This guide walks you through installing, upgrading, and initializing PurgeKit on your system.
->>>>>>> 529a812beaf99ec34a058655123f656da2ca7246
+Welcome to **PurgeKit**! This guide walks you through installing, upgrading, and initializing PurgeKit on your system.
 
 ---
 
@@ -19,7 +15,7 @@ Welcome to **PurgeKit v1.0.0**! This guide walks you through installing, upgradi
 Go to the official GitHub releases page:
 👉 [PurgeKit GitHub Releases](https://github.com/ThanhNguyxnOrg/PurgeKit/releases)
 
-Look for the latest release version (e.g., `v1.0.0`) and download one of the following assets:
+Look for the latest release version (e.g., `v1.x.y`) and download one of the following assets:
 *   **`PurgeKit_x64_en-US.msi`**: The recommended installer package. It installs PurgeKit to your system and creates start menu and desktop shortcuts.
 *   **`PurgeKit_x64-setup.exe`**: The standalone setup executable.
 

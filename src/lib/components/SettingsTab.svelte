@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Shield, HardDrive, Info, Heart, RefreshCw, Bug, ExternalLink, CheckCircle, Trash2 } from "@lucide/svelte";
+  import { Shield, HardDrive, Info, Heart, RefreshCw, Bug, ExternalLink, CheckCircle, Trash2, Lightbulb } from "@lucide/svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { invoke } from "@tauri-apps/api/core";
   import { toast } from "../toast.svelte";
@@ -111,9 +111,55 @@
     }, 1500);
   }
 
-  async function reportIssue() {
+  async function reportBug() {
     try {
-      await openUrl("https://github.com/ThanhNguyxnOrg/PurgeKit/issues");
+      const osName = "Windows";
+      const isAdminStr = isAdmin ? "Yes" : "No";
+      const appVersion = "v0.1.0-alpha";
+      
+      const title = encodeURIComponent("[Bug] ");
+      const body = encodeURIComponent(
+        `**Describe the bug**\n` +
+        `A clear and concise description of what the bug is.\n\n` +
+        `**To Reproduce**\n` +
+        `Steps to reproduce the behavior:\n` +
+        `1. Go to '...'\n` +
+        `2. Click on '...'\n` +
+        `3. See error\n\n` +
+        `**Expected behavior**\n` +
+        `A clear and concise description of what you expected to happen.\n\n` +
+        `**System Environment Information:**\n` +
+        `- OS: ${osName}\n` +
+        `- PurgeKit Version: ${appVersion}\n` +
+        `- Running as Administrator: ${isAdminStr}\n\n` +
+        `**Additional context**\n` +
+        `Add any other context or logs here.`
+      );
+      
+      const issueUrl = `https://github.com/ThanhNguyxnOrg/PurgeKit/issues/new?title=${title}&body=${body}&labels=bug`;
+      await openUrl(issueUrl);
+    } catch (e) {
+      console.error(e);
+      toast.show("Failed to open browser.", "error");
+    }
+  }
+
+  async function requestFeature() {
+    try {
+      const title = encodeURIComponent("[Feature] ");
+      const body = encodeURIComponent(
+        `**Is your feature request related to a problem? Please describe.**\n` +
+        `A clear and concise description of what the problem is. Ex. I'm always frustrated when [...]\n\n` +
+        `**Describe the solution you'd like**\n` +
+        `A clear and concise description of what you want to happen.\n\n` +
+        `**Describe alternatives you've considered**\n` +
+        `A clear and concise description of any alternative solutions or features you've considered.\n\n` +
+        `**Additional context**\n` +
+        `Add any other context or screenshots about the feature request here.`
+      );
+      
+      const issueUrl = `https://github.com/ThanhNguyxnOrg/PurgeKit/issues/new?title=${title}&body=${body}&labels=enhancement`;
+      await openUrl(issueUrl);
     } catch (e) {
       console.error(e);
       toast.show("Failed to open browser.", "error");
@@ -323,11 +369,20 @@
             </button>
             
             <button
-              onclick={reportIssue}
+              onclick={reportBug}
               class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-bg border border-border-default hover:bg-elevated-bg active:scale-95 transition-all text-text-primary cursor-pointer"
             >
-              <Bug class="w-3.5 h-3.5 text-text-muted" />
-              Report Issue
+              <Bug class="w-3.5 h-3.5 text-danger/80" />
+              Report Bug
+              <ExternalLink class="w-3 h-3 text-text-muted" />
+            </button>
+
+            <button
+              onclick={requestFeature}
+              class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-bg border border-border-default hover:bg-elevated-bg active:scale-95 transition-all text-text-primary cursor-pointer"
+            >
+              <Lightbulb class="w-3.5 h-3.5 text-accent" />
+              Suggest Feature
               <ExternalLink class="w-3 h-3 text-text-muted" />
             </button>
           </div>

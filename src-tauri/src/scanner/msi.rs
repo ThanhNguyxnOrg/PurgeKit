@@ -27,8 +27,9 @@ pub fn enumerate_msi_products() -> Vec<MsiProduct> {
         if result == ERROR_NO_MORE_ITEMS { break; }
         if result != ERROR_SUCCESS { idx += 1; continue; }
 
-        // Convert UTF-16 GUID to String, dropping the trailing null char
-        let guid = String::from_utf16_lossy(&product_code[..38]);
+        // Convert UTF-16 GUID to String, dropping the trailing null char dynamically
+        let guid_len = product_code.iter().position(|&c| c == 0).unwrap_or(38);
+        let guid = String::from_utf16_lossy(&product_code[..guid_len]);
 
         let name = msi_get_property(&guid, "InstalledProductName");
         let install_loc = msi_get_property(&guid, "InstallLocation");
@@ -107,4 +108,21 @@ pub fn scan_msi_remnants(app_token: &str, _install_dir: Option<&str>) -> Vec<Rem
     }
 
     remnants
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_enumerate_msi_products_no_crash() {
+        let products = enumerate_msi_products();
+        println!("Found {} msi products", products.len());
+    }
+
+    #[test]
+    fn test_scan_msi_remnants_no_crash() {
+        let remnants = scan_msi_remnants("nonexistentappnamexyz", None);
+        println!("Found {} msi remnants", remnants.len());
+    }
 }
