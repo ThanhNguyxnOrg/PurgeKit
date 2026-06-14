@@ -55,7 +55,7 @@ fn find_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
     let needle_lower = needle.to_lowercase();
     let needle_chars_len = needle.chars().count();
     
-    for (char_idx, (byte_idx, _)) in haystack.char_indices().enumerate() {
+    for (_char_idx, (byte_idx, _)) in haystack.char_indices().enumerate() {
         let mut chars = haystack[byte_idx..].chars();
         let mut substring = String::new();
         for _ in 0..needle_chars_len {

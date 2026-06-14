@@ -320,7 +320,7 @@ pub fn is_safe_to_delete(path_str: &str) -> Result<(), String> {
     blacklisted_exact.insert(user_videos);
     blacklisted_exact.insert(user_appdata);
     blacklisted_exact.insert(app_data);
-    blacklisted_exact.insert(local_app_data);
+    blacklisted_exact.insert(local_app_data.clone());
     
     let local_temp = format!(r"{}\temp", local_app_data);
     blacklisted_exact.insert(local_temp);
