@@ -17,7 +17,7 @@ jobs:
       version: ${{ steps.check.outputs.version }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Check Commit Message or Manual Trigger
         id: check
@@ -48,10 +48,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: 'npm'
@@ -98,7 +98,7 @@ jobs:
           Add-Content -Path $env:GITHUB_OUTPUT -Value "EOF"
 
       - name: Build Tauri App
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
         with:
@@ -130,7 +130,7 @@ jobs:
           }
 
       - name: Create and Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ needs.check-trigger.outputs.version }}
           name: "PurgeKit v${{ needs.check-trigger.outputs.version }}"
