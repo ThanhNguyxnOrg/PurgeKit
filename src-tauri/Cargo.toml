@@ -31,7 +31,7 @@ thiserror = "2.0"
 uuid = { version = "1", features = ["v4"] }
 windows-icons = "0.3.0"
 chrono = "0.4"
-base64 = "0.22"
+base64 = "0.23"
 is_elevated = "0.1"
 clap = { version = "4", features = ["derive"] }
 
