@@ -4,7 +4,6 @@ use crate::settings::{self, AppSettings};
 use serde::Serialize;
 use std::process::Command;
 use std::os::windows::process::CommandExt;
-use std::path::Path;
 use std::fs;
 use tauri::{AppHandle, Emitter};
 
@@ -551,6 +550,8 @@ pub async fn stop_install_tracking(
         // Deduplicate and filter USN changes to get new file/folder paths.
         let mut new_files = Vec::new();
         let dirs = vec![
+            std::env::var_os("ProgramFiles").map(std::path::PathBuf::from),
+            std::env::var_os("ProgramFiles(x86)").map(std::path::PathBuf::from),
             std::env::var_os("APPDATA").map(std::path::PathBuf::from),
             std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from),
             std::env::var_os("ProgramData").map(std::path::PathBuf::from),
@@ -570,11 +571,16 @@ pub async fn stop_install_tracking(
                 if let Ok(metadata) = path.metadata() {
                     let modified = metadata.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
                     
-                    // Filter: modified after tracking start time OR filename is in USN journal changes
                     let is_newer = modified >= session.start_time;
                     let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
                     
-                    if is_newer || usn_set.contains(&filename) {
+                    let is_tracked = if !usn_set.is_empty() {
+                        is_newer && usn_set.contains(&filename)
+                    } else {
+                        is_newer
+                    };
+
+                    if is_tracked && crate::winutil::is_safe_to_delete(&path.to_string_lossy()).is_ok() {
                         new_files.push(path.to_string_lossy().to_string());
                     }
                 }
@@ -836,19 +842,11 @@ pub async fn restore_quarantine_item(id: String) -> Result<(), String> {
 
         // Try renaming first
         if std::fs::rename(src_path, dest_path).is_err() {
-            // Fallback: copy and delete
+            // Fallback: copy and delete safely without spawning shell
             if src_path.is_dir() {
-                let secure_path = crate::winutil::get_secure_system_path();
-                let status = std::process::Command::new("cmd")
-                    .creation_flags(0x08000000)
-                    .env("PATH", &secure_path)
-                    .args(&["/C", &format!("xcopy /E /I /Y \"{}\" \"{}\"", item.quarantine_path, item.original_path)])
-                    .status();
-                if status.map_or(false, |s| s.success()) {
-                    let _ = std::fs::remove_dir_all(src_path);
-                } else {
-                    return Err("Failed to restore directory".to_string());
-                }
+                crate::backup::copy_dir_all(src_path, dest_path)
+                    .map_err(|e| format!("Failed to restore directory: {}", e))?;
+                let _ = std::fs::remove_dir_all(src_path);
             } else {
                 std::fs::copy(src_path, dest_path).map_err(|e| format!("Failed to copy file for restoration: {}", e))?;
                 let _ = std::fs::remove_file(src_path);
@@ -913,25 +911,59 @@ pub fn get_silent_uninstall_command(app: &InstalledApp) -> Option<String> {
 
     // 1. MSI Installer
     if uninst_lower.contains("msiexec.exe") || (app.id.starts_with('{') && app.id.ends_with('}')) {
-        if let Some(guid_start) = uninst_lower.find("{") {
-            let guid = &uninst[guid_start..];
-            return Some(format!("MsiExec.exe /X{} /qn /norestart", guid));
+        let guid = if app.id.starts_with('{') && app.id.ends_with('}') {
+            Some(app.id.clone())
+        } else if let Some(start) = uninst.find('{') {
+            if let Some(end) = uninst[start..].find('}') {
+                Some(uninst[start..=start + end].to_string())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some(g) = guid {
+            return Some(format!("MsiExec.exe /X{} /qn /norestart", g));
         }
     }
 
+    let quote_executable_if_needed = |raw: &str, flags: &str| -> String {
+        let trimmed = raw.trim();
+        if trimmed.starts_with('"') {
+            format!("{} {}", trimmed, flags)
+        } else if trimmed.contains(' ') {
+            let lower = trimmed.to_lowercase();
+            if let Some(exe_pos) = lower.find(".exe") {
+                let exe_end = exe_pos + 4;
+                let exe_part = &trimmed[..exe_end];
+                let rest = trimmed[exe_end..].trim();
+                if rest.is_empty() {
+                    format!("\"{}\" {}", exe_part, flags)
+                } else {
+                    format!("\"{}\" {} {}", exe_part, rest, flags)
+                }
+            } else {
+                format!("\"{}\" {}", trimmed, flags)
+            }
+        } else {
+            format!("{} {}", trimmed, flags)
+        }
+    };
+
     // 2. Inno Setup (unins000.exe)
     if uninst_lower.contains("unins000.exe") {
-        return Some(format!("{} /VERYSILENT /SUPPRESSMSGBOXES /NORESTART", uninst));
+        return Some(quote_executable_if_needed(uninst, "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART"));
     }
 
     // 3. Nullsoft Installer (NSIS) (uninstall.exe / uninst.exe)
     if uninst_lower.contains("uninstall.exe") || uninst_lower.contains("uninst.exe") {
-        return Some(format!("{} /S", uninst));
+        return Some(quote_executable_if_needed(uninst, "/S"));
     }
 
     // 4. Advanced Installer
     if uninst_lower.contains("setup.exe") {
-        return Some(format!("{} /qn", uninst));
+        return Some(quote_executable_if_needed(uninst, "/qn"));
     }
 
     Some(uninst.clone())
@@ -1273,11 +1305,11 @@ mod tests {
 
         // 6. NSIS
         let app = create_mock_app("nsis", Some("C:\\Program Files\\App\\uninstall.exe"), None, false);
-        assert_eq!(get_silent_uninstall_command(&app), Some("C:\\Program Files\\App\\uninstall.exe /S".to_string()));
+        assert_eq!(get_silent_uninstall_command(&app), Some("\"C:\\Program Files\\App\\uninstall.exe\" /S".to_string()));
 
         // 7. Advanced Installer
         let app = create_mock_app("adv", Some("C:\\Program Files\\App\\setup.exe"), None, false);
-        assert_eq!(get_silent_uninstall_command(&app), Some("C:\\Program Files\\App\\setup.exe /qn".to_string()));
+        assert_eq!(get_silent_uninstall_command(&app), Some("\"C:\\Program Files\\App\\setup.exe\" /qn".to_string()));
 
         // 8. Fallback
         let app = create_mock_app("custom", Some("C:\\Program Files\\App\\custom_cleaner.exe"), None, false);

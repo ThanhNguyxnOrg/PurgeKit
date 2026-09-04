@@ -86,7 +86,7 @@ where
         let target = crate::winutil::canonicalize_path_safety(&expanded);
         let target_str = target.to_string_lossy().to_string();
 
-        if let Err(e) = crate::winutil::is_safe_to_delete(&target_str) {
+        if let Err(_e) = crate::winutil::is_safe_to_delete(&target_str) {
             return Err(format!("Scanning blocked: '{}' is a protected directory and cannot be swept.", root));
         }
 

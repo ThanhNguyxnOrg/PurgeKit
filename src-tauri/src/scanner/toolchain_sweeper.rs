@@ -81,7 +81,7 @@ fn is_in_toolchain_dir(manager: &str, path_str: &str) -> bool {
 }
 
 fn get_active_node_version() -> Option<String> {
-    let secure_path = crate::winutil::get_secure_system_path();
+    let secure_path = crate::winutil::get_secure_developer_path();
     let output = Command::new("cmd")
         .creation_flags(CREATE_NO_WINDOW)
         .env("PATH", &secure_path)
@@ -96,7 +96,7 @@ fn get_active_node_version() -> Option<String> {
 }
 
 fn get_active_rust_version() -> Option<String> {
-    let secure_path = crate::winutil::get_secure_system_path();
+    let secure_path = crate::winutil::get_secure_developer_path();
     let output = Command::new("cmd")
         .creation_flags(CREATE_NO_WINDOW)
         .env("PATH", &secure_path)
@@ -244,7 +244,7 @@ pub fn uninstall_toolchain_version(manager: &str, version: &str, path: &str) -> 
         return Err("Access Denied: Toolchain directory path is invalid or outside allowed manager directories.".to_string());
     }
 
-    let secure_path = crate::winutil::get_secure_system_path();
+    let secure_path = crate::winutil::get_secure_developer_path();
     let status = match manager {
         "rustup" => {
             Command::new("rustup")

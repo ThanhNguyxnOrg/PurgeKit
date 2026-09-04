@@ -57,6 +57,50 @@ pub fn get_secure_system_path() -> String {
     r"C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\".to_string()
 }
 
+/// Retrieve an environment PATH suitable for developer toolchains:
+/// Combines the secure system PATH with standard user toolchain directories
+/// and validated entries from HKCU\Environment.
+pub fn get_secure_developer_path() -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let sys_path = get_secure_system_path();
+    parts.push(sys_path);
+
+    if let Ok(userprofile) = std::env::var("USERPROFILE") {
+        let up = std::path::PathBuf::from(&userprofile);
+        let candidates = vec![
+            up.join(".cargo").join("bin"),
+            up.join(".fnm"),
+            up.join(".fnm").join("current"),
+            up.join(".local").join("bin"),
+            up.join("AppData").join("Roaming").join("npm"),
+            up.join("AppData").join("Roaming").join("nvm"),
+        ];
+        for c in candidates {
+            if c.is_dir() {
+                parts.push(c.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        let hk = RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
+        if let Ok(key) = hk.open_subkey_with_flags("Environment", KEY_READ) {
+            if let Ok(val) = key.get_value::<String, _>("PATH").or_else(|_| key.get_value("Path")) {
+                let expanded = expand_env_strings(&val);
+                for p in expanded.split(';') {
+                    let trim = p.trim();
+                    if !trim.is_empty() && std::path::Path::new(trim).is_dir() {
+                        parts.push(trim.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    parts.join(";")
+}
+
 /// Translate a raw OS error code into a stable Win32 error label.
 pub fn map_win32_error(err: &std::io::Error) -> &'static str {
     match err.raw_os_error() {
@@ -385,6 +429,18 @@ pub fn is_safe_to_delete(path_str: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// List of critical, non-removable core Windows services that must never be targeted by cleaners.
+pub const CRITICAL_WINDOWS_SERVICES: &[&str] = &[
+    "eventlog", "dnscache", "lanmanserver", "lanmanworkstation", "wlansvc",
+    "windefend", "rpcss", "dcomlaunch", "plugplay", "coremessagingregistrar",
+    "cryptsvc", "brokerinfrastructure", "bfe", "mpssvc", "wuauserv", "bits",
+    "dhcp", "nsi", "netprofm", "samss", "lsass", "securityhealthservice",
+    "schedule", "winmgmt", "sppsvc", "sens", "profsvc", "gpsvc", "appinfo",
+    "audiosrv", "audioendpointbuilder", "themes", "usermgr", "power",
+    "systemeventsbroker", "timebroker", "w32time", "spooler", "termservice",
+    "wscsvc", "diagtrack", "werfac", "wersvc"
+];
+
 /// Centralized safety gate to check if a registry key is safe to delete.
 pub fn is_safe_registry_key(hive_name: &str, subpath: &str) -> Result<(), String> {
     let hive = hive_name.to_lowercase();
@@ -476,6 +532,16 @@ pub fn is_safe_registry_key(hive_name: &str, subpath: &str) -> Result<(), String
             if full_path.starts_with(&format!("{}\\", p)) {
                 return Err(format!("Registry deletion blocked: Key '{}' resides under protected key '{}'.", full_path, p));
             }
+        }
+    }
+
+    // Protect critical Windows services under HKLM\SYSTEM\CurrentControlSet\Services
+    let services_prefix = "hklm\\system\\currentcontrolset\\services\\";
+    if full_path.starts_with(services_prefix) {
+        let sub = &full_path[services_prefix.len()..];
+        let service_name = sub.split('\\').next().unwrap_or("").to_lowercase();
+        if CRITICAL_WINDOWS_SERVICES.contains(&service_name.as_str()) {
+            return Err(format!("Registry deletion blocked: Service '{}' is a critical Windows system service.", service_name));
         }
     }
 
@@ -588,5 +654,11 @@ mod tests {
 
         // Parent block
         assert!(is_safe_registry_key("HKLM", "Software").is_err());
+
+        // Windows Services check: Critical services must be blocked, custom non-critical allowed
+        assert!(is_safe_registry_key("HKLM", r"SYSTEM\CurrentControlSet\Services\EventLog").is_err());
+        assert!(is_safe_registry_key("HKLM", r"SYSTEM\CurrentControlSet\Services\Dnscache").is_err());
+        assert!(is_safe_registry_key("HKLM", r"SYSTEM\CurrentControlSet\Services\WinDefend").is_err());
+        assert!(is_safe_registry_key("HKLM", r"SYSTEM\CurrentControlSet\Services\MyCustomAppService").is_ok());
     }
 }

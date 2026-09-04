@@ -196,6 +196,7 @@ pub fn scan_app_remnants(
     unique_remnants.retain(|item| {
         match item.item_type.as_str() {
             "File" | "Directory" => crate::winutil::is_safe_to_delete(&item.path).is_ok(),
+            "ScheduledTask" => crate::winutil::is_safe_to_delete(&item.path).is_ok(),
             "RegistryKey" | "RegistryValue" => {
                 let parts: Vec<&str> = item.path.splitn(2, '\\').collect();
                 if parts.len() >= 2 {
@@ -306,7 +307,7 @@ fn is_sensitive_directory(path: &Path) -> bool {
 
 fn scan_deep_system_remnants(
     app_name: &str,
-    publisher: Option<&str>,
+    _publisher: Option<&str>,
     install_location: Option<&str>,
     remnants: &mut Vec<RemnantItem>,
 ) {
@@ -354,7 +355,7 @@ fn scan_deep_system_remnants(
                         let path_str = path.to_string_lossy().to_string();
                         remnants.push(RemnantItem {
                             path: path_str,
-                            item_type: "File".to_string(),
+                            item_type: "ScheduledTask".to_string(),
                             size: entry.metadata().map(|m| m.len()).unwrap_or(0),
                             confidence: "High".to_string(),
                             score: 85,
@@ -371,6 +372,9 @@ fn scan_deep_system_remnants(
     if let Ok(services_key) = hklm.open_subkey_with_flags(services_path, KEY_READ) {
         for subkey_name in services_key.enum_keys().filter_map(|x| x.ok()) {
             let subkey_name_lower = subkey_name.to_lowercase();
+            if crate::winutil::CRITICAL_WINDOWS_SERVICES.iter().any(|s| s.eq_ignore_ascii_case(&subkey_name_lower)) {
+                continue;
+            }
             let mut matches = false;
 
             if subkey_name_lower == token {
@@ -708,40 +712,90 @@ pub fn purge_remnant_item(item: &RemnantItem) -> Result<(), String> {
                 }
             }
         }
-        "RegistryKey" | "RegistryValue" => {
-            let (hive_name, path_str) = {
-                let path_str_clone = item.path.clone();
-                if path_str_clone.starts_with("HKLM\\Wow6432Node") {
-                    ("HKLM_WOW6432".to_string(), path_str_clone.replacen("HKLM\\Wow6432Node\\", "", 1))
-                } else {
-                    let parts: Vec<&str> = path_str_clone.splitn(2, '\\').collect();
-                    if parts.len() < 2 {
-                        return Err("Invalid registry path".to_string());
+        "ScheduledTask" => {
+            let path = Path::new(&item.path);
+            let task_name = crate::startup_manager::get_task_name_from_path(path)
+                .unwrap_or_else(|| {
+                    let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    if !fname.starts_with('\\') {
+                        format!("\\{}", fname)
+                    } else {
+                        fname.to_string()
                     }
-                    (parts[0].to_string(), parts[1].to_string())
+                });
+
+            if task_name.is_empty() || task_name == "\\" {
+                return Err("Cannot determine scheduled task name".to_string());
+            }
+
+            use std::process::Command;
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            let secure_path = crate::winutil::get_secure_system_path();
+
+            let output = Command::new("schtasks.exe")
+                .creation_flags(CREATE_NO_WINDOW)
+                .env("PATH", &secure_path)
+                .args(["/Delete", "/TN", &task_name, "/F"])
+                .output()
+                .map_err(|e| format!("Failed to execute schtasks.exe: {}", e))?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                return Err(format!("schtasks delete failed: {} {}", stderr.trim(), stdout.trim()));
+            }
+        }
+        "RegistryKey" | "RegistryValue" => {
+            // Check if this key represents a Windows Service under SYSTEM\CurrentControlSet\Services
+            let path_upper = item.path.to_uppercase();
+            if path_upper.starts_with(r"HKLM\SYSTEM\CURRENTCONTROLSET\SERVICES\") {
+                let svc_subpath = &item.path[r"HKLM\SYSTEM\CurrentControlSet\Services\".len()..];
+                if !svc_subpath.is_empty() && !svc_subpath.contains('\\') {
+                    let service_name = svc_subpath;
+                    if !crate::winutil::CRITICAL_WINDOWS_SERVICES.iter().any(|s| s.eq_ignore_ascii_case(service_name)) {
+                        use std::process::Command;
+                        use std::os::windows::process::CommandExt;
+                        const CREATE_NO_WINDOW: u32 = 0x08000000;
+                        let secure_path = crate::winutil::get_secure_system_path();
+
+                        let _ = Command::new("sc.exe")
+                            .creation_flags(CREATE_NO_WINDOW)
+                            .env("PATH", &secure_path)
+                            .args(["stop", service_name])
+                            .output();
+
+                        let _ = Command::new("sc.exe")
+                            .creation_flags(CREATE_NO_WINDOW)
+                            .env("PATH", &secure_path)
+                            .args(["delete", service_name])
+                            .output();
+                    }
                 }
+            }
+
+            let (hive_name, normalized_path) = {
+                let parts: Vec<&str> = item.path.splitn(2, '\\').collect();
+                if parts.len() < 2 {
+                    return Err("Invalid registry path".to_string());
+                }
+                let hive = parts[0].to_uppercase();
+                let subpath = parts[1];
+                let norm_subpath = if hive == "HKLM" && subpath.to_uppercase().starts_with(r"WOW6432NODE\") {
+                    format!(r"SOFTWARE\Wow6432Node\{}", &subpath[12..])
+                } else {
+                    subpath.to_string()
+                };
+                (hive, norm_subpath)
             };
 
             let root = match hive_name.as_str() {
                 "HKCU" => RegKey::predef(HKEY_CURRENT_USER),
                 "HKLM" => RegKey::predef(HKEY_LOCAL_MACHINE),
-                "HKLM_WOW6432" => RegKey::predef(HKEY_LOCAL_MACHINE),
                 _ => return Err(format!("Unsupported hive: {}", hive_name)),
             };
 
-            let normalized_path = if hive_name == "HKLM_WOW6432" {
-                format!(r"SOFTWARE\Wow6432Node\{}", path_str)
-            } else {
-                path_str
-            };
-
-            let check_hive = if hive_name == "HKLM_WOW6432" {
-                "HKLM"
-            } else {
-                &hive_name
-            };
-
-            if let Err(e) = crate::winutil::is_safe_registry_key(check_hive, &normalized_path) {
+            if let Err(e) = crate::winutil::is_safe_registry_key(&hive_name, &normalized_path) {
                 return Err(e);
             }
 
@@ -750,17 +804,24 @@ pub fn purge_remnant_item(item: &RemnantItem) -> Result<(), String> {
             let parent_path = &normalized_path[..last_backslash];
             let name_to_purge = &normalized_path[last_backslash + 1..];
 
-            let parent_key = root.open_subkey_with_flags(parent_path, KEY_WRITE)
-                .map_err(|e| format!("Failed to open registry parent key: {}", e))?;
+            let parent_key = match root.open_subkey_with_flags(parent_path, KEY_WRITE) {
+                Ok(k) => k,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                Err(e) => return Err(format!("Failed to open registry parent key: {}", e)),
+            };
 
             if item.item_type == "RegistryKey" {
-                // delete_subkey fails on keys that contain subkeys, which most
-                // app remnant keys do. Delete recursively instead.
-                parent_key.delete_subkey_all(name_to_purge)
-                    .map_err(|e| format!("Failed to delete registry key: {}", e))?;
+                match parent_key.delete_subkey_all(name_to_purge) {
+                    Ok(_) => {},
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
+                    Err(e) => return Err(format!("Failed to delete registry key: {}", e)),
+                }
             } else {
-                parent_key.delete_value(name_to_purge)
-                    .map_err(|e| format!("Failed to delete registry value: {}", e))?;
+                match parent_key.delete_value(name_to_purge) {
+                    Ok(_) => {},
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
+                    Err(e) => return Err(format!("Failed to delete registry value: {}", e)),
+                }
             }
         }
         _ => return Err(format!("Unknown item type: {}", item.item_type)),

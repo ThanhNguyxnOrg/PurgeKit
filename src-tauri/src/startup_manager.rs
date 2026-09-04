@@ -1,8 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::os::windows::process::CommandExt;
 use winreg::enums::*;
 use winreg::RegKey;
+
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct StartupItem {
@@ -105,6 +108,24 @@ fn is_in_tasks_dir(path_str: &str) -> bool {
     false
 }
 
+pub fn get_task_name_from_path(task_path: &Path) -> Option<String> {
+    let windir = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+    let tasks_dir = Path::new(&windir).join("System32").join("Tasks");
+    task_path.strip_prefix(&tasks_dir).ok().map(|rel| {
+        let s = rel.to_string_lossy().replace('/', "\\");
+        let s_trimmed = if s.ends_with(".disabled") {
+            s[..s.len() - 9].to_string()
+        } else {
+            s
+        };
+        if !s_trimmed.starts_with('\\') {
+            format!("\\{}", s_trimmed)
+        } else {
+            s_trimmed
+        }
+    })
+}
+
 fn scan_tasks_directory(dir: &Path, items: &mut Vec<StartupItem>) {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
@@ -128,9 +149,9 @@ fn scan_tasks_directory(dir: &Path, items: &mut Vec<StartupItem>) {
                 Err(_) => continue,
             };
             
-            let is_disabled = file_name.ends_with(".disabled");
+            let is_disabled = file_name.ends_with(".disabled") || find_case_insensitive(&xml_content, "<enabled>false</enabled>").is_some();
             let mut clean_name = file_name.to_string();
-            if is_disabled {
+            if clean_name.ends_with(".disabled") {
                 clean_name = clean_name[..clean_name.len() - 9].to_string();
             }
             
@@ -419,29 +440,21 @@ pub fn set_startup_item_status(id: String, enabled: bool) -> Result<(), String> 
         }
 
         let path = Path::new(file_path_str);
-        if !path.exists() {
-            return Err("Scheduled task file does not exist".to_string());
-        }
+        let task_name = get_task_name_from_path(path)
+            .ok_or_else(|| "Failed to resolve scheduled task name".to_string())?;
 
-        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        let parent = path.parent().ok_or_else(|| "Invalid parent directory".to_string())?;
+        let change_arg = if enabled { "/Enable" } else { "/Disable" };
+        let secure_path = crate::winutil::get_secure_system_path();
+        let output = std::process::Command::new("schtasks")
+            .creation_flags(CREATE_NO_WINDOW)
+            .env("PATH", &secure_path)
+            .args(&["/Change", "/TN", &task_name, change_arg])
+            .output()
+            .map_err(|e| format!("Failed to execute schtasks: {}", e))?;
 
-        if enabled {
-            // Enable: Remove .disabled extension if present
-            if file_name.to_lowercase().ends_with(".disabled") {
-                let new_name = &file_name[..file_name.len() - 9];
-                let new_path = parent.join(new_name);
-                fs::rename(path, new_path)
-                    .map_err(|e| format!("Failed to enable scheduled task: {}", e))?;
-            }
-        } else {
-            // Disable: Append .disabled extension
-            if !file_name.to_lowercase().ends_with(".disabled") {
-                let new_name = format!("{}.disabled", file_name);
-                let new_path = parent.join(new_name);
-                fs::rename(path, new_path)
-                    .map_err(|e| format!("Failed to disable scheduled task: {}", e))?;
-            }
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("schtasks failed: {}", stderr.trim()));
         }
     } else {
         return Err("Unsupported startup type".to_string());
@@ -518,18 +531,22 @@ pub fn delete_startup_item(id: String) -> Result<(), String> {
         if !crate::settings::check_is_admin() {
             return Err("Deleting scheduled tasks requires Administrator privileges. Please restart the application as Administrator.".to_string());
         }
-        if let Err(e) = crate::winutil::is_safe_to_delete(file_path_str) {
-            return Err(e);
-        }
 
         let path = Path::new(file_path_str);
-        if !path.exists() {
-            return Ok(()); // Already deleted
-        }
+        let task_name = get_task_name_from_path(path)
+            .ok_or_else(|| "Failed to resolve scheduled task name".to_string())?;
 
-        if path.is_file() {
-            fs::remove_file(path)
-                .map_err(|e| format!("Failed to delete scheduled task: {}", e))?;
+        let secure_path = crate::winutil::get_secure_system_path();
+        let output = std::process::Command::new("schtasks")
+            .creation_flags(CREATE_NO_WINDOW)
+            .env("PATH", &secure_path)
+            .args(&["/Delete", "/TN", &task_name, "/F"])
+            .output()
+            .map_err(|e| format!("Failed to execute schtasks delete: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("schtasks delete failed: {}", stderr.trim()));
         }
     } else {
         return Err("Unsupported startup type".to_string());
@@ -541,7 +558,6 @@ pub fn delete_startup_item(id: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
 
     #[test]
     fn test_is_in_startup_dir() {

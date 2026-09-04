@@ -12,7 +12,7 @@ use winreg::RegKey;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 fn get_secure_system_path() -> String {
-    crate::winutil::get_secure_system_path()
+    crate::winutil::get_secure_developer_path()
 }
 
 
@@ -74,7 +74,7 @@ pub fn resolve_template_path(template: &str) -> Option<PathBuf> {
     Some(PathBuf::from(path_str))
 }
 
-pub fn get_single_dynamic_cache_path(name: &str, cmd: &str) -> Option<PathBuf> {
+pub fn get_single_dynamic_cache_path(_name: &str, cmd: &str) -> Option<PathBuf> {
     let secure_path = get_secure_system_path();
     if let Ok(output) = Command::new("cmd")
         .creation_flags(CREATE_NO_WINDOW)
@@ -1470,13 +1470,13 @@ mod tests {
 
     #[test]
     fn test_get_dynamic_cache_path() {
-        let pnpm_path = get_dynamic_cache_path("pnpm");
+        let pnpm_path = get_single_dynamic_cache_path("pnpm", "pnpm store path");
         println!("Dynamic pnpm path: {:?}", pnpm_path);
-        let npm_path = get_dynamic_cache_path("npm");
+        let npm_path = get_single_dynamic_cache_path("npm", "npm config get cache");
         println!("Dynamic npm path: {:?}", npm_path);
-        let pip_path = get_dynamic_cache_path("pip");
+        let pip_path = get_single_dynamic_cache_path("pip", "pip cache dir");
         println!("Dynamic pip path: {:?}", pip_path);
-        let go_path = get_dynamic_cache_path("go");
+        let go_path = get_single_dynamic_cache_path("go", "go env GOCACHE");
         println!("Dynamic go path: {:?}", go_path);
     }
 

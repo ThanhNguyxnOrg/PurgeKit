@@ -4,6 +4,7 @@ use windows_sys::Win32::System::ApplicationInstallationAndServicing::{
 };
 use windows_sys::Win32::Foundation::{ERROR_SUCCESS, ERROR_NO_MORE_ITEMS};
 use crate::scanner::RemnantItem;
+use std::fs;
 use std::path::Path;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -84,26 +85,70 @@ fn msi_get_property(product_code: &str, property: &str) -> Option<String> {
 
 pub fn scan_msi_remnants(app_token: &str, _install_dir: Option<&str>) -> Vec<RemnantItem> {
     let mut remnants = Vec::new();
-    let app_token_lower = app_token.to_lowercase();
-    
-    let products = enumerate_msi_products();
-    for prod in products {
-        let prod_name_lower = prod.name.to_lowercase();
-        // If the uninstalled app name matches this MSI product name, we look for its LocalPackage
-        if prod_name_lower.contains(&app_token_lower) {
-            if let Some(ref local_pkg) = prod.local_pkg {
-                if Path::new(local_pkg).exists() {
-                    // This is the cached MSI installer file in C:\Windows\Installer
-                    // Deleting this file is completely safe once the app is uninstalled
-                    remnants.push(RemnantItem {
-                        path: local_pkg.clone(),
-                        item_type: "File".to_string(),
-                        size: Path::new(local_pkg).metadata().map(|m| m.len()).unwrap_or(0),
-                        confidence: "High".to_string(),
-                        score: 75,
-                    });
-                }
-            }
+    let app_token_lower = app_token.to_lowercase().trim().to_string();
+    if app_token_lower.len() < 3 {
+        return remnants;
+    }
+
+    // Safety: Blacklist core Microsoft and generic system terms to prevent catastrophic false positives
+    let blacklist = [
+        "microsoft", "windows", "visual", "redistributable", "update", "installer",
+        "service", "runtime", "package", "driver", "framework", "system", "tools"
+    ];
+    if blacklist.contains(&app_token_lower.as_str()) {
+        return remnants;
+    }
+
+    // 1. Enumerate all active MSI products and collect their LocalPackages
+    // ANY file in this set belongs to a currently installed, healthy product and MUST NOT be deleted!
+    let active_products = enumerate_msi_products();
+    let active_local_packages: std::collections::HashSet<String> = active_products
+        .iter()
+        .filter_map(|p| p.local_pkg.as_ref())
+        .map(|pkg| crate::winutil::canonicalize_path_safety(pkg).to_string_lossy().to_lowercase())
+        .collect();
+
+    // 2. Scan C:\Windows\Installer for orphaned .msi and .msp files
+    let windir = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+    let installer_dir = Path::new(&windir).join("Installer");
+    if !installer_dir.exists() || !installer_dir.is_dir() {
+        return remnants;
+    }
+
+    let entries = match fs::read_dir(&installer_dir) {
+        Ok(e) => e,
+        Err(_) => return remnants,
+    };
+
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+
+        let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+        if ext != "msi" && ext != "msp" {
+            continue;
+        }
+
+        let path_canon = crate::winutil::canonicalize_path_safety(&path.to_string_lossy());
+        let path_canon_lower = path_canon.to_string_lossy().to_lowercase();
+
+        // If this package is registered to an ACTIVE product, NEVER delete it!
+        if active_local_packages.contains(&path_canon_lower) {
+            continue;
+        }
+
+        // Check if filename contains the token
+        let file_name = path.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+        if file_name.contains(&app_token_lower) {
+            remnants.push(RemnantItem {
+                path: path.to_string_lossy().to_string(),
+                item_type: "File".to_string(),
+                size: entry.metadata().map(|m| m.len()).unwrap_or(0),
+                confidence: "Medium".to_string(),
+                score: 65,
+            });
         }
     }
 

@@ -93,7 +93,11 @@ fn scan_startup_keys(app_token: &str, install_dir: Option<&str>, remnants: &mut 
 }
 
 fn scan_services(app_token: &str, install_dir: Option<&str>, remnants: &mut Vec<RemnantItem>) {
-    let app_token_lower = app_token.to_lowercase();
+    let app_token_lower = app_token.to_lowercase().trim().to_string();
+    if app_token_lower.len() < 3 {
+        return;
+    }
+
     let root = RegKey::predef(HKEY_LOCAL_MACHINE);
     let services_path = r"SYSTEM\CurrentControlSet\Services";
     let services_key = match root.open_subkey_with_flags(services_path, KEY_READ) {
@@ -101,7 +105,16 @@ fn scan_services(app_token: &str, install_dir: Option<&str>, remnants: &mut Vec<
         Err(_) => return,
     };
 
+    let windir = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string()).to_lowercase();
+
     for service_name in services_key.enum_keys().filter_map(|x| x.ok()) {
+        let service_name_lower = service_name.to_lowercase();
+
+        // 1. Safety check: NEVER scan or target critical core Windows services
+        if crate::winutil::CRITICAL_WINDOWS_SERVICES.contains(&service_name_lower.as_str()) {
+            continue;
+        }
+
         let service_key_path = format!(r"{}\{}", services_path, service_name);
         let service_key = match services_key.open_subkey_with_flags(&service_name, KEY_READ) {
             Ok(k) => k,
@@ -132,11 +145,18 @@ fn scan_services(app_token: &str, install_dir: Option<&str>, remnants: &mut Vec<
 
         let expanded = crate::winutil::expand_env_strings(&exe_path);
         let path_lower = expanded.to_lowercase();
-        let service_name_lower = service_name.to_lowercase();
+
+        // 2. Safety check: if binary resides in Windows System32 / Windows dir and not in install_dir, skip
+        if (path_lower.starts_with(&windir) || path_lower.starts_with(r"c:\windows")) && install_dir.is_none() {
+            continue;
+        }
+
+        let file_exists = Path::new(&expanded).exists();
 
         let mut is_match = false;
         let mut score = 60;
 
+        // Match Strategy A: ImagePath is inside the uninstalled application directory
         if let Some(loc) = install_dir {
             let loc_lower = loc.to_lowercase();
             if !loc_lower.is_empty() && path_lower.starts_with(&loc_lower) {
@@ -145,17 +165,13 @@ fn scan_services(app_token: &str, install_dir: Option<&str>, remnants: &mut Vec<
             }
         }
 
-        if !is_match && (service_name_lower.contains(&app_token_lower) || path_lower.contains(&app_token_lower)) {
+        // Match Strategy B: Binary does NOT exist (orphaned service) AND path contains app_token
+        if !is_match && !file_exists && path_lower.contains(&app_token_lower) {
             is_match = true;
-            score = 75;
+            score = 80;
         }
 
         if is_match {
-            let file_exists = Path::new(&expanded).exists();
-            if !file_exists {
-                score += 10; // Orphaned service (binary missing) -> boost score
-            }
-
             remnants.push(RemnantItem {
                 path: format!(r"HKLM\{}", service_key_path),
                 item_type: "RegistryKey".to_string(),
@@ -249,7 +265,7 @@ fn scan_tasks_dir_recursive(
 
                 remnants.push(RemnantItem {
                     path: path.to_string_lossy().to_string(),
-                    item_type: "File".to_string(),
+                    item_type: "ScheduledTask".to_string(),
                     size: entry.metadata().map(|m| m.len()).unwrap_or(0),
                     confidence: if score >= 80 { "VeryHigh".to_string() } else { "High".to_string() },
                     score,
