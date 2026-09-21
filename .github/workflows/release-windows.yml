@@ -47,6 +47,13 @@ jobs:
     if: needs.check-trigger.outputs.is_release == 'true'
     runs-on: windows-latest
     steps:
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+
       - name: Checkout repository
         uses: actions/checkout@v7
 
@@ -100,7 +107,7 @@ jobs:
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         with:
           includeDebug: false
           includeRelease: true
@@ -128,13 +135,6 @@ jobs:
           } else {
               Write-Error "MSI file not found!"
           }
-
-      - name: Generate GitHub App Token
-        id: app-token
-        uses: actions/create-github-app-token@v3
-        with:
-          app-id: ${{ secrets.BOT_APP_ID }}
-          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
 
       - name: Create and Publish GitHub Release
         uses: softprops/action-gh-release@v3
