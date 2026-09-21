@@ -22,22 +22,28 @@ jobs:
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
 
-      # Check if it's minor or patch update: approve and auto-merge
-      - name: Approve and Auto-Merge Minor/Patch Updates
-        if: steps.metadata.outputs.update-type != 'version-update:semver-major'
+      # Check if it's minor or patch update, or dev dependency: approve and auto-merge
+      - name: Approve and Auto-Merge Safe Updates
+        if: >
+          steps.metadata.outputs.update-type != 'version-update:semver-major' ||
+          steps.metadata.outputs.dependency-type == 'direct:development' ||
+          steps.metadata.outputs.dependency-type == 'indirect'
         run: |
           gh pr review --approve "$PR_URL"
           gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
 
-      # For major updates: add 'needs-review' label and comment
-      - name: Request Manual Review for Major Updates
-        if: steps.metadata.outputs.update-type == 'version-update:semver-major'
+      # For major production updates: add 'needs-review' label and comment
+      - name: Request Manual Review for Major Production Updates
+        if: >
+          steps.metadata.outputs.update-type == 'version-update:semver-major' &&
+          steps.metadata.outputs.dependency-type != 'direct:development' &&
+          steps.metadata.outputs.dependency-type != 'indirect'
         run: |
           gh pr edit "$PR_URL" --add-label "needs-review"
-          gh pr comment "$PR_URL" --body "⚠️ This is a **major** update. Please review breaking changes and test thoroughly before merging."
+          gh pr comment "$PR_URL" --body "⚠️ This is a **major** update to a production dependency. Please review breaking changes and test thoroughly before merging."
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}

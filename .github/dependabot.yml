@@ -19,6 +19,9 @@ updates:
       frontend-dependencies:
         patterns:
           - "*"
+    ignore:
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   # Maintain dependencies for GitHub Actions
   - package-ecosystem: "github-actions"
