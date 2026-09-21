@@ -1,4 +1,4 @@
-name: Dependabot Auto-Merge
+﻿name: Dependabot Auto-Merge
 
 on:
   pull_request_target:
@@ -38,7 +38,7 @@ jobs:
           steps.metadata.outputs.dependency-type == 'indirect'
         run: |
           gh pr review --approve "$PR_URL"
-          BODY=$(printf "🤖 Verified and auto-merged by ThanhNguyxnAgent\n\nCo-authored-by: ThanhNguyxnAgent[bot] <4125740+thanhnguyxnagent[bot]@users.noreply.github.com>\nSigned-off-by: ThanhNguyxnAgent[bot] <4125740+thanhnguyxnagent[bot]@users.noreply.github.com>")
+          BODY=$(printf "🤖 Verified and auto-merged by ThanhNguyxnAgent\n\nCo-authored-by: ThanhNguyxnAgent[bot] <296222857+thanhnguyxnagent[bot]@users.noreply.github.com>\nSigned-off-by: ThanhNguyxnAgent[bot] <296222857+thanhnguyxnagent[bot]@users.noreply.github.com>")
           gh pr merge "$PR_URL" --auto --squash --body "$BODY"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
@@ -56,3 +56,4 @@ jobs:
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+

@@ -1,4 +1,4 @@
-name: Release Windows App
+﻿name: Release Windows App
 
 on:
   push:
@@ -145,7 +145,7 @@ jobs:
         run: |
           if ! git rev-parse "$TAG" >/dev/null 2>&1; then
             git config user.name "ThanhNguyxnAgent[bot]"
-            git config user.email "4125740+thanhnguyxnagent[bot]@users.noreply.github.com"
+            git config user.email "296222857+thanhnguyxnagent[bot]@users.noreply.github.com"
             git tag -a "$TAG" -m "Release $TAG"
             git push origin "$TAG"
             echo "Created and pushed tag $TAG by ThanhNguyxnAgent"
@@ -166,3 +166,4 @@ jobs:
             artifacts/PurgeKit_x64_en-US.msi
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
