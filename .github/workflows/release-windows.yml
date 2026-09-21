@@ -12,6 +12,7 @@ permissions:
 jobs:
   check-trigger:
     runs-on: ubuntu-latest
+    if: github.actor != 'dependabot[bot]'
     outputs:
       is_release: ${{ steps.check.outputs.is_release }}
       version: ${{ steps.check.outputs.version }}
@@ -30,14 +31,18 @@ jobs:
             echo "is_release=true" >> "$GITHUB_OUTPUT"
             echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           else
-            echo "Commit message: $COMMIT_MSG"
-            if [[ "$COMMIT_MSG" =~ v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+            FIRST_LINE=$(echo "$COMMIT_MSG" | head -n 1)
+            echo "Checking commit header: $FIRST_LINE"
+            if [[ "$FIRST_LINE" =~ ^[Rr]elease:?[[:space:]]+v?([0-9]+\.[0-9]+\.[0-9]+[a-zA-Z0-9\.-]*) ]] || \
+               [[ "$FIRST_LINE" =~ ^chore\(release\):?[[:space:]]+v?([0-9]+\.[0-9]+\.[0-9]+[a-zA-Z0-9\.-]*) ]] || \
+               [[ "$FIRST_LINE" =~ ^\[release\][[:space:]]+v?([0-9]+\.[0-9]+\.[0-9]+[a-zA-Z0-9\.-]*) ]] || \
+               [[ "$FIRST_LINE" =~ ^bump:?[[:space:]]+v?([0-9]+\.[0-9]+\.[0-9]+[a-zA-Z0-9\.-]*) ]]; then
               VERSION="${BASH_REMATCH[1]}"
-              echo "Release trigger detected. Version: $VERSION"
+              echo "Release trigger detected: $FIRST_LINE -> Version: $VERSION"
               echo "is_release=true" >> "$GITHUB_OUTPUT"
               echo "version=$VERSION" >> "$GITHUB_OUTPUT"
             else
-              echo "No version tag match found in commit message. Skipping release build."
+              echo "No release trigger detected in commit message header. Skipping release build."
               echo "is_release=false" >> "$GITHUB_OUTPUT"
             fi
           fi
@@ -80,26 +85,23 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ needs.check-trigger.outputs.version }}"
-          Write-Host "Extracting changelog for version $version"
+          $cleanVer = $version.TrimStart('v')
+          Write-Host "Extracting changelog for version $cleanVer"
           
           if (Test-Path "CHANGELOG.md") {
               $changelog = Get-Content CHANGELOG.md -Raw
-              # Regex to match the section under ## [version]
-              $pattern = "(?s)## \[" + [regex]::Escape($version) + "\].*?\r?\n(.*?)(?=\r?\n## \[|\Z)"
+              $pattern = "(?s)##\s*\[?v?" + [regex]::Escape($cleanVer) + "\]?.*?\r?\n(.*?)(?=\r?\n##\s*\[?v?\d|\Z)"
               if ($changelog -match $pattern) {
                   $body = $Matches[1].Trim()
-                  Write-Host "Found changelog entry:"
-                  Write-Host $body
+                  Write-Host "Found changelog entry for $cleanVer"
               } else {
-                  $body = "Release version $version"
-                  Write-Host "Changelog entry for $version not found. Using default."
+                  $body = "Release PurgeKit v$cleanVer"
+                  Write-Host "Changelog entry for $cleanVer not found. Using default."
               }
           } else {
-              $body = "Release version $version"
-              Write-Host "CHANGELOG.md not found. Using default."
+              $body = "Release PurgeKit v$cleanVer"
           }
           
-          # Write to GITHUB_OUTPUT using multiline syntax
           Add-Content -Path $env:GITHUB_OUTPUT -Value "body<<EOF"
           Add-Content -Path $env:GITHUB_OUTPUT -Value $body
           Add-Content -Path $env:GITHUB_OUTPUT -Value "EOF"
@@ -135,6 +137,21 @@ jobs:
           } else {
               Write-Error "MSI file not found!"
           }
+
+      - name: 🏷️ Ensure Git Tag Exists
+        env:
+          TAG: v${{ needs.check-trigger.outputs.version }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          if ! git rev-parse "$TAG" >/dev/null 2>&1; then
+            git config user.name "ThanhNguyxnAgent[bot]"
+            git config user.email "4125740+thanhnguyxnagent[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "$TAG"
+            echo "Created and pushed tag $TAG by ThanhNguyxnAgent"
+          else
+            echo "Tag $TAG already exists."
+          fi
 
       - name: Create and Publish GitHub Release
         uses: softprops/action-gh-release@v3
