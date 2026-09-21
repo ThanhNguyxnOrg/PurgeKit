@@ -22,6 +22,14 @@ jobs:
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
 
+      # Generate GitHub App Token for bot actions
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+
       # Check if it's minor or patch update, or dev dependency: approve and auto-merge
       - name: Approve and Auto-Merge Safe Updates
         if: >
@@ -33,7 +41,7 @@ jobs:
           gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
 
       # For major production updates: add 'needs-review' label and comment
       - name: Request Manual Review for Major Production Updates
@@ -46,4 +54,4 @@ jobs:
           gh pr comment "$PR_URL" --body "⚠️ This is a **major** update to a production dependency. Please review breaking changes and test thoroughly before merging."
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
