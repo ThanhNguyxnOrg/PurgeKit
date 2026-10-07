@@ -23,20 +23,24 @@ pub fn delete_file_with_escalation(path: &str) -> DeleteResult {
         return DeleteResult::Deleted;
     }
 
+    let is_dir = path_buf.is_dir();
+
     // Attempt 1: Direct delete
-    if fs::remove_file(path_buf).is_ok() {
-        return DeleteResult::Deleted;
-    }
-    if path_buf.is_dir() && fs::remove_dir_all(path_buf).is_ok() {
+    if is_dir {
+        if fs::remove_dir_all(path_buf).is_ok() {
+            return DeleteResult::Deleted;
+        }
+    } else if fs::remove_file(path_buf).is_ok() {
         return DeleteResult::Deleted;
     }
 
     // Attempt 2: Restart Manager (graceful unlock)
     if unlock_file_restart_manager(path).is_ok() {
-        if fs::remove_file(path_buf).is_ok() {
-            return DeleteResult::DeletedAfterUnlock;
-        }
-        if path_buf.is_dir() && fs::remove_dir_all(path_buf).is_ok() {
+        if is_dir {
+            if fs::remove_dir_all(path_buf).is_ok() {
+                return DeleteResult::DeletedAfterUnlock;
+            }
+        } else if fs::remove_file(path_buf).is_ok() {
             return DeleteResult::DeletedAfterUnlock;
         }
     }
