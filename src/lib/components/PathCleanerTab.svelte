@@ -75,6 +75,11 @@
       // Save System scope (requires Admin, handled in backend error check)
       const hasSystemRemoval = envPaths.some((entry, idx) => entry.scope === "System" && selectedIndices[idx]);
       if (hasSystemRemoval) {
+        if (systemRemaining.length === 0) {
+          toast.show("Cannot clear all System PATH entries! Windows requires system PATH to function.", "error");
+          isSaving = false;
+          return;
+        }
         await invoke("save_path_entries", {
           remainingValues: systemRemaining,
           scope: "System"

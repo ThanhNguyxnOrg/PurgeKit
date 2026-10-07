@@ -44,6 +44,10 @@ pub fn get_path_entries() -> Result<Vec<PathEntry>, String> {
 }
 
 pub fn set_path_entries(remaining_values: Vec<String>, scope: &str) -> Result<(), String> {
+    if scope == "System" && remaining_values.is_empty() {
+        return Err("System PATH cannot be empty. Deleting all entries would cause Windows system instability.".to_string());
+    }
+
     let new_path_val = remaining_values.join(";");
 
     if scope == "User" {

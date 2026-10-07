@@ -38,9 +38,14 @@ pub struct DevToolInfo {
 }
 
 pub fn get_devtools_rules_path() -> PathBuf {
-    let localappdata = env::var_os("LOCALAPPDATA").map(PathBuf::from)
-        .unwrap_or_else(|| env::temp_dir());
-    localappdata.join("PurgeKit").join("devtools_rules.json")
+    let base_dir = env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            env::var_os("USERPROFILE")
+                .map(|p| PathBuf::from(p).join("AppData").join("Local"))
+                .unwrap_or_else(|| PathBuf::from(r"C:\Users\Public"))
+        });
+    base_dir.join("PurgeKit").join("devtools_rules.json")
 }
 
 pub fn resolve_template_path(template: &str) -> Option<PathBuf> {
@@ -75,6 +80,10 @@ pub fn resolve_template_path(template: &str) -> Option<PathBuf> {
 }
 
 pub fn get_single_dynamic_cache_path(_name: &str, cmd: &str) -> Option<PathBuf> {
+    let dangerous_chars = ['&', '|', '>', '<', ';', '`', '$', '\n', '\r'];
+    if cmd.chars().any(|c| dangerous_chars.contains(&c)) {
+        return None;
+    }
     let secure_path = get_secure_system_path();
     if let Ok(output) = Command::new("cmd")
         .creation_flags(CREATE_NO_WINDOW)
@@ -280,6 +289,13 @@ pub fn scan_dev_tools() -> Vec<DevToolInfo> {
             cache_size: None,
             clean_command: rule.clean_command.clone(),
         };
+
+        let dangerous_chars = ['&', '|', '>', '<', ';', '`', '$', '\n', '\r'];
+        if cmd_to_run.chars().any(|c| dangerous_chars.contains(&c))
+            || rule.args.iter().any(|a| a.chars().any(|c| dangerous_chars.contains(&c)))
+        {
+            continue;
+        }
 
         // Run through `cmd /C`: npm, pnpm, yarn, gradle and mvn ship as
         // .cmd/.bat shims on Windows, which CreateProcess (Command::new)
