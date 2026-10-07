@@ -47,18 +47,7 @@ fn scan_startup_keys(app_token: &str, install_dir: Option<&str>, remnants: &mut 
                 Err(_) => continue,
             };
 
-            let cleaned_val = val.trim().trim_matches('"').to_string();
-            // Extract executable path (strip arguments)
-            let exe_path = if let Some(first_space) = cleaned_val.find(' ') {
-                if cleaned_val.starts_with('"') {
-                    // It starts with quote, should have closed quote
-                    cleaned_val.trim_matches('"').to_string()
-                } else {
-                    cleaned_val[..first_space].to_string()
-                }
-            } else {
-                cleaned_val
-            };
+            let exe_path = crate::winutil::extract_executable_path(&val);
 
             let expanded = crate::winutil::expand_env_strings(&exe_path);
             let path_lower = expanded.to_lowercase();
@@ -130,24 +119,15 @@ fn scan_services(app_token: &str, install_dir: Option<&str>, remnants: &mut Vec<
             Err(_) => continue,
         };
 
-        let cleaned_path = image_path.trim().trim_matches('"').to_string();
-        let exe_path = if cleaned_path.starts_with(r"\SystemRoot\") {
+        let resolved_path = if image_path.trim_start_matches('"').starts_with(r"\SystemRoot\") {
             let sys_root = std::env::var("SystemRoot")
                 .or_else(|_| std::env::var("windir"))
                 .unwrap_or_else(|_| "C:\\Windows".to_string());
-            cleaned_path.replacen(r"\SystemRoot\", &sys_root, 1)
+            image_path.replacen(r"\SystemRoot\", &sys_root, 1)
         } else {
-            cleaned_path
+            image_path
         };
-
-        // Strip arguments
-        let exe_path = if let Some(pos) = exe_path.find(" -") {
-            exe_path[..pos].trim().to_string()
-        } else if let Some(pos) = exe_path.find(" /") {
-            exe_path[..pos].trim().to_string()
-        } else {
-            exe_path
-        };
+        let exe_path = crate::winutil::extract_executable_path(&resolved_path);
 
         let expanded = crate::winutil::expand_env_strings(&exe_path);
         let path_lower = expanded.to_lowercase();
@@ -259,8 +239,9 @@ fn scan_tasks_dir_recursive(
                 if let Some(cmd_start) = xml_lower.find("<command>") {
                     if let Some(cmd_end) = xml_lower[cmd_start..].find("</command>") {
                         // Slicing xml_lower instead of xml_content ensures we slice using safe indices
-                        let cleaned_cmd = xml_lower[cmd_start + 9 .. cmd_start + cmd_end].trim().trim_matches('"');
-                        let expanded_cmd = crate::winutil::expand_env_strings(cleaned_cmd);
+                        let cleaned_cmd = xml_lower[cmd_start + 9 .. cmd_start + cmd_end].trim();
+                        let exe = crate::winutil::extract_executable_path(cleaned_cmd);
+                        let expanded_cmd = crate::winutil::expand_env_strings(&exe);
                         if !expanded_cmd.is_empty() && !Path::new(&expanded_cmd).exists() {
                             binary_exists = false;
                         }
