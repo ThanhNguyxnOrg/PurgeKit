@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.1] - 2026-10-07
+
+### 🐛 Bug Fixes & Reliability Enhancements
+* **🚀 CI/CD Release Pipeline Recovery**:
+  - Fixed syntax error in `.github/workflows/release-windows.yml` by explicitly setting `shell: bash` on the `Ensure Git Tag Exists` step, preventing PowerShell parser failures on `windows-latest` runners.
+* **🔎 Quoted Paths Parsing in PATH Cleaner**:
+  - Sanitized double-quoted directory paths (e.g., `"C:\Program Files\Git\cmd"`) in `path_cleaner.rs` prior to `Path::is_dir()` validation, fixing false-positive "Directory does not exist" detections and preventing accidental deletion of valid system paths.
+* **🛡️ Canonical Machine-Wide System PATH Priority**:
+  - Prioritized reading System PATH (`HKLM`) before User PATH (`HKCU`), ensuring machine-wide paths are treated as canonical and only redundant user-scoped entries are flagged for deduplication cleanup.
+* **🔒 Admin Elevation Pre-flight Gate**:
+  - Enforced administrative privilege pre-flight validation in `PathCleanerTab.svelte` before persisting changes, preventing partial state mutations where User PATH is saved but System PATH fails with Access Denied.
+* **📁 Boundary Hardening in Project Sweeper**:
+  - Normalized path delimiters and blocked direct scanning and sweeping inside `Program Files`, `Program Files (x86)`, `ProgramData`, and `Windows` system roots in both `ProjectSweeperTab.svelte` and `project_sweeper.rs` to protect installed application binaries (`bin`, `obj`, `node_modules`).
+* **⚙️ Uninstaller Exit Code Verification**:
+  - Added strict child exit status checks for both UWP `Remove-AppxPackage` and standard Win32 uninstallers in `commands.rs`, ensuring uninstallation errors are properly bubbled up to the user.
+
+---
+
 ## [1.2.0] - 2026-10-07
 
 ### 🔒 Enterprise Security Hardening & Fail-Safe Defaults
