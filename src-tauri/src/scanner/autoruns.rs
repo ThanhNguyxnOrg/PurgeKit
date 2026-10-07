@@ -105,7 +105,10 @@ fn scan_services(app_token: &str, install_dir: Option<&str>, remnants: &mut Vec<
         Err(_) => return,
     };
 
-    let windir = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string()).to_lowercase();
+    let windir = std::env::var("SystemRoot")
+        .or_else(|_| std::env::var("windir"))
+        .unwrap_or_else(|_| "C:\\Windows".to_string())
+        .to_lowercase();
 
     for service_name in services_key.enum_keys().filter_map(|x| x.ok()) {
         let service_name_lower = service_name.to_lowercase();
@@ -129,7 +132,10 @@ fn scan_services(app_token: &str, install_dir: Option<&str>, remnants: &mut Vec<
 
         let cleaned_path = image_path.trim().trim_matches('"').to_string();
         let exe_path = if cleaned_path.starts_with(r"\SystemRoot\") {
-            cleaned_path.replacen(r"\SystemRoot\", &std::env::var("SystemRoot").unwrap_or("C:\\Windows".to_string()), 1)
+            let sys_root = std::env::var("SystemRoot")
+                .or_else(|_| std::env::var("windir"))
+                .unwrap_or_else(|_| "C:\\Windows".to_string());
+            cleaned_path.replacen(r"\SystemRoot\", &sys_root, 1)
         } else {
             cleaned_path
         };
@@ -184,8 +190,10 @@ fn scan_services(app_token: &str, install_dir: Option<&str>, remnants: &mut Vec<
 }
 
 fn scan_scheduled_tasks(app_token: &str, install_dir: Option<&str>, remnants: &mut Vec<RemnantItem>) {
-    // Scheduled tasks files are stored in C:\Windows\System32\Tasks
-    let windir = std::env::var("SystemRoot").unwrap_or("C:\\Windows".to_string());
+    // Scheduled tasks files are stored in %SystemRoot%\System32\Tasks
+    let windir = std::env::var("SystemRoot")
+        .or_else(|_| std::env::var("windir"))
+        .unwrap_or_else(|_| "C:\\Windows".to_string());
     let tasks_dir = Path::new(&windir).join("System32").join("Tasks");
     
     if tasks_dir.exists() {
@@ -221,7 +229,7 @@ fn scan_tasks_dir_recursive(
                 None => continue,
             };
 
-            let xml_content = match fs::read_to_string(&path) {
+            let xml_content = match crate::winutil::read_file_utf8_or_utf16(&path) {
                 Ok(content) => content,
                 Err(_) => continue,
             };
@@ -353,7 +361,7 @@ mod tests {
 
         assert!(!remnants.is_empty(), "Should find the mock task by install dir");
         let item = &remnants[0];
-        assert_eq!(item.item_type, "File");
+        assert_eq!(item.item_type, "ScheduledTask");
         assert!(item.path.contains("MyCoolAppTask"));
         assert!(item.score >= 80);
     }

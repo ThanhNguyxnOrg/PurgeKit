@@ -489,7 +489,9 @@ pub async fn start_install_tracking(
 ) -> Result<(), String> {
     let state_clone = state.0.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let current_usn = unsafe { crate::tracker::query_current_usn('C') }?;
+        let sys_drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".to_string());
+        let drive_char = sys_drive.chars().next().unwrap_or('C').to_ascii_uppercase();
+        let current_usn = unsafe { crate::tracker::query_current_usn(drive_char) }?;
         let start_time = std::time::SystemTime::now();
         
         // Take registry baseline
@@ -525,8 +527,10 @@ pub async fn stop_install_tracking(
             active.take().ok_or_else(|| "No active installation tracking session is running".to_string())?
         };
 
-        let _current_usn = unsafe { crate::tracker::query_current_usn('C') }?;
-        let usn_changes = unsafe { crate::tracker::read_usn_changes('C', session.start_usn) }?;
+        let sys_drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".to_string());
+        let drive_char = sys_drive.chars().next().unwrap_or('C').to_ascii_uppercase();
+        let _current_usn = unsafe { crate::tracker::query_current_usn(drive_char) }?;
+        let usn_changes = unsafe { crate::tracker::read_usn_changes(drive_char, session.start_usn) }?;
         
         // Scan registry after installation
         let mut current_reg = Vec::new();
@@ -614,9 +618,19 @@ pub async fn stop_install_tracking(
         
         let display_name = format!("[Tracked] {}", session.name);
         
+        let reg_count = new_registry_keys.len() as i64;
+        let file_count = new_files.len() as i64;
+
         conn.execute(
-            "INSERT INTO snapshots (id, name, created_at, data_file_path) VALUES (?1, ?2, ?3, ?4)",
-            [&id, &display_name, &created_at, &data_file_path.to_string_lossy().to_string()],
+            "INSERT INTO snapshots (id, name, created_at, data_file_path, reg_count, file_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                &id,
+                &display_name,
+                &created_at,
+                &data_file_path.to_string_lossy().to_string(),
+                reg_count,
+                file_count
+            ],
         ).map_err(|e| e.to_string())?;
 
         Ok(SnapshotRecord {
@@ -814,6 +828,13 @@ pub async fn restore_quarantine_item(id: String) -> Result<(), String> {
             }
         ).map_err(|e| format!("Quarantine item not found: {}", e))?;
 
+        let q_dir = crate::backup::get_quarantine_dir();
+        let q_path_canon = crate::winutil::canonicalize_path_safety(&item.quarantine_path);
+        let q_dir_canon = crate::winutil::canonicalize_path_safety(&q_dir.to_string_lossy());
+        if !q_path_canon.starts_with(&q_dir_canon) {
+            return Err("Access Denied: Quarantine item resides outside the designated quarantine directory.".to_string());
+        }
+
         let src_path = std::path::Path::new(&item.quarantine_path);
         if !src_path.exists() {
             return Err("Quarantined file does not exist on disk".to_string());
@@ -879,6 +900,13 @@ pub async fn delete_quarantine_item(id: String) -> Result<(), String> {
                 })
             }
         ).map_err(|e| format!("Quarantine item not found: {}", e))?;
+
+        let q_dir = crate::backup::get_quarantine_dir();
+        let q_path_canon = crate::winutil::canonicalize_path_safety(&item.quarantine_path);
+        let q_dir_canon = crate::winutil::canonicalize_path_safety(&q_dir.to_string_lossy());
+        if !q_path_canon.starts_with(&q_dir_canon) {
+            return Err("Access Denied: Quarantine item resides outside the designated quarantine directory.".to_string());
+        }
 
         let q_path = std::path::Path::new(&item.quarantine_path);
         if q_path.exists() {

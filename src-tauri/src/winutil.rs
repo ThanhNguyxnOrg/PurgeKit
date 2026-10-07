@@ -41,6 +41,35 @@ pub fn expand_env_strings(raw: &str) -> String {
     }
 }
 
+/// Read a file that may be UTF-8 or UTF-16 LE (common for Windows Task Scheduler XML files).
+pub fn read_file_utf8_or_utf16(path: &std::path::Path) -> std::io::Result<String> {
+    let bytes = std::fs::read(path)?;
+    if bytes.is_empty() {
+        return Ok(String::new());
+    }
+    // Check UTF-16 LE BOM (0xFF, 0xFE)
+    if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
+        let u16_slice: Vec<u16> = bytes[2..]
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect();
+        return Ok(String::from_utf16_lossy(&u16_slice));
+    }
+    // Check for UTF-16 LE without BOM (e.g. starts with '<' '\0' '?' '\0')
+    if bytes.len() >= 4 && bytes[1] == 0 && bytes[3] == 0 {
+        let u16_slice: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect();
+        return Ok(String::from_utf16_lossy(&u16_slice));
+    }
+    // Default to UTF-8
+    match String::from_utf8(bytes) {
+        Ok(s) => Ok(s),
+        Err(e) => Ok(String::from_utf8_lossy(&e.into_bytes()).to_string()),
+    }
+}
+
 /// Retrieve the secure, system-only PATH variable from HKLM, falling back to a hardcoded safe default.
 pub fn get_secure_system_path() -> String {
     #[cfg(windows)]
@@ -54,7 +83,10 @@ pub fn get_secure_system_path() -> String {
             }
         }
     }
-    r"C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\".to_string()
+    let windir = std::env::var("SystemRoot")
+        .or_else(|_| std::env::var("windir"))
+        .unwrap_or_else(|_| r"C:\Windows".to_string());
+    format!(r"{}\System32;{};{}\System32\Wbem;{}\System32\WindowsPowerShell\v1.0\", windir, windir, windir, windir)
 }
 
 /// Retrieve an environment PATH suitable for developer toolchains:
@@ -223,12 +255,27 @@ pub fn verify_file_signature(file_path: &str) -> bool {
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-/// Extract the executable path from a command line string, handling quotes.
+/// Extract the executable path from a command line string, handling quotes and unquoted paths with spaces.
 pub fn extract_executable_path(cmd: &str) -> String {
     let trimmed = cmd.trim();
     if trimmed.starts_with('"') {
         if let Some(end) = trimmed[1..].find('"') {
             return trimmed[1..end + 1].to_string();
+        }
+    }
+    // Scan for standard executable extensions in unquoted command lines
+    let lower = trimmed.to_lowercase();
+    for ext in &[".exe", ".cmd", ".bat", ".com", ".dll", ".scr"] {
+        if let Some(pos) = lower.find(ext) {
+            let end = pos + ext.len();
+            if end == trimmed.len()
+                || trimmed
+                    .as_bytes()
+                    .get(end)
+                    .map_or(false, |&b| b == b' ' || b == b'\t' || b == b'"' || b == b',' || b == b'/')
+            {
+                return trimmed[..end].to_string();
+            }
         }
     }
     if let Some(space_idx) = trimmed.find(' ') {
@@ -420,10 +467,10 @@ pub fn is_safe_to_delete(path_str: &str) -> Result<(), String> {
 
     // 8. Prevent deleting registry hive files: ntuser.dat, usrclass.dat (and logs)
     let name_lower = target.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
-    if name_lower.starts_with("ntuser.dat") || name_lower.starts_with("usrclass.dat") {
-        if target_path.starts_with(Path::new(&user_profile)) {
-            return Err(format!("Deletion blocked: User registry hive file '{}' cannot be deleted.", path_str));
-        }
+    if (name_lower.starts_with("ntuser.dat") || name_lower.starts_with("usrclass.dat"))
+        && target_path.starts_with(Path::new(&user_profile))
+    {
+        return Err(format!("Deletion blocked: User registry hive file '{}' cannot be deleted.", path_str));
     }
 
     Ok(())
@@ -660,5 +707,29 @@ mod tests {
         assert!(is_safe_registry_key("HKLM", r"SYSTEM\CurrentControlSet\Services\Dnscache").is_err());
         assert!(is_safe_registry_key("HKLM", r"SYSTEM\CurrentControlSet\Services\WinDefend").is_err());
         assert!(is_safe_registry_key("HKLM", r"SYSTEM\CurrentControlSet\Services\MyCustomAppService").is_ok());
+    }
+
+    #[test]
+    fn test_extract_executable_path() {
+        assert_eq!(
+            extract_executable_path(r#""C:\Program Files\App\app.exe" /arg"#),
+            r"C:\Program Files\App\app.exe"
+        );
+        assert_eq!(
+            extract_executable_path(r"C:\Program Files\App\app.exe /arg"),
+            r"C:\Program Files\App\app.exe"
+        );
+        assert_eq!(
+            extract_executable_path(r"C:\Users\John Doe\AppData\unins000.exe"),
+            r"C:\Users\John Doe\AppData\unins000.exe"
+        );
+        assert_eq!(
+            extract_executable_path("cmd.exe /c dir"),
+            "cmd.exe"
+        );
+        assert_eq!(
+            extract_executable_path("calc"),
+            "calc"
+        );
     }
 }

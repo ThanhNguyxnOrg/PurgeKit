@@ -58,8 +58,8 @@ fn get_scan_locations(level: &str) -> Vec<ScanTarget> {
 
     // ═══ TIER 2: User AppData & ProgramData (base_score: 60) ═══
     if let Some(appdata) = env::var_os("APPDATA").map(PathBuf::from) {
-        targets.push(dir_target(appdata, 60));
-        targets.push(dir_target(env::var_os("APPDATA").map(PathBuf::from).unwrap().join(r"Microsoft\Windows\Start Menu\Programs"), 65));
+        targets.push(dir_target(appdata.clone(), 60));
+        targets.push(dir_target(appdata.join(r"Microsoft\Windows\Start Menu\Programs"), 65));
     }
     if let Some(localappdata) = env::var_os("LOCALAPPDATA").map(PathBuf::from) {
         targets.push(dir_target(localappdata.clone(), 60));
@@ -106,7 +106,10 @@ fn get_scan_locations(level: &str) -> Vec<ScanTarget> {
         if let Some(temp) = env::var_os("TEMP").map(PathBuf::from) {
             targets.push(dir_target(temp, 35));
         }
-        targets.push(dir_target(PathBuf::from(r"C:\Windows\Temp"), 30));
+        let windir = env::var("SystemRoot")
+            .or_else(|_| env::var("windir"))
+            .unwrap_or_else(|_| r"C:\Windows".to_string());
+        targets.push(dir_target(PathBuf::from(&windir).join("Temp"), 30));
         if let Some(localappdata) = env::var_os("LOCALAPPDATA").map(PathBuf::from) {
             targets.push(dir_target(localappdata.join("CrashDumps"), 40));
         }
@@ -325,9 +328,11 @@ fn scan_deep_system_remnants(
     };
 
     // 1. Scan Scheduled Tasks
-    let tasks_dir = Path::new(r"C:\Windows\System32\Tasks");
+    let windir = std::env::var("SystemRoot")
+        .unwrap_or_else(|_| std::env::var("windir").unwrap_or_else(|_| r"C:\Windows".to_string()));
+    let tasks_dir = Path::new(&windir).join("System32").join("Tasks");
     if tasks_dir.exists() {
-        if let Ok(entries) = fs::read_dir(tasks_dir) {
+        if let Ok(entries) = fs::read_dir(&tasks_dir) {
             for entry in entries.filter_map(|e| e.ok()) {
                 let path = entry.path();
                 if path.is_file() {
@@ -342,7 +347,7 @@ fn scan_deep_system_remnants(
                     }
                     
                     if !matches {
-                        if let Ok(content) = fs::read_to_string(&path) {
+                        if let Ok(content) = crate::winutil::read_file_utf8_or_utf16(&path) {
                             if let Some(ref loc) = install_loc_lower {
                                 if !loc.is_empty() && content.to_lowercase().contains(loc) {
                                     matches = true;

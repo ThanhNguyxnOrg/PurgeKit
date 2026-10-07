@@ -109,7 +109,9 @@ pub fn scan_msi_remnants(app_token: &str, _install_dir: Option<&str>) -> Vec<Rem
         .collect();
 
     // 2. Scan C:\Windows\Installer for orphaned .msi and .msp files
-    let windir = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+    let windir = std::env::var("SystemRoot")
+        .or_else(|_| std::env::var("windir"))
+        .unwrap_or_else(|_| "C:\\Windows".to_string());
     let installer_dir = Path::new(&windir).join("Installer");
     if !installer_dir.exists() || !installer_dir.is_dir() {
         return remnants;

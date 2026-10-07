@@ -17,17 +17,17 @@
   let envPaths = $state<PathEntry[]>([]);
   let isLoading = $state(true);
   let isSaving = $state(false);
-  let selectedPaths = $state<Record<string, boolean>>({});
+  let selectedIndices = $state<Record<number, boolean>>({});
 
   async function loadPaths() {
     isLoading = true;
-    selectedPaths = {};
+    selectedIndices = {};
     try {
       envPaths = await invoke<PathEntry[]>("get_path_entries");
       // Select all broken or duplicate paths by default for cleaning
-      envPaths.forEach((entry) => {
+      envPaths.forEach((entry, idx) => {
         if (!entry.is_valid || entry.is_duplicate) {
-          selectedPaths[entry.value] = true;
+          selectedIndices[idx] = true;
         }
       });
     } catch (e) {
@@ -41,13 +41,13 @@
     loadPaths();
   });
 
-  function toggleSelection(value: string) {
-    selectedPaths[value] = !selectedPaths[value];
+  function toggleSelection(idx: number) {
+    selectedIndices[idx] = !selectedIndices[idx];
   }
 
   async function cleanSelectedPaths() {
-    const pathsToRemove = Object.keys(selectedPaths).filter((key) => selectedPaths[key]);
-    if (pathsToRemove.length === 0) {
+    const selectedCount = Object.keys(selectedIndices).filter((key) => selectedIndices[Number(key)]).length;
+    if (selectedCount === 0) {
       toast.show("Please select at least one path to clean.", "warning");
       return;
     }
@@ -56,21 +56,24 @@
     try {
       // Split remaining paths by scope to save back to Registry
       const userRemaining = envPaths
-        .filter((entry) => entry.scope === "User" && !selectedPaths[entry.value])
+        .filter((entry, idx) => entry.scope === "User" && !selectedIndices[idx])
         .map((entry) => entry.value);
 
       const systemRemaining = envPaths
-        .filter((entry) => entry.scope === "System" && !selectedPaths[entry.value])
+        .filter((entry, idx) => entry.scope === "System" && !selectedIndices[idx])
         .map((entry) => entry.value);
 
-      // Save User scope
-      await invoke("save_path_entries", {
-        remainingValues: userRemaining,
-        scope: "User"
-      });
+      // Save User scope only if there are user paths removed
+      const hasUserRemoval = envPaths.some((entry, idx) => entry.scope === "User" && selectedIndices[idx]);
+      if (hasUserRemoval) {
+        await invoke("save_path_entries", {
+          remainingValues: userRemaining,
+          scope: "User"
+        });
+      }
 
       // Save System scope (requires Admin, handled in backend error check)
-      const hasSystemRemoval = envPaths.some((entry) => entry.scope === "System" && selectedPaths[entry.value]);
+      const hasSystemRemoval = envPaths.some((entry, idx) => entry.scope === "System" && selectedIndices[idx]);
       if (hasSystemRemoval) {
         await invoke("save_path_entries", {
           remainingValues: systemRemaining,
@@ -101,7 +104,7 @@
     <div class="flex items-center gap-2">
       <button
         onclick={cleanSelectedPaths}
-        disabled={isSaving || Object.keys(selectedPaths).filter(k => selectedPaths[k]).length === 0}
+        disabled={isSaving || Object.keys(selectedIndices).filter(k => selectedIndices[Number(k)]).length === 0}
         class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-danger hover:bg-danger/80 disabled:opacity-50 active:scale-95 transition-all text-white shadow cursor-pointer"
       >
         <Trash2 class="w-3.5 h-3.5" />
@@ -180,16 +183,16 @@
                 <th class="py-4 px-5">Details / Reason</th>
               </tr>
             </thead>
-            <tbody class="divide-y divide-border-default text-sm">
-              {#each envPaths as p}
+            <tbody class="divide-y border-border-default text-sm">
+              {#each envPaths as p, idx}
                 <tr class="hover:bg-elevated-bg/50 transition-colors duration-150 group">
                   <!-- Checkbox -->
                   <td class="py-4 px-5">
                     <button
-                      onclick={() => toggleSelection(p.value)}
+                      onclick={() => toggleSelection(idx)}
                       class="text-accent focus:outline-none flex-shrink-0 cursor-pointer"
                     >
-                      {#if selectedPaths[p.value]}
+                      {#if selectedIndices[idx]}
                         <CheckSquare class="w-4.5 h-4.5 text-accent" />
                       {:else}
                         <Square class="w-4.5 h-4.5 text-text-muted group-hover:text-text-secondary transition-colors" />

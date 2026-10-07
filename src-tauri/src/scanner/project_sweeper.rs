@@ -86,8 +86,17 @@ where
         let target = crate::winutil::canonicalize_path_safety(&expanded);
         let target_str = target.to_string_lossy().to_string();
 
-        if let Err(_e) = crate::winutil::is_safe_to_delete(&target_str) {
-            return Err(format!("Scanning blocked: '{}' is a protected directory and cannot be swept.", root));
+        let system_root = std::env::var("SystemRoot")
+            .unwrap_or_else(|_| r"C:\Windows".to_string())
+            .to_lowercase();
+        let target_lower = target_str.to_lowercase();
+        if target_lower == system_root || target_lower.starts_with(&(system_root + "\\")) {
+            return Err(format!("Scanning blocked: '{}' is a Windows system directory and cannot be swept.", root));
+        }
+
+        let trimmed_drive = target_lower.trim_end_matches('\\');
+        if trimmed_drive.len() == 2 && trimmed_drive.ends_with(':') {
+            return Err(format!("Scanning blocked: Drive root '{}' cannot be swept directly as a project folder.", root));
         }
 
         let path = PathBuf::from(root);

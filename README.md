@@ -23,7 +23,8 @@
   <a href="#-quick-start">Quick Start</a> • 
   <a href="#-cli-usage">CLI Usage</a> • 
   <a href="#-documentation">Documentation</a> • 
-  <a href="#-changelog">Changelog</a>
+  <a href="CHANGELOG.md">Changelog</a> • 
+  <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
 ---
@@ -38,10 +39,10 @@
 
 PurgeKit is structured around five main modules:
 1. **🧹 Apps Manager & Bulk Silent Uninstaller**: Fetch standard desktop apps and UWP Store packages, uninstall them in batch, and scan/purge leftovers in Registry & file systems.
-2. **🗂️ Universal Project Sweeper**: Recursively scans workspace directories for heavy compile folders and dependencies (`node_modules`, `target`, `venv`, `.vs`...) and purges them.
-3. **🐋 WSL2 Virtual Disk Shrinker**: Safely compacts bloating virtual drive files (`ext4.vhdx`) using Windows DiskPart and manages dynamic auto-shrink (Sparse mode).
-4. **🛠️ Toolchain Version Sweeper & Dev Caches**: Detects and uninstalls unused/obsolete versions of Rustup compiler toolchains and Node runtimes (NVM / FNM) with safe folder purging fallbacks.
-5. **🖥️ PATH Environment Cleaner**: Identifies and repairs broken, duplicate, or redundant path variables in Windows User & System environments.
+2. **🗂️ Universal Project Sweeper**: Recursively scans workspace directories for heavy compile folders and dependencies (`node_modules`, `target`, `venv`, `.vs`...) and purges them. ([Guide](docs/PROJECT_SWEEPER.md))
+3. **🐋 WSL2 Virtual Disk Shrinker**: Safely compacts bloating virtual drive files (`ext4.vhdx`) using Windows DiskPart and manages dynamic auto-shrink (Sparse mode). ([Guide](docs/WSL_DISK_SHRINKER.md))
+4. **🛠️ Toolchain Version Sweeper & Dev Caches**: Detects and uninstalls unused/obsolete versions of Rustup compiler toolchains and Node runtimes (NVM / FNM) with safe folder purging fallbacks. ([Guide](docs/TOOLCHAIN_SWEEPER.md))
+5. **🖥️ PATH Environment Cleaner**: Identifies and repairs broken, duplicate, or redundant path variables in Windows User & System environments. ([Guide](docs/PATH_CLEANER.md))
 
 *For in-depth explanations of how each module works, see [✨ Detailed Feature Overview](docs/FEATURES.md).*
 
@@ -95,21 +96,36 @@ purgekit.exe wsl compact "Ubuntu"
 ---
 
 ## 📖 Documentation
+ 
+Detailed documents are categorized below and located in the [`docs/`](docs/) directory:
 
-Detailed documents are located in the [`docs/`](docs/) directory:
-*   [📥 Installation & Setup Guide](docs/INSTALLATION.md) - How to download, install, and run PurgeKit on Windows.
-*   [✨ Detailed Feature Overview](docs/FEATURES.md) - Learn how deep scanning, snapshot diffing, and WSL2 compaction work.
-*   [📐 Technical Architecture](docs/ARCHITECTURE.md) - Deep dive into Tauri IPC commands, Rust modules, and SQLite schemas.
-*   [🗂️ Universal Project Sweeper Guide](docs/PROJECT_SWEEPER.md) - Folder presets, walkdir scan rules, and size calculation.
-*   [📸 System Snapshot Engine Guide](docs/SNAPSHOT_ENGINE.md) - Baseline snapshotting, registry/filesystem crawls, and diff engine.
-*   [📡 Active Installation Tracker Guide](docs/ACTIVE_TRACKER.md) - Live tracking using NTFS USN Journal and registry hooks.
-*   [🛡️ Quarantine & Backup Engine Guide](docs/QUARANTINE_ENGINE.md) - Safe registry exports (.reg), local folder quarantine, and restoration.
-*   [🚀 Startup Manager & Autoruns Guide](docs/STARTUP_MANAGER.md) - Registry Run keys, user startup folders, and disable/enable triggers.
-*   [📦 Global CLI Package Sweeper Guide](docs/GLOBAL_CLI_SWEEPER.md) - Global packages (npm/yarn/pnpm/pip/cargo) scan and uninstall rules.
-*   [🔐 Security & UAC Elevation Model](docs/SECURITY_UAC.md) - Trust manifest, TokenElevation checks, and privilege boundaries.
-*   [⚙️ Configuration & Settings Guide](docs/CONFIGURATION.md) - Format of `settings.json`, scan levels, and exclusions.
-*   [🔧 Development Guide](docs/DEVELOPMENT.md) - Guidelines for setting up, writing backend commands, and adding new developer caches.
-*   [🚀 Automated Release Workflow (CI/CD)](docs/CI_CD_RELEASES.md) - GitHub Actions workflows, triggers, and automated changelog publishing.
+### 🏗️ Architecture, Security & Setup
+*   [📐 Technical Architecture](docs/ARCHITECTURE.md) - Deep dive into Tauri IPC commands, Rust backend modules, and SQLite schemas.
+*   [🔐 Security & UAC Elevation Model](docs/SECURITY_UAC.md) - Trust manifest, TokenElevation checks, LPE prevention, and privilege boundaries.
+*   [📥 Installation & Setup Guide](docs/INSTALLATION.md) - How to download, install, and initialize PurgeKit on Windows.
+*   [⚙️ Configuration & Settings Guide](docs/CONFIGURATION.md) - Format of `settings.json`, scan safety levels (`safe`, `moderate`, `aggressive`), and exclusions.
+*   [🚨 Troubleshooting & Safety Guide](docs/TROUBLESHOOTING.md) - Common permissions warnings, locked files, and UAC troubleshooting.
+
+### 🧹 Core Cleaners & Sweepers
+*   [✨ Detailed Feature Overview](docs/FEATURES.md) - Full capability breakdown of scanning, deep clean heuristics, and cleaners.
+*   [🗂️ Universal Project Sweeper Guide](docs/PROJECT_SWEEPER.md) - Folder presets (`node_modules`, `target`, `venv`), traversal limits, and live events.
+*   [🐋 WSL2 Virtual Disk Shrinker Guide](docs/WSL_DISK_SHRINKER.md) - Ext4 VHDX compaction, DiskPart script automation, and sparse mode.
+*   [🛠️ Toolchain Version Sweeper Guide](docs/TOOLCHAIN_SWEEPER.md) - Rustup, NVM, and FNM version directories and active compiler locks.
+*   [🖥️ PATH Environment Cleaner Guide](docs/PATH_CLEANER.md) - User & System Registry PATH sanitization, variable expansion, and `WM_SETTINGCHANGE`.
+*   [📦 Global CLI Package Sweeper Guide](docs/GLOBAL_CLI_SWEEPER.md) - Audit and uninstall global tools (npm, yarn, pnpm, cargo, pip, go).
+*   [🚀 Startup Manager & Autoruns Guide](docs/STARTUP_MANAGER.md) - Registry Run keys, user startup folders, and scheduled tasks disabling/enabling.
+
+### 🔬 Low-Level Engines & Tracking
+*   [📸 System Snapshot Engine Guide](docs/SNAPSHOT_ENGINE.md) - Baseline snapshotting, registry/filesystem crawls, and $O(1)$ diff engine.
+*   [📡 Active Installation Tracker Guide](docs/ACTIVE_TRACKER.md) - Real-time file creation monitoring via the Windows NTFS USN Journal.
+*   [🛡️ Quarantine & Backup Engine Guide](docs/QUARANTINE_ENGINE.md) - Automatic `.reg` exports, sandbox quarantine, and one-click restoration.
+
+### 🛠️ Developer, CLI & Operations
+*   [🐚 PurgeKit CLI Reference Guide](docs/CLI.md) - Command-line interface syntax, script automation, and headless flags.
+*   [🔧 Development Guide](docs/DEVELOPMENT.md) - Local environment bootstrap, adding new dev tool cache rules, and design tokens.
+*   [🚀 Automated Release Workflow (CI/CD)](docs/CI_CD_RELEASES.md) - GitHub Actions workflows, automated changelog parsing, and releases.
+*   [🤝 Contributing Guidelines](CONTRIBUTING.md) - Code standards, Svelte 5 runes, and pull request workflows.
+*   [📝 Full Project Changelog](CHANGELOG.md) - Historical version releases and security hardening records.
 
 ---
 

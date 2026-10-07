@@ -54,7 +54,7 @@ pub fn backup_registry_key(key_path: &str) -> Result<PathBuf, String> {
     Ok(backup_file)
 }
 
-fn get_quarantine_dir() -> PathBuf {
+pub fn get_quarantine_dir() -> PathBuf {
     let base_dir = std::env::var("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {

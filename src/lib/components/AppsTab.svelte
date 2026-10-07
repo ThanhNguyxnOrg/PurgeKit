@@ -159,7 +159,7 @@
 
   // Helper to format file size
   function formatSize(bytes: number | null): string {
-    if (bytes === null || bytes === 0) return "Unknown";
+    if (bytes === null || bytes <= 0 || isNaN(bytes)) return "Unknown";
     const k = 1024;
     const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
     const i = Math.floor(Math.log(bytes) / Math.log(k));

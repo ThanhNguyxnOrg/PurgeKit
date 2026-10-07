@@ -70,8 +70,8 @@ pub fn create_snapshot(name: &str) -> Result<SnapshotRecord, String> {
     let db_path = get_db_path();
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
     conn.execute(
-        "INSERT INTO snapshots (id, name, created_at, data_file_path) VALUES (?1, ?2, ?3, ?4)",
-        [&id, name, &created_at, &data_file_path.to_string_lossy().to_string()],
+        "INSERT INTO snapshots (id, name, created_at, data_file_path, reg_count, file_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![&id, name, &created_at, &data_file_path.to_string_lossy().to_string(), registry_keys.len() as i64, files.len() as i64],
     ).map_err(|e| e.to_string())?;
 
     Ok(SnapshotRecord {
@@ -88,7 +88,7 @@ pub fn list_snapshots() -> Result<Vec<SnapshotRecord>, String> {
     let db_path = get_db_path();
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
     
-    let mut stmt = conn.prepare("SELECT id, name, created_at, data_file_path FROM snapshots")
+    let mut stmt = conn.prepare("SELECT id, name, created_at, data_file_path, reg_count, file_count FROM snapshots ORDER BY created_at DESC")
         .map_err(|e| e.to_string())?;
         
     let snap_iter = stmt.query_map([], |row| {
@@ -96,14 +96,16 @@ pub fn list_snapshots() -> Result<Vec<SnapshotRecord>, String> {
         let name: String = row.get(1)?;
         let created_at: String = row.get(2)?;
         let data_file_path: String = row.get(3)?;
+        let mut reg_count: usize = row.get::<_, Option<i64>>(4)?.unwrap_or(0) as usize;
+        let mut file_count: usize = row.get::<_, Option<i64>>(5)?.unwrap_or(0) as usize;
         
-        // Count items in file
-        let mut reg_count = 0;
-        let mut file_count = 0;
-        if let Ok(data_str) = fs::read_to_string(&data_file_path) {
-            if let Ok(data) = serde_json::from_str::<SnapshotData>(&data_str) {
-                reg_count = data.registry_keys.len();
-                file_count = data.files.len();
+        // Fast-path: Only read JSON from disk if counts were unrecorded (legacy records)
+        if reg_count == 0 && file_count == 0 {
+            if let Ok(data_str) = fs::read_to_string(&data_file_path) {
+                if let Ok(data) = serde_json::from_str::<SnapshotData>(&data_str) {
+                    reg_count = data.registry_keys.len();
+                    file_count = data.files.len();
+                }
             }
         }
 
@@ -164,19 +166,19 @@ pub fn compare_snapshots_by_id(before_id: &str, after_id: &str) -> Result<Snapsh
     let mut new_files = Vec::new();
 
     use std::collections::HashSet;
-    let before_registry: HashSet<&String> = before_data.registry_keys.iter().collect();
-    let before_files: HashSet<&String> = before_data.files.iter().collect();
+    let before_registry: HashSet<String> = before_data.registry_keys.iter().map(|k| k.to_lowercase()).collect();
+    let before_files: HashSet<String> = before_data.files.iter().map(|f| f.to_lowercase()).collect();
 
-    // Registry Diff
+    // Registry Diff (Case-insensitive matching for Windows registry)
     for key in &after_data.registry_keys {
-        if !before_registry.contains(key) {
+        if !before_registry.contains(&key.to_lowercase()) {
             new_registry_keys.push(key.clone());
         }
     }
 
-    // Filesystem Diff
+    // Filesystem Diff (Case-insensitive matching for Windows NTFS)
     for file in &after_data.files {
-        if !before_files.contains(file) {
+        if !before_files.contains(&file.to_lowercase()) {
             new_files.push(file.clone());
         }
     }

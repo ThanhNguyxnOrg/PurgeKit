@@ -35,9 +35,10 @@ pub fn scan_uwp_apps() -> Vec<InstalledApp> {
     
     let windir = std::env::var("SystemRoot").or_else(|_| std::env::var("windir")).unwrap_or_else(|_| "C:\\Windows".to_string());
     let powershell_path = Path::new(&windir).join("System32").join("WindowsPowerShell").join("v1.0").join("powershell.exe");
-
+    let secure_path = crate::winutil::get_secure_system_path();
     let output = match Command::new(powershell_path)
         .creation_flags(CREATE_NO_WINDOW)
+        .env("PATH", &secure_path)
         .args(["-NoProfile", "-Command", script])
         .output()
     {

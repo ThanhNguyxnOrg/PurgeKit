@@ -101,7 +101,7 @@
       return;
     }
 
-    // Block base system folders and user profile roots
+    // Block base system folders and roots
     const blockedDirs = [
       "C:\\WINDOWS",
       "C:\\PROGRAM FILES",
@@ -109,8 +109,8 @@
       "C:\\PROGRAMDATA",
       "C:\\USERS"
     ];
-    if (blockedDirs.some(dir => upperPath === dir || (upperPath.startsWith(dir + "\\") && upperPath.split("\\").length <= 3))) {
-      toast.show("Protected system or base user profile directory cannot be swept directly for security reasons.", "error");
+    if (blockedDirs.some(dir => upperPath === dir)) {
+      toast.show("Protected system directory cannot be swept directly for security reasons.", "error");
       return;
     }
 
@@ -266,8 +266,7 @@
 
   // Size formatting helper
   function formatSize(bytes: number | null): string {
-    if (bytes === null || bytes === undefined) return "0 Bytes";
-    if (bytes === 0) return "0 Bytes";
+    if (bytes === null || bytes === undefined || bytes <= 0 || isNaN(bytes)) return "0 Bytes";
     const k = 1024;
     const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
     const i = Math.floor(Math.log(bytes) / Math.log(k));

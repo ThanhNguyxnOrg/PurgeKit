@@ -129,8 +129,7 @@
 
   // Helper size formats
   function formatSize(bytes: number | null): string {
-    if (bytes === null || bytes === undefined) return "0 Bytes";
-    if (bytes === 0) return "0 Bytes";
+    if (bytes === null || bytes === undefined || bytes <= 0 || isNaN(bytes)) return "0 Bytes";
     const k = 1024;
     const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
     const i = Math.floor(Math.log(bytes) / Math.log(k));

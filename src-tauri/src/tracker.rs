@@ -183,9 +183,12 @@ pub unsafe fn read_usn_changes(drive: char, start_usn: u64) -> Result<Vec<String
                 break;
             }
 
-            let file_name_ptr = record_ptr.add(file_name_offset) as *const u16;
-            let file_name_slice = std::slice::from_raw_parts(file_name_ptr, file_name_length / 2);
-            let name = String::from_utf16_lossy(file_name_slice);
+            let file_name_bytes = std::slice::from_raw_parts(record_ptr.add(file_name_offset), file_name_length);
+            let u16_vec: Vec<u16> = file_name_bytes
+                .chunks_exact(2)
+                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .collect();
+            let name = String::from_utf16_lossy(&u16_vec);
 
             if !name.starts_with('$') {
                 files.push(name);

@@ -58,7 +58,7 @@ fn find_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
     let needle_lower = needle.to_lowercase();
     let needle_chars_len = needle.chars().count();
     
-    for (_char_idx, (byte_idx, _)) in haystack.char_indices().enumerate() {
+    for (byte_idx, _) in haystack.char_indices() {
         let mut chars = haystack[byte_idx..].chars();
         let mut substring = String::new();
         for _ in 0..needle_chars_len {
@@ -94,7 +94,9 @@ fn is_in_tasks_dir(path_str: &str) -> bool {
     let path_norm = crate::winutil::canonicalize_path_safety(&path.to_string_lossy());
     let path_norm_str = path_norm.to_string_lossy().to_lowercase();
 
-    let windir = std::env::var("SystemRoot").unwrap_or("C:\\Windows".to_string());
+    let windir = std::env::var("SystemRoot")
+        .or_else(|_| std::env::var("windir"))
+        .unwrap_or_else(|_| "C:\\Windows".to_string());
     let tasks_dir = Path::new(&windir).join("System32").join("Tasks");
     let dir_norm = crate::winutil::canonicalize_path_safety(&tasks_dir.to_string_lossy());
     let dir_norm_str = dir_norm.to_string_lossy().to_lowercase();
@@ -109,7 +111,9 @@ fn is_in_tasks_dir(path_str: &str) -> bool {
 }
 
 pub fn get_task_name_from_path(task_path: &Path) -> Option<String> {
-    let windir = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+    let windir = std::env::var("SystemRoot")
+        .or_else(|_| std::env::var("windir"))
+        .unwrap_or_else(|_| "C:\\Windows".to_string());
     let tasks_dir = Path::new(&windir).join("System32").join("Tasks");
     task_path.strip_prefix(&tasks_dir).ok().map(|rel| {
         let s = rel.to_string_lossy().replace('/', "\\");
@@ -144,7 +148,7 @@ fn scan_tasks_directory(dir: &Path, items: &mut Vec<StartupItem>) {
                 continue;
             }
             
-            let xml_content = match fs::read_to_string(&path) {
+            let xml_content = match crate::winutil::read_file_utf8_or_utf16(&path) {
                 Ok(content) => content,
                 Err(_) => continue,
             };
@@ -329,7 +333,9 @@ pub fn list_startup_items() -> Result<Vec<StartupItem>, String> {
     }
 
     // 3. Scan Scheduled Tasks XML files
-    let windir = std::env::var("SystemRoot").unwrap_or("C:\\Windows".to_string());
+    let windir = std::env::var("SystemRoot")
+        .or_else(|_| std::env::var("windir"))
+        .unwrap_or_else(|_| "C:\\Windows".to_string());
     let tasks_dir = Path::new(&windir).join("System32").join("Tasks");
     if tasks_dir.exists() {
         scan_tasks_directory(&tasks_dir, &mut items);
@@ -588,7 +594,9 @@ mod tests {
 
     #[test]
     fn test_is_in_tasks_dir() {
-        let windir = std::env::var("SystemRoot").unwrap_or("C:\\Windows".to_string());
+        let windir = std::env::var("SystemRoot")
+            .or_else(|_| std::env::var("windir"))
+            .unwrap_or_else(|_| "C:\\Windows".to_string());
         let tasks = Path::new(&windir).join("System32").join("Tasks");
         let file = tasks.join("GoogleUpdateTaskMachineUA");
         assert!(is_in_tasks_dir(&file.to_string_lossy()));

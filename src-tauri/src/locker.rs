@@ -41,21 +41,9 @@ pub fn delete_file_with_escalation(path: &str) -> DeleteResult {
         }
     }
 
-    // Attempt 3: Force close remote handles (undocumented, requires hidden setting)
-    let settings = crate::settings::load_settings();
-    if settings.enable_undocumented_force_unlock && is_elevated::is_elevated() {
-        if force_close_file_handle(path).is_ok() {
-            if fs::remove_file(path_buf).is_ok() {
-                return DeleteResult::ForceDeleted;
-            }
-        }
-    }
-
-    // Attempt 4: Schedule boot-time deletion (requires admin)
-    if is_elevated::is_elevated() {
-        if schedule_boot_delete(path).is_ok() {
-            return DeleteResult::ScheduledForReboot;
-        }
+    // Attempt 3: Schedule boot-time deletion (requires admin)
+    if is_elevated::is_elevated() && schedule_boot_delete(path).is_ok() {
+        return DeleteResult::ScheduledForReboot;
     }
 
     DeleteResult::Failed("All unlocking and file deletion methods failed.".to_string())
@@ -103,6 +91,20 @@ pub fn unlock_file_restart_manager(file_path: &str) -> Result<(), String> {
 }
 
 pub fn schedule_boot_delete(file_path: &str) -> Result<(), String> {
+    let p = Path::new(file_path);
+    if p.is_dir() {
+        // MoveFileExW with MOVEFILE_DELAY_UNTIL_REBOOT requires empty directories.
+        // Schedule all directory contents bottom-up first.
+        for entry in walkdir::WalkDir::new(p).contents_first(true).into_iter().filter_map(|e| e.ok()) {
+            if entry.path() != p {
+                let wide: Vec<u16> = entry.path().to_string_lossy().encode_utf16().chain(Some(0)).collect();
+                unsafe {
+                    MoveFileExW(wide.as_ptr(), std::ptr::null(), MOVEFILE_DELAY_UNTIL_REBOOT);
+                }
+            }
+        }
+    }
+
     let wide: Vec<u16> = file_path.encode_utf16().chain(Some(0)).collect();
     let result = unsafe {
         MoveFileExW(wide.as_ptr(), std::ptr::null(), MOVEFILE_DELAY_UNTIL_REBOOT)
@@ -113,12 +115,4 @@ pub fn schedule_boot_delete(file_path: &str) -> Result<(), String> {
     } else {
         Err(format!("MoveFileExW failed: {}", std::io::Error::last_os_error()))
     }
-}
-
-// Tier 2: Force Close Handles
-// Query system handles via NtQuerySystemInformation
-pub fn force_close_file_handle(_file_path: &str) -> Result<(), String> {
-    // To prevent kernel instability (blue screen or crashes) on target systems,
-    // we return an error so the file deletion gracefully falls back to schedule_boot_delete.
-    Err("Force closing remote handles is undocumented and disabled for stability; falling back to boot-time deletion.".to_string())
 }

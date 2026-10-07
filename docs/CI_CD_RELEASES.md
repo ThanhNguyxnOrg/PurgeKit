@@ -25,7 +25,7 @@ graph TD
 
 ## 📋 The Pipeline Specification
 
-The CI/CD pipeline is defined in [release-windows.yml](file:///d:/Code/PurgeKit/.github/workflows/release-windows.yml) and runs on two consecutive jobs:
+The CI/CD pipeline is defined in [release-windows.yml](../.github/workflows/release-windows.yml) and runs on two consecutive jobs:
 
 ### 1. Trigger Verification (`check-trigger`)
 *   **Operating System**: `ubuntu-latest`
@@ -45,7 +45,7 @@ The CI/CD pipeline is defined in [release-windows.yml](file:///d:/Code/PurgeKit/
 
 ## 📖 Automated Changelog Parsing
 
-Before building, the workflow runs a PowerShell step that extracts release notes from [CHANGELOG.md](file:///d:/Code/PurgeKit/CHANGELOG.md):
+Before building, the workflow runs a PowerShell step that extracts release notes from [CHANGELOG.md](../CHANGELOG.md):
 1.  Loads the raw content of `CHANGELOG.md`.
 2.  Applies a multiline regex pattern to extract all lines under the matching version header `## [version]` up to the next version header:
     ```powershell
@@ -73,7 +73,7 @@ The pipeline uses `tauri-apps/tauri-action` to:
 
 To trigger a release:
 1. Update versions in files (`package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`).
-2. Document new items in [CHANGELOG.md](file:///d:/Code/PurgeKit/CHANGELOG.md) under a header matching your version (e.g., `## [X.Y.Z]`).
+2. Document new items in [CHANGELOG.md](../CHANGELOG.md) under a header matching your version (e.g., `## [X.Y.Z]`).
 3. Commit and push your changes to `main` with a release tag in your commit message:
    ```bash
    git commit -m "release: vX.Y.Z"

@@ -34,10 +34,16 @@ pub fn init_db() -> Result<(), String> {
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             created_at TEXT NOT NULL,
-            data_file_path TEXT NOT NULL
+            data_file_path TEXT NOT NULL,
+            reg_count INTEGER DEFAULT 0,
+            file_count INTEGER DEFAULT 0
          )",
         [],
     ).map_err(|e| e.to_string())?;
+
+    // Safe migrations for existing databases
+    let _ = conn.execute("ALTER TABLE snapshots ADD COLUMN reg_count INTEGER DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE snapshots ADD COLUMN file_count INTEGER DEFAULT 0", []);
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS quarantine (

@@ -276,13 +276,13 @@ pub fn uninstall_toolchain_version(manager: &str, version: &str, path: &str) -> 
             let path_buf = Path::new(path);
             if path_buf.exists() && path_buf.is_dir() {
                 match crate::locker::delete_file_with_escalation(path) {
-                    crate::locker::DeleteResult::Deleted | crate::locker::DeleteResult::DeletedAfterUnlock | crate::locker::DeleteResult::ForceDeleted => {
-                        Ok(())
-                    }
+                    crate::locker::DeleteResult::Deleted
+                    | crate::locker::DeleteResult::DeletedAfterUnlock
+                    | crate::locker::DeleteResult::ForceDeleted
+                    | crate::locker::DeleteResult::ScheduledForReboot => Ok(()),
                     crate::locker::DeleteResult::Failed(err) => {
                         Err(format!("CLI uninstall failed and directory purge failed: {}", err))
                     }
-                    _ => Err("Direct directory deletion scheduled for reboot.".to_string()),
                 }
             } else {
                 Err(format!("CLI uninstall failed and directory path does not exist: {}", path))

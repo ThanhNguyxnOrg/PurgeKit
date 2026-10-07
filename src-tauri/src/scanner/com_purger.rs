@@ -36,7 +36,8 @@ pub fn scan_com_orphans(app_token: &str, install_dir: Option<&str>) -> Vec<Remna
                         Err(_) => continue,
                     };
 
-                    let cleaned_path = raw_path.trim().trim_matches('"').to_string();
+                    let extracted = crate::winutil::extract_executable_path(&raw_path);
+                    let cleaned_path = extracted.trim().trim_matches('"').to_string();
                     
                     // Skip Darwin descriptor strings (used by MSI installer, starts with a bracket/special char)
                     if cleaned_path.starts_with('>') || cleaned_path.starts_with('<') || cleaned_path.starts_with('[') {
