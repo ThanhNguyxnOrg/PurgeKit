@@ -650,7 +650,8 @@ fn is_safe_uninstall_string(s: &str) -> bool {
 }
 
 fn validate_uninstall_command_safety(cmd_str: &str) -> Result<(), String> {
-    let exe_path = crate::winutil::extract_executable_path(cmd_str);
+    let expanded_cmd = crate::winutil::expand_env_strings(cmd_str);
+    let exe_path = crate::winutil::extract_executable_path(&expanded_cmd);
     let exe_lower = exe_path.to_lowercase();
     
     let is_shell = exe_lower.ends_with("cmd.exe") || exe_lower == "cmd" 
@@ -658,7 +659,7 @@ fn validate_uninstall_command_safety(cmd_str: &str) -> Result<(), String> {
         || exe_lower.ends_with("pwsh.exe") || exe_lower == "pwsh";
 
     if is_shell {
-        let cmd_lower = cmd_str.to_lowercase();
+        let cmd_lower = expanded_cmd.to_lowercase();
         if cmd_lower.contains("users\\") || cmd_lower.contains("appdata") || cmd_lower.contains("temp\\") {
             return Err("Execution blocked: Uninstaller command uses a shell wrapper targeting user-writable folders. This could lead to privilege escalation.".to_string());
         }

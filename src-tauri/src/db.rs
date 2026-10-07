@@ -3,11 +3,18 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
-pub fn get_db_path() -> PathBuf {
-    let appdata = env::var_os("APPDATA")
+fn get_base_dir() -> PathBuf {
+    env::var_os("APPDATA")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    let app_dir = appdata.join("PurgeKit");
+        .unwrap_or_else(|| {
+            env::var_os("USERPROFILE")
+                .map(|p| PathBuf::from(p).join("AppData").join("Roaming"))
+                .unwrap_or_else(|| PathBuf::from(r"C:\Users\Public"))
+        })
+}
+
+pub fn get_db_path() -> PathBuf {
+    let app_dir = get_base_dir().join("PurgeKit");
     if !app_dir.exists() {
         let _ = fs::create_dir_all(&app_dir);
     }
@@ -15,10 +22,7 @@ pub fn get_db_path() -> PathBuf {
 }
 
 pub fn get_snapshots_dir() -> PathBuf {
-    let appdata = env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    let snap_dir = appdata.join("PurgeKit").join("snapshots");
+    let snap_dir = get_base_dir().join("PurgeKit").join("snapshots");
     if !snap_dir.exists() {
         let _ = fs::create_dir_all(&snap_dir);
     }
