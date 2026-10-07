@@ -89,9 +89,26 @@ where
         let system_root = std::env::var("SystemRoot")
             .unwrap_or_else(|_| r"C:\Windows".to_string())
             .to_lowercase();
+        let program_files = std::env::var("ProgramFiles")
+            .unwrap_or_else(|_| r"C:\Program Files".to_string())
+            .to_lowercase();
+        let program_files_x86 = std::env::var("ProgramFiles(x86)")
+            .unwrap_or_else(|_| r"C:\Program Files (x86)".to_string())
+            .to_lowercase();
+        let program_data = std::env::var("ProgramData")
+            .unwrap_or_else(|_| r"C:\ProgramData".to_string())
+            .to_lowercase();
+
         let target_lower = target_str.to_lowercase();
-        if target_lower == system_root || target_lower.starts_with(&(system_root + "\\")) {
+        if target_lower == system_root || target_lower.starts_with(&(system_root.clone() + "\\")) {
             return Err(format!("Scanning blocked: '{}' is a Windows system directory and cannot be swept.", root));
+        }
+
+        if target_lower == program_files || target_lower.starts_with(&(program_files + "\\"))
+            || target_lower == program_files_x86 || target_lower.starts_with(&(program_files_x86 + "\\"))
+            || target_lower == program_data || target_lower.starts_with(&(program_data + "\\"))
+        {
+            return Err(format!("Scanning blocked: '{}' is a protected system or application directory and cannot be swept.", root));
         }
 
         let trimmed_drive = target_lower.trim_end_matches('\\');

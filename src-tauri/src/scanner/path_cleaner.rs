@@ -17,23 +17,23 @@ pub struct PathEntry {
 pub fn get_path_entries() -> Result<Vec<PathEntry>, String> {
     let mut raw_entries = Vec::new();
 
-    // 1. Read User PATH from HKCU\Environment
-    if let Ok(user_path) = read_path_from_registry(HKEY_CURRENT_USER, "Environment") {
-        for p in user_path.split(';') {
-            let p_trim = p.trim().to_string();
-            if !p_trim.is_empty() {
-                raw_entries.push((p_trim, "User".to_string()));
-            }
-        }
-    }
-
-    // 2. Read System PATH
+    // 1. Read System PATH first (canonical machine-wide order)
     let system_subpath = r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment";
     if let Ok(sys_path) = read_path_from_registry(HKEY_LOCAL_MACHINE, system_subpath) {
         for p in sys_path.split(';') {
             let p_trim = p.trim().to_string();
             if !p_trim.is_empty() {
                 raw_entries.push((p_trim, "System".to_string()));
+            }
+        }
+    }
+
+    // 2. Read User PATH second
+    if let Ok(user_path) = read_path_from_registry(HKEY_CURRENT_USER, "Environment") {
+        for p in user_path.split(';') {
+            let p_trim = p.trim().to_string();
+            if !p_trim.is_empty() {
+                raw_entries.push((p_trim, "User".to_string()));
             }
         }
     }
@@ -98,9 +98,17 @@ fn validate_path_entries(raw_entries: Vec<(String, String)>) -> Vec<PathEntry> {
     let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 
     for (idx, (raw, scope)) in raw_entries.into_iter().enumerate() {
-        let expanded = crate::winutil::expand_env_strings(&raw);
-        let normalized = expanded.to_lowercase().trim_end_matches('\\').to_string();
-        let exists = Path::new(&expanded).is_dir();
+        let trimmed_raw = raw.trim();
+        let unquoted = if trimmed_raw.starts_with('"') && trimmed_raw.ends_with('"') && trimmed_raw.len() >= 2 {
+            &trimmed_raw[1..trimmed_raw.len() - 1]
+        } else {
+            trimmed_raw
+        };
+
+        let expanded = crate::winutil::expand_env_strings(unquoted);
+        let clean_path = expanded.trim().trim_matches('"');
+        let normalized = clean_path.to_lowercase().trim_end_matches('\\').to_string();
+        let exists = Path::new(clean_path).is_dir();
 
         let dead = !exists;
         
@@ -123,7 +131,7 @@ fn validate_path_entries(raw_entries: Vec<(String, String)>) -> Vec<PathEntry> {
 
         results.push(PathEntry {
             value: raw,
-            expanded,
+            expanded: clean_path.to_string(),
             is_valid: exists,
             is_duplicate: is_dup,
             is_overlap,
@@ -147,9 +155,11 @@ mod tests {
         let sub_dir = temp_dir.join("sub");
         std::fs::create_dir_all(&sub_dir).unwrap();
 
+        let quoted_sub = format!("\"{}\"", sub_dir.to_string_lossy());
+
         let raw_entries = vec![
-            (sub_dir.to_string_lossy().to_string(), "User".to_string()),
-            (sub_dir.to_string_lossy().to_string(), "System".to_string()), // duplicate
+            (sub_dir.to_string_lossy().to_string(), "System".to_string()),
+            (quoted_sub, "User".to_string()), // duplicate with quotes
             (temp_dir.join("non_existent").to_string_lossy().to_string(), "User".to_string()), // dead
         ];
 
@@ -160,15 +170,17 @@ mod tests {
 
         assert_eq!(results.len(), 3);
 
-        // First is valid
+        // First is valid (System)
         assert!(results[0].is_valid);
         assert!(!results[0].is_duplicate);
         assert_eq!(results[0].issue_reason, "Valid");
+        assert_eq!(results[0].scope, "System");
 
-        // Second is duplicate
+        // Second is valid folder despite quotes, but duplicate of line 1
         assert!(results[1].is_valid);
         assert!(results[1].is_duplicate);
-        assert!(results[1].issue_reason.contains("Duplicate"));
+        assert!(results[1].issue_reason.contains("Duplicate of line #1"));
+        assert_eq!(results[1].scope, "User");
 
         // Third is dead
         assert!(!results[2].is_valid);

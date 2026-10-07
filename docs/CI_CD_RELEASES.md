@@ -18,7 +18,8 @@ graph TD
     BuildJob --> Setup[Node.js + Rust Setup]
     BuildJob --> Parse[PowerShell: Parse CHANGELOG.md]
     BuildJob --> Compile[Build Tauri App: .msi & .exe]
-    BuildJob --> Publish[Tauri Action: Create Tag & Draft Release]
+    Compile --> Tag[Ensure Git Tag Exists via Bot Token]
+    Tag --> Publish[Publish GitHub Release with Artifacts]
 ```
 
 ---
@@ -64,8 +65,8 @@ The pipeline uses `tauri-apps/tauri-action` to:
 *   Package the app into:
     *   **`.msi`**: Windows Installer package.
     *   **`.exe`**: Standalone executable.
-*   Automatically create the Git version tag (e.g. `vX.Y.Z`) on the target commit.
-*   Create a draft release on GitHub with compiled binaries attached.
+*   Verify and push the Git version tag (e.g. `vX.Y.Z`) on the target commit via GitHub App token.
+*   Publish the release on GitHub with compiled binaries and parsed changelog attached (`softprops/action-gh-release`).
 
 ---
 

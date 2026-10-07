@@ -93,24 +93,37 @@
     }
 
     const upperPath = trimmed.toUpperCase().replace(/\//g, "\\");
+    const normalizedUpper = upperPath.replace(/\\+$/, "");
     
     // Block drive roots (like C:\ or D:)
     const driveRootRegex = /^[A-Z]:\\?$/;
-    if (driveRootRegex.test(upperPath)) {
+    if (driveRootRegex.test(normalizedUpper)) {
       toast.show("Scanning drive roots directly is blocked for safety. Please select a specific folder inside the drive.", "error");
       return;
     }
 
     // Block base system folders and roots
-    const blockedDirs = [
+    const blockedExact = [
       "C:\\WINDOWS",
       "C:\\PROGRAM FILES",
       "C:\\PROGRAM FILES (x86)",
       "C:\\PROGRAMDATA",
       "C:\\USERS"
     ];
-    if (blockedDirs.some(dir => upperPath === dir)) {
+    if (blockedExact.some(dir => normalizedUpper === dir)) {
       toast.show("Protected system directory cannot be swept directly for security reasons.", "error");
+      return;
+    }
+
+    // Block scanning inside Windows, Program Files, and ProgramData
+    const blockedPrefixes = [
+      "C:\\WINDOWS\\",
+      "C:\\PROGRAM FILES\\",
+      "C:\\PROGRAM FILES (x86)\\",
+      "C:\\PROGRAMDATA\\"
+    ];
+    if (blockedPrefixes.some(prefix => normalizedUpper.startsWith(prefix))) {
+      toast.show("Protected system or program directory cannot be swept directly for security reasons.", "error");
       return;
     }
 

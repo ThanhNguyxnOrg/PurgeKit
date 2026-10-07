@@ -1,4 +1,4 @@
-﻿name: Release Windows App
+name: Release Windows App
 
 on:
   push:
@@ -139,6 +139,7 @@ jobs:
           }
 
       - name: 🏷️ Ensure Git Tag Exists
+        shell: bash
         env:
           TAG: v${{ needs.check-trigger.outputs.version }}
           GH_TOKEN: ${{ steps.app-token.outputs.token }}

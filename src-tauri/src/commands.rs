@@ -408,7 +408,10 @@ pub async fn run_uninstall_command(uninstall_string: String) -> Result<(), Strin
                 .args(&["-NoProfile", "-Command", &format!("Remove-AppxPackage -Package {}", package_full)])
                 .spawn()
                 .map_err(|e| format!("Failed to spawn powershell: {}", e))?;
-            let _ = child.wait().map_err(|e| format!("PowerShell finished with error: {}", e))?;
+            let status = child.wait().map_err(|e| format!("PowerShell finished with error: {}", e))?;
+            if !status.success() {
+                return Err(format!("PowerShell Remove-AppxPackage failed with exit code: {:?}", status.code()));
+            }
             Ok(())
         }).await.map_err(|e| e.to_string())?;
     }
@@ -428,7 +431,10 @@ pub async fn run_uninstall_command(uninstall_string: String) -> Result<(), Strin
             .spawn()
             .map_err(|e| format!("Failed to spawn uninstaller: {}", e))?;
             
-        let _ = child.wait().map_err(|e| format!("Uninstaller finished with error: {}", e))?;
+        let status = child.wait().map_err(|e| format!("Uninstaller finished with error: {}", e))?;
+        if !status.success() {
+            return Err(format!("Uninstaller exited with failure code: {:?}", status.code()));
+        }
         Ok(())
     }).await.map_err(|e| e.to_string())?
 }

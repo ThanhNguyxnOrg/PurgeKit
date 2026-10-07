@@ -17,12 +17,14 @@
   let envPaths = $state<PathEntry[]>([]);
   let isLoading = $state(true);
   let isSaving = $state(false);
+  let isAdmin = $state(false);
   let selectedIndices = $state<Record<number, boolean>>({});
 
   async function loadPaths() {
     isLoading = true;
     selectedIndices = {};
     try {
+      isAdmin = await invoke<boolean>("check_is_admin");
       envPaths = await invoke<PathEntry[]>("get_path_entries");
       // Select all broken or duplicate paths by default for cleaning
       envPaths.forEach((entry, idx) => {
@@ -52,19 +54,41 @@
       return;
     }
 
+    const hasUserRemoval = envPaths.some((entry, idx) => entry.scope === "User" && selectedIndices[idx]);
+    const hasSystemRemoval = envPaths.some((entry, idx) => entry.scope === "System" && selectedIndices[idx]);
+
+    // Split remaining paths by scope to save back to Registry
+    const userRemaining = envPaths
+      .filter((entry, idx) => entry.scope === "User" && !selectedIndices[idx])
+      .map((entry) => entry.value);
+
+    const systemRemaining = envPaths
+      .filter((entry, idx) => entry.scope === "System" && !selectedIndices[idx])
+      .map((entry) => entry.value);
+
+    // Pre-flight check: If System PATH is being modified, ensure Admin and non-empty
+    if (hasSystemRemoval) {
+      if (!isAdmin) {
+        toast.show("Modifying System PATH requires Administrator privileges. Please run PurgeKit as Administrator.", "error");
+        return;
+      }
+      if (systemRemaining.length === 0) {
+        toast.show("Cannot clear all System PATH entries! Windows requires system PATH to function.", "error");
+        return;
+      }
+    }
+
     isSaving = true;
     try {
-      // Split remaining paths by scope to save back to Registry
-      const userRemaining = envPaths
-        .filter((entry, idx) => entry.scope === "User" && !selectedIndices[idx])
-        .map((entry) => entry.value);
+      // Save System scope first if applicable
+      if (hasSystemRemoval) {
+        await invoke("save_path_entries", {
+          remainingValues: systemRemaining,
+          scope: "System"
+        });
+      }
 
-      const systemRemaining = envPaths
-        .filter((entry, idx) => entry.scope === "System" && !selectedIndices[idx])
-        .map((entry) => entry.value);
-
-      // Save User scope only if there are user paths removed
-      const hasUserRemoval = envPaths.some((entry, idx) => entry.scope === "User" && selectedIndices[idx]);
+      // Save User scope
       if (hasUserRemoval) {
         await invoke("save_path_entries", {
           remainingValues: userRemaining,
@@ -72,24 +96,11 @@
         });
       }
 
-      // Save System scope (requires Admin, handled in backend error check)
-      const hasSystemRemoval = envPaths.some((entry, idx) => entry.scope === "System" && selectedIndices[idx]);
-      if (hasSystemRemoval) {
-        if (systemRemaining.length === 0) {
-          toast.show("Cannot clear all System PATH entries! Windows requires system PATH to function.", "error");
-          isSaving = false;
-          return;
-        }
-        await invoke("save_path_entries", {
-          remainingValues: systemRemaining,
-          scope: "System"
-        });
-      }
-
       toast.show("Cleaned invalid/duplicate paths successfully!", "success");
       await loadPaths();
     } catch (e: any) {
       toast.show(`Failed to clean: ${e.toString()}`, "error");
+      await loadPaths();
     } finally {
       isSaving = false;
     }
