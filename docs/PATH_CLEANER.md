@@ -86,7 +86,8 @@ When users clean dead or redundant paths:
 
 ---
 
-## 🔒 UAC Elevation Boundaries
+## 🔒 UAC Elevation & Fail-Safe Boundaries
 
 * Modifying **User PATH** is accessible without elevation.
 * Modifying **System PATH** strictly enforces `is_elevated::is_elevated()` validation on the Rust backend. Non-elevated attempts immediately return `Access Denied` and prompt the user to launch PurgeKit as Administrator.
+* **Fail-Safe Zeroing Protection**: PurgeKit strictly forbids completely wiping the System PATH. If all system paths are selected for deletion or an empty list is submitted, the operation is blocked both at the UI layer and in the backend `set_path_entries` gate to prevent Windows service instability.

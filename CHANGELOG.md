@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0] - 2026-10-07
+
+### 🔒 Enterprise Security Hardening & Fail-Safe Defaults
+* **🛡️ Centralized Win32 Safety Primitives (`winutil.rs`)**:
+  - Centralized all Win32 safety primitives (canonicalization, environment variable expansion, protected paths blacklist, critical service protection, and executable path extraction).
+  - Enforced strict case-insensitive path comparisons and extended prefix canonicalization (`\\?\`) preventing TOCTOU and directory traversal bypasses.
+* **🚧 System PATH Zeroing Defense**:
+  - Implemented fail-safe guards in both backend (`path_cleaner.rs`) and frontend (`PathCleanerTab.svelte`) that strictly forbid wiping the Windows System PATH completely.
+* **🛡️ Uninstaller Privilege Escalation Bypass Prevention**:
+  - Pre-expanded environment variables (`%VAR%`) in uninstaller command strings prior to inspecting user-writable locations and checking Authenticode file signatures (`WinVerifyTrust`).
+* **💉 Shell Injection Defense in DevTools Rules**:
+  - Added strict character whitelisting and command validation to `devtools_rules.json` execution (`scan_dev_tools` and `get_single_dynamic_cache_path`) to eliminate arbitrary command injection vectors.
+* **📁 Insecure Path Fallback Remediation**:
+  - Replaced fallback to current working directory (`.`) or shared temp folder with secure user profile roaming directories (`%USERPROFILE%\AppData\Roaming` / `Local` or `C:\Users\Public`), isolating SQLite databases and settings.
+
+### ⚡ Performance & Reliability Optimizations
+* **🚀 Fast Locker Direct Branching**:
+  - Optimized file/folder deletion in `locker.rs` by checking `path_buf.is_dir()` directly before attempting deletion, eliminating failing `remove_file` system call roundtrips on directories.
+* **🧩 Robust Quotes & Arguments Parsing in Autoruns**:
+  - Replaced ad-hoc whitespace splitting in `autoruns.rs` (which erroneously truncated paths like `"C:\Program Files\App\app.exe" --arg` to `C:\Program`) with robust centralized `extract_executable_path`.
+* **💾 Database & Snapshot Synchronization**:
+  - Aligned database schema columns (`reg_count`, `file_count`) across SQLite and JSON snapshot records, preventing schema mismatches in the snapshot engine.
+* **📦 Quarantine Sandbox Containment**:
+  - Added strict canonical path boundary checks in quarantine restoration and permanent deletion to ensure items strictly reside within the designated quarantine directory.
+  - Skipped symlinks and directory junctions during quarantine directory copying to avoid recursion leaks.
+
+---
+
 ## [1.1.0] - 2026-06-14
 
 ### 🔒 Security Hardening & LPE Prevention

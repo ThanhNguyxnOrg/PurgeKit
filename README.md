@@ -131,13 +131,15 @@ Detailed documents are categorized below and located in the [`docs/`](docs/) dir
 
 ## 📝 Changelog
 
-### 🚀 [v1.0.0] - 2026-06-11
-This is the first stable release of PurgeKit for Windows.
-* **Implemented WSL2 Disk Shrinker**: Quets registered distributions, toggles sparse drive property, and executes safe `diskpart` compaction with a live Terminal UI logs viewer.
-* **Implemented Toolchain Version Sweeper**: Detects NVM, FNM, and Rustup runtimes, calculates sizes, identifies active compiler versions, and performs clean uninstallation.
-* **Implemented Universal Project Sweeper**: Recursively scans configured folders for heavy dependencies (`node_modules`, `target`, `venv`, etc.) and batch sweeps them.
-* **Implemented Bulk Silent Uninstaller**: Decoupled registry scan, UWP package manager, and remnant cleaning with silent fallback.
-* **Improved Responsiveness**: Fixed vertical and horizontal overflow layouts to ensure full usability in compact, windowed multitasking modes.
+### 🚀 [v1.2.0] - 2026-10-07
+Major security hardening, reliability, and Win32 safety architecture update:
+* **Enterprise Win32 Safety & Centralized Primitives**: Unified all canonicalization, safe path boundaries, service protection, and argument parsing under `winutil.rs`.
+* **System PATH Zeroing Fail-Safe**: Backend & UI guards completely block accidental clearing of the Windows System PATH.
+* **Uninstaller Privilege Escalation Bypass Defense**: Pre-expands `%VAR%` environment tokens prior to user-writable path inspection and WinVerifyTrust signature checks.
+* **Hardened DevTools Rules**: Command validation eliminates shell injection vulnerabilities across all dynamic developer tool cache scripts.
+* **Fast Locker Direct Branching**: Optimized directory deletion bypassing redundant `remove_file` system call roundtrips.
+
+*For full historical notes and previous releases, see [📝 CHANGELOG.md](CHANGELOG.md).*
 
 ---
 
