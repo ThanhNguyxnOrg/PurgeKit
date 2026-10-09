@@ -50,7 +50,20 @@ PurgeKit is structured around five main modules:
 
 ## ⚡ Quick Start
 
-### 📦 Prerequisites
+### 📥 Download Pre-compiled Binary (Recommended)
+PurgeKit is ready to use without compiling from source:
+1. Download the latest installer from [GitHub Releases](https://github.com/ThanhNguyxnOrg/PurgeKit/releases):
+   - **`PurgeKit_x64_en-US.msi`**: Standard Windows installer (Recommended).
+   - **`PurgeKit_x64-setup.exe`**: Standalone setup executable.
+2. Double-click the installer to run.
+
+> [!TIP]
+> **Windows SmartScreen Notice:**
+> As an open-source tool without a commercial code signing certificate, Windows Defender SmartScreen may display *"Windows protected your PC"*.
+> - Click **"More info"** ➔ Click **"Run anyway"** to proceed.
+> - Detailed security & UAC elevation documentation: [Installation Guide](docs/INSTALLATION.md).
+
+### 📦 Prerequisites (For Building from Source)
 * **Rust Toolchain** (MSRV 1.77+)
 * **Node.js** (v18+)
 * **Windows 10 / 11** (Administrator privileges required for registry & DiskPart operations)
