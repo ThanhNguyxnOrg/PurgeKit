@@ -1,25 +1,12 @@
-import adapter from "@sveltejs/adapter-static";
-import { sveltekit } from "@sveltejs/kit/vite";
-import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 import { defineConfig } from "vite";
+import { sveltekit } from "@sveltejs/kit/vite";
 import tailwindcss from "@tailwindcss/vite";
 
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-  plugins: [
-    tailwindcss(),
-    // SvelteKit 3: config lives here, not in svelte.config.js
-    // Tauri has no Node server for SSR, so adapter-static + fallback keeps SPA mode
-    // See: https://svelte.dev/docs/kit/single-page-apps
-    sveltekit({
-      preprocess: vitePreprocess(),
-      adapter: adapter({
-        fallback: "index.html",
-      }),
-    }),
-  ],
+  plugins: [tailwindcss(), sveltekit()],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
