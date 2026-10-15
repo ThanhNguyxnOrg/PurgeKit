@@ -1,13 +1,13 @@
 <script lang="ts">
-  import Sidebar from "$lib/components/Sidebar.svelte";
-  import AppsTab from "$lib/components/AppsTab.svelte";
-  import DevToolsTab from "$lib/components/DevToolsTab.svelte";
-  import ProjectSweeperTab from "$lib/components/ProjectSweeperTab.svelte";
-  import WslShrinkerTab from "$lib/components/WslShrinkerTab.svelte";
-  import StartupTab from "$lib/components/StartupTab.svelte";
-  import SnapshotsTab from "$lib/components/SnapshotsTab.svelte";
-  import PathCleanerTab from "$lib/components/PathCleanerTab.svelte";
-  import SettingsTab from "$lib/components/SettingsTab.svelte";
+  import Sidebar from "#lib/components/Sidebar.svelte";
+  import AppsTab from "#lib/components/AppsTab.svelte";
+  import DevToolsTab from "#lib/components/DevToolsTab.svelte";
+  import ProjectSweeperTab from "#lib/components/ProjectSweeperTab.svelte";
+  import WslShrinkerTab from "#lib/components/WslShrinkerTab.svelte";
+  import StartupTab from "#lib/components/StartupTab.svelte";
+  import SnapshotsTab from "#lib/components/SnapshotsTab.svelte";
+  import PathCleanerTab from "#lib/components/PathCleanerTab.svelte";
+  import SettingsTab from "#lib/components/SettingsTab.svelte";
 
   let activeTab = $state("apps");
 </script>
