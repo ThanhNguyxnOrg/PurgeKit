@@ -39,46 +39,29 @@ pub struct ProgressPayload {
 pub struct PurgeResult {
     pub success: u32,
     pub fail: u32,
+    #[serde(default)]
+    pub errors: Vec<String>,
 }
 
 #[tauri::command]
-pub async fn get_installed_apps(app: AppHandle) -> Result<Vec<InstalledApp>, String> {
+pub async fn get_installed_apps(app: AppHandle) -> Result<Vec<scanner::InventoryApp>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let _ = app.emit("scan-progress", ProgressPayload {
-            phase: "registry".into(),
+            phase: "inventory".into(),
             current: 10,
             total: 100,
-            message: "Scanning registry hives...".into(),
+            message: "Scanning desktop apps, Store packages, CLI tools and toolchains...".into(),
         });
-        
-        let mut apps = scanner::scan_registry();
-        
-        let _ = app.emit("scan-progress", ProgressPayload {
-            phase: "uwp".into(),
-            current: 60,
-            total: 100,
-            message: "Scanning Windows Store apps...".into(),
-        });
-        
-        let uwp_apps = scanner::scan_uwp_apps();
-        apps.extend(uwp_apps);
-        
-        let _ = app.emit("scan-progress", ProgressPayload {
-            phase: "sorting".into(),
-            current: 90,
-            total: 100,
-            message: "Sorting applications...".into(),
-        });
-        
-        apps.sort_by(|a, b| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()));
-        
+
+        let apps = scanner::build_inventory();
+
         let _ = app.emit("scan-progress", ProgressPayload {
             phase: "completed".into(),
             current: 100,
             total: 100,
-            message: "Scan completed".into(),
+            message: "Inventory scan completed".into(),
         });
-        
+
         Ok(apps)
     }).await.map_err(|e| e.to_string())?
 }
@@ -323,7 +306,11 @@ pub async fn purge_remnants(app: AppHandle, items: Vec<RemnantItem>) -> Result<P
             message: "Purging completed successfully".into(),
         });
 
-        Ok(PurgeResult { success, fail })
+        Ok(PurgeResult {
+            success,
+            fail,
+            errors: Vec::new(),
+        })
     }).await.map_err(|e| e.to_string())?
 }
 
@@ -397,36 +384,103 @@ fn resolve_uninstall_entry_path(
     Ok((root_hive.to_string(), registry_path.to_string()))
 }
 
+fn remove_uninstall_entry_sync(hive: &str, registry_path: &str) -> Result<(), String> {
+    let (root_hive, subpath) = resolve_uninstall_entry_path(hive, registry_path)?;
+    let full_path = format!(r"{}\{}", root_hive, subpath);
+
+    // Back up first; fail closed if the backup cannot be produced.
+    crate::backup::backup_registry_key(&full_path)?;
+
+    let last_backslash = subpath
+        .rfind('\\')
+        .ok_or_else(|| "Invalid uninstall registry path".to_string())?;
+    let parent_path = &subpath[..last_backslash];
+    let name = &subpath[last_backslash + 1..];
+
+    let root = match root_hive.as_str() {
+        "HKCU" => winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER),
+        "HKLM" => winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE),
+        _ => return Err("Unsupported registry hive".to_string()),
+    };
+
+    match root.open_subkey_with_flags(parent_path, winreg::enums::KEY_WRITE) {
+        Ok(parent) => match parent.delete_subkey_all(name) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(format!("Failed to remove uninstall entry: {}", e)),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("Failed to open uninstall registry key: {}", e)),
+    }
+}
+
 #[tauri::command]
 pub async fn remove_uninstall_entry(hive: String, registry_path: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let (root_hive, subpath) = resolve_uninstall_entry_path(&hive, &registry_path)?;
-        let full_path = format!(r"{}\{}", root_hive, subpath);
+        remove_uninstall_entry_sync(&hive, &registry_path)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
 
-        // Back up first; fail closed if the backup cannot be produced.
-        crate::backup::backup_registry_key(&full_path)?;
+#[tauri::command]
+pub async fn force_remove_app(
+    install_location: Option<String>,
+    registry_path: Option<String>,
+    hive: Option<String>,
+) -> Result<PurgeResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut success = 0u32;
+        let mut fail = 0u32;
+        let mut errors = Vec::new();
+        let mut location_failed = false;
 
-        let last_backslash = subpath
-            .rfind('\\')
-            .ok_or_else(|| "Invalid uninstall registry path".to_string())?;
-        let parent_path = &subpath[..last_backslash];
-        let name = &subpath[last_backslash + 1..];
-
-        let root = match root_hive.as_str() {
-            "HKCU" => winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER),
-            "HKLM" => winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE),
-            _ => return Err("Unsupported registry hive".to_string()),
-        };
-
-        match root.open_subkey_with_flags(parent_path, winreg::enums::KEY_WRITE) {
-            Ok(parent) => match parent.delete_subkey_all(name) {
-                Ok(()) => Ok(()),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(e) => Err(format!("Failed to remove uninstall entry: {}", e)),
-            },
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(format!("Failed to open uninstall registry key: {}", e)),
+        if let Some(location) = install_location.filter(|path| !path.trim().is_empty()) {
+            let path = std::path::Path::new(&location);
+            if path.exists() {
+                let item = RemnantItem {
+                    path: location.clone(),
+                    item_type: if path.is_dir() { "Directory" } else { "File" }.to_string(),
+                    size: 0,
+                    confidence: "VeryHigh".to_string(),
+                    score: 100,
+                };
+                match scanner::remnants::purge_remnant_item(&item) {
+                    Ok(()) => success += 1,
+                    Err(e) => {
+                        fail += 1;
+                        location_failed = true;
+                        errors.push(format!("{}: {}", location, e));
+                    }
+                }
+            }
         }
+
+        // Keep the registry entry when the install folder could not be removed,
+        // so the application remains visible and can be retried.
+        if !location_failed {
+            if let (Some(registry_path), Some(hive)) = (registry_path, hive) {
+                if !registry_path.trim().is_empty() {
+                    match remove_uninstall_entry_sync(&hive, &registry_path) {
+                        Ok(()) => success += 1,
+                        Err(e) => {
+                            fail += 1;
+                            errors.push(format!("{}: {}", registry_path, e));
+                        }
+                    }
+                }
+            }
+        }
+
+        if success == 0 && fail == 0 {
+            return Err("Nothing to remove: no install location or registry entry was provided.".to_string());
+        }
+
+        Ok(PurgeResult {
+            success,
+            fail,
+            errors,
+        })
     })
     .await
     .map_err(|e| e.to_string())?

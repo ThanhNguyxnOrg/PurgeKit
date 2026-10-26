@@ -25,6 +25,7 @@ pub fn run() {
             commands::get_app_remnants,
             commands::purge_remnants,
             commands::remove_uninstall_entry,
+            commands::force_remove_app,
             commands::take_snapshot,
             commands::list_snapshots,
             commands::delete_snapshot,

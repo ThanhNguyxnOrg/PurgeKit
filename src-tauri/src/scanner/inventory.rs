@@ -1,0 +1,282 @@
+use serde::Serialize;
+
+use super::dev_rules;
+use super::{
+    scan_global_cli_packages, scan_toolchain_versions, scan_uwp_apps, InstalledApp,
+};
+
+#[derive(Debug, Serialize, Clone)]
+pub struct InventoryApp {
+    #[serde(flatten)]
+    pub app: InstalledApp,
+    pub source: String,
+    pub categories: Vec<String>,
+    pub tags: Vec<String>,
+    pub is_dev: bool,
+    pub managed_by: Option<String>,
+    pub is_active: Option<bool>,
+    pub is_portable: bool,
+    pub is_uninstallable: bool,
+    pub requires_admin: bool,
+}
+
+fn location_requires_admin(location: Option<&str>) -> bool {
+    let Some(location) = location else {
+        return false;
+    };
+    let location = location.to_lowercase();
+    ["program files", "programdata", "c:\\windows"]
+        .iter()
+        .any(|prefix| location.starts_with(prefix) || location.contains(&format!("\\{}", prefix)))
+}
+
+fn wrap(
+    app: InstalledApp,
+    source: &str,
+    managed_by: Option<String>,
+    is_active: Option<bool>,
+) -> InventoryApp {
+    let requires_admin = source == "registry"
+        && (app.hive.to_uppercase().starts_with("HKLM")
+            || location_requires_admin(app.install_location.as_deref()));
+    let is_uninstallable = match source {
+        "registry" => app.uninstall_string.is_some(),
+        "store" | "cli" | "toolchain" | "portable" => true,
+        _ => false,
+    };
+    let classification = dev_rules::classify(
+        &app.display_name,
+        app.publisher.as_deref(),
+        app.install_location.as_deref(),
+        source,
+        managed_by.as_deref(),
+    );
+
+    InventoryApp {
+        app,
+        source: source.to_string(),
+        categories: classification.categories,
+        tags: classification.tags,
+        is_dev: classification.is_dev,
+        managed_by,
+        is_active,
+        is_portable: source == "portable",
+        is_uninstallable,
+        requires_admin,
+    }
+}
+
+fn collect_claimed_path(app: &InstalledApp, claimed: &mut Vec<String>) {
+    if let Some(location) = &app.install_location {
+        if !location.trim().is_empty() {
+            claimed.push(location.clone());
+        }
+    }
+
+    for command in [&app.uninstall_string, &app.quiet_uninstall_string]
+        .into_iter()
+        .flatten()
+    {
+        let executable = crate::winutil::extract_executable_path(command);
+        if let Some(parent) = std::path::Path::new(&executable).parent() {
+            let parent = parent.to_string_lossy().to_string();
+            if !parent.is_empty() {
+                claimed.push(parent);
+            }
+        }
+    }
+
+    if let Some(icon) = &app.display_icon {
+        let icon = icon.trim().trim_matches('"');
+        let icon = icon
+            .rsplit_once(',')
+            .filter(|(_, suffix)| suffix.chars().all(|c| c.is_ascii_digit()))
+            .map(|(path, _)| path)
+            .unwrap_or(icon);
+        if let Some(parent) = std::path::Path::new(icon).parent() {
+            let parent = parent.to_string_lossy().to_string();
+            if !parent.is_empty() {
+                claimed.push(parent);
+            }
+        }
+    }
+}
+
+pub fn build_inventory() -> Vec<InventoryApp> {
+    let mut items = Vec::new();
+
+    let registry_apps = super::registry::scan_registry();
+    let store_apps = scan_uwp_apps();
+    let mut claimed_paths = Vec::new();
+    let mut claimed_names = std::collections::HashSet::new();
+    for app in registry_apps.iter().chain(store_apps.iter()) {
+        claimed_names.insert(app.display_name.to_lowercase());
+        collect_claimed_path(app, &mut claimed_paths);
+    }
+    claimed_paths.sort();
+    claimed_paths.dedup();
+
+    for app in registry_apps {
+        items.push(wrap(app, "registry", None, None));
+    }
+    for app in store_apps {
+        items.push(wrap(app, "store", None, None));
+    }
+    for package in scan_global_cli_packages() {
+        let app = InstalledApp {
+            id: format!("cli:{}:{}", package.manager, package.name),
+            display_name: package.name.clone(),
+            display_version: Some(package.version.clone()),
+            publisher: Some(package.manager.clone()),
+            uninstall_string: None,
+            quiet_uninstall_string: None,
+            install_location: Some(package.path.clone()),
+            install_date: None,
+            display_icon: None,
+            icon_base64: None,
+            estimated_size: Some(package.size_bytes),
+            registry_path: format!("cli:{}:{}", package.manager, package.name),
+            hive: "CLI".to_string(),
+            is_uwp: false,
+            is_verified: None,
+        };
+        items.push(wrap(app, "cli", Some(package.manager), None));
+    }
+    for toolchain in scan_toolchain_versions() {
+        let app = InstalledApp {
+            id: format!("toolchain:{}:{}", toolchain.manager, toolchain.version),
+            display_name: toolchain.version.clone(),
+            display_version: Some(toolchain.version.clone()),
+            publisher: Some(toolchain.manager.clone()),
+            uninstall_string: None,
+            quiet_uninstall_string: None,
+            install_location: Some(toolchain.path.clone()),
+            install_date: None,
+            display_icon: None,
+            icon_base64: None,
+            estimated_size: Some(toolchain.size_bytes),
+            registry_path: format!("toolchain:{}:{}", toolchain.manager, toolchain.version),
+            hive: "TOOLCHAIN".to_string(),
+            is_uwp: false,
+            is_verified: None,
+        };
+        items.push(wrap(
+            app,
+            "toolchain",
+            Some(toolchain.manager),
+            Some(toolchain.is_active),
+        ));
+    }
+
+    for portable in super::portable_apps::scan_portable_apps(&claimed_paths) {
+        // A registered app can lack InstallLocation while still being listed
+        // in the registry. Avoid showing the same installation twice.
+        if claimed_names.contains(&portable.name.to_lowercase()) {
+            continue;
+        }
+        let app = InstalledApp {
+            id: format!("portable:{}", portable.path),
+            display_name: portable.name,
+            display_version: None,
+            publisher: None,
+            uninstall_string: None,
+            quiet_uninstall_string: None,
+            install_location: Some(portable.path),
+            install_date: None,
+            display_icon: None,
+            icon_base64: None,
+            estimated_size: Some(portable.size_bytes),
+            registry_path: portable.executable,
+            hive: "PORTABLE".to_string(),
+            is_uwp: false,
+            is_verified: None,
+        };
+        items.push(wrap(app, "portable", None, None));
+    }
+
+    items.sort_by(|left, right| {
+        left.app
+            .display_name
+            .to_lowercase()
+            .cmp(&right.app.display_name.to_lowercase())
+            .then_with(|| left.source.cmp(&right.source))
+    });
+    items.dedup_by(|left, right| left.app.id.eq_ignore_ascii_case(&right.app.id));
+    items
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app(id: &str, name: &str, publisher: &str) -> InstalledApp {
+        InstalledApp {
+            id: id.to_string(),
+            display_name: name.to_string(),
+            display_version: Some("1.0".to_string()),
+            publisher: Some(publisher.to_string()),
+            uninstall_string: Some("uninstall.exe".to_string()),
+            quiet_uninstall_string: None,
+            install_location: None,
+            install_date: None,
+            display_icon: None,
+            icon_base64: None,
+            estimated_size: None,
+            registry_path: String::new(),
+            hive: "HKCU".to_string(),
+            is_uwp: false,
+            is_verified: None,
+        }
+    }
+
+    #[test]
+    fn wraps_and_classifies_registry_app() {
+        let item = wrap(
+            app("code", "Visual Studio Code", "Microsoft"),
+            "registry",
+            None,
+            None,
+        );
+        assert!(item.is_dev);
+        assert!(item.categories.contains(&"IDE".to_string()));
+        assert!(item.is_uninstallable);
+        assert!(!item.is_portable);
+    }
+
+    #[test]
+    fn requires_admin_for_hklm() {
+        let mut input = app("x", "Some App", "Vendor");
+        input.hive = "HKLM".to_string();
+        let item = wrap(input, "registry", None, None);
+        assert!(item.requires_admin);
+    }
+
+    #[test]
+    #[ignore = "manual smoke test scans the host machine"]
+    fn inventory_smoke() {
+        let items = build_inventory();
+        assert!(!items.is_empty());
+        println!("inventory items: {}", items.len());
+        for source in ["registry", "store", "cli", "toolchain", "portable"] {
+            let count = items.iter().filter(|item| item.source == source).count();
+            println!("  {}: {}", source, count);
+        }
+        println!(
+            "  dev: {}",
+            items.iter().filter(|item| item.is_dev).count()
+        );
+        for item in items.iter().filter(|item| item.is_dev).take(12) {
+            println!(
+                "    {} [{}] {:?}",
+                item.app.display_name, item.source, item.categories
+            );
+        }
+        for item in items.iter().filter(|item| item.source == "portable") {
+            println!(
+                "    portable: {} @ {}",
+                item.app.display_name,
+                item.app.install_location.as_deref().unwrap_or("")
+            );
+        }
+    }
+}
