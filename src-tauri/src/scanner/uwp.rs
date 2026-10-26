@@ -93,8 +93,18 @@ pub fn scan_uwp_apps() -> Vec<InstalledApp> {
         // Clean up the name for user display (e.g. "Microsoft.WindowsCalculator" -> "WindowsCalculator")
         let display_name = clean_uwp_display_name(&name);
 
-        // UWP Uninstall command: Remove-AppxPackage -Package <PackageFullName>
-        let uninstall_string = format!("powershell -NoProfile -Command \"Remove-AppxPackage -Package {}\"", package_full);
+        // UWP Uninstall command: Remove-AppxPackage -Package <PackageFullName>.
+        // When elevated we queried every user, so remove every registration too;
+        // otherwise the app would reappear after switching accounts.
+        let all_users = if is_elevated::is_elevated() {
+            " -AllUsers"
+        } else {
+            ""
+        };
+        let uninstall_string = format!(
+            "powershell -NoProfile -Command \"Remove-AppxPackage{} -Package {}\"",
+            all_users, package_full
+        );
 
         let icon_base64 = get_uwp_icon_base64(&loc);
 
