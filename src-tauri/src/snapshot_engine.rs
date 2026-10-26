@@ -13,6 +13,8 @@ use crate::db::get_snapshots_dir;
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SnapshotData {
     pub registry_keys: Vec<String>,
+    #[serde(default)]
+    pub registry_values: Vec<String>,
     pub files: Vec<String>,
 }
 
@@ -29,6 +31,7 @@ pub struct SnapshotRecord {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SnapshotDiff {
     pub new_registry_keys: Vec<String>,
+    pub new_registry_values: Vec<String>,
     pub new_files: Vec<String>,
 }
 
@@ -52,8 +55,10 @@ pub fn create_snapshot(name: &str) -> Result<SnapshotRecord, String> {
         scan_files_recursive(&dir, 3, &mut files);
     }
 
+    let registry_values = scan_tracking_registry_values();
     let snap_data = SnapshotData {
         registry_keys: registry_keys.clone(),
+        registry_values,
         files: files.clone(),
     };
 
@@ -159,16 +164,23 @@ pub fn compare_snapshots_by_id(before_id: &str, after_id: &str) -> Result<Snapsh
     let after_data = load_snapshot_data(after_id)?;
 
     let mut new_registry_keys = Vec::new();
+    let mut new_registry_values = Vec::new();
     let mut new_files = Vec::new();
 
     use std::collections::HashSet;
     let before_registry: HashSet<String> = before_data.registry_keys.iter().map(|k| k.to_lowercase()).collect();
+    let before_values: HashSet<String> = before_data.registry_values.iter().map(|k| k.to_lowercase()).collect();
     let before_files: HashSet<String> = before_data.files.iter().map(|f| f.to_lowercase()).collect();
 
     // Registry Diff (Case-insensitive matching for Windows registry)
     for key in &after_data.registry_keys {
         if !before_registry.contains(&key.to_lowercase()) {
             new_registry_keys.push(key.clone());
+        }
+    }
+    for value in &after_data.registry_values {
+        if !before_values.contains(&value.to_lowercase()) {
+            new_registry_values.push(value.clone());
         }
     }
 
@@ -181,6 +193,7 @@ pub fn compare_snapshots_by_id(before_id: &str, after_id: &str) -> Result<Snapsh
 
     Ok(SnapshotDiff {
         new_registry_keys,
+        new_registry_values,
         new_files,
     })
 }
@@ -201,6 +214,30 @@ fn load_snapshot_data(id: &str) -> Result<SnapshotData, String> {
         .map_err(|e| format!("Failed to parse snapshot data: {}", e))?;
 
     Ok(data)
+}
+
+pub fn scan_tracking_registry_values() -> Vec<String> {
+    let targets = [
+        (HKEY_CURRENT_USER, "HKCU", r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"),
+        (HKEY_CURRENT_USER, "HKCU", r"SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce"),
+        (HKEY_LOCAL_MACHINE, "HKLM", r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"),
+        (HKEY_LOCAL_MACHINE, "HKLM", r"SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce"),
+        (HKEY_LOCAL_MACHINE, "HKLM", r"SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Run"),
+        (HKEY_LOCAL_MACHINE, "HKLM", r"SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\RunOnce"),
+    ];
+
+    let mut values = Vec::new();
+    for (hive, hive_name, subpath) in targets {
+        let Ok(key) = RegKey::predef(hive).open_subkey_with_flags(subpath, KEY_READ) else {
+            continue;
+        };
+        for name in key.enum_values().filter_map(|entry| entry.ok()).map(|(name, _)| name) {
+            values.push(format!(r"{}\{}\{}", hive_name, subpath, name));
+        }
+    }
+    values.sort();
+    values.dedup();
+    values
 }
 
 pub fn scan_registry_keys_recursive(

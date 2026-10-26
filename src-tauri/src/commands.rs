@@ -884,12 +884,14 @@ pub async fn start_install_tracking(
         let _ = crate::snapshot_engine::scan_registry_keys_recursive(
             winreg::enums::HKEY_LOCAL_MACHINE, "HKLM", "SOFTWARE", 0, 5, &mut reg_baseline
         );
+        let reg_value_baseline = crate::snapshot_engine::scan_tracking_registry_values();
 
         let mut active = state_clone.lock().map_err(|e| e.to_string())?;
         *active = Some(crate::tracker::TrackingSession {
             start_usn: current_usn,
             name,
             reg_baseline,
+            reg_value_baseline,
         });
         
         Ok(())
@@ -931,6 +933,16 @@ pub async fn stop_install_tracking(
             }
         }
 
+        let current_values = crate::snapshot_engine::scan_tracking_registry_values();
+        let baseline_value_set: HashSet<&String> =
+            session.reg_value_baseline.iter().collect();
+        let mut new_registry_values = Vec::new();
+        for value in &current_values {
+            if !baseline_value_set.contains(value) {
+                new_registry_values.push(value.clone());
+            }
+        }
+
         // The USN iterator returns full paths directly. Filter out paths that
         // PurgeKit must never treat as app-owned remnants (personal folders,
         // SystemRoot, credential directories).
@@ -942,6 +954,8 @@ pub async fn stop_install_tracking(
         // De-duplicate lists
         new_registry_keys.sort();
         new_registry_keys.dedup();
+        new_registry_values.sort();
+        new_registry_values.dedup();
         new_files.sort();
         new_files.dedup();
 
@@ -951,6 +965,7 @@ pub async fn stop_install_tracking(
         
         let snap_data = crate::snapshot_engine::SnapshotData {
             registry_keys: new_registry_keys.clone(),
+            registry_values: new_registry_values,
             files: new_files.clone(),
         };
 

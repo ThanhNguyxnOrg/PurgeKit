@@ -7,6 +7,7 @@ pub struct TrackingSession {
     pub start_usn: u64,
     pub name: String,
     pub reg_baseline: Vec<String>,
+    pub reg_value_baseline: Vec<String>,
 }
 
 pub struct ActiveTracking(pub std::sync::Arc<Mutex<Option<TrackingSession>>>);

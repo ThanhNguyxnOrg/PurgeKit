@@ -15,6 +15,7 @@
 
   interface SnapshotDiff {
     new_registry_keys: string[];
+    new_registry_values?: string[];
     new_files: string[];
   }
 
@@ -412,10 +413,10 @@
       <div class="border border-border-default rounded-lg p-6 bg-surface-bg/30 space-y-4 animate-fade-in">
         <h3 class="text-sm font-bold text-text-primary flex items-center gap-2">
           <Database class="w-4.5 h-4.5 text-accent" />
-          Comparison Results ({diffResults.new_registry_keys.length + diffResults.new_files.length} differences found)
+          Comparison Results ({diffResults.new_registry_keys.length + (diffResults.new_registry_values?.length ?? 0) + diffResults.new_files.length} differences found)
         </h3>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
           <!-- Registry New Keys -->
           <div class="space-y-3">
             <span class="text-xs font-mono font-semibold uppercase text-text-muted tracking-wider flex items-center gap-1.5">
@@ -428,6 +429,23 @@
               {:else}
                 {#each diffResults.new_registry_keys as key}
                   <span class="block text-success break-all select-all">+ {key}</span>
+                {/each}
+              {/if}
+            </div>
+          </div>
+
+          <!-- Registry Values -->
+          <div class="space-y-3">
+            <span class="text-xs font-mono font-semibold uppercase text-text-muted tracking-wider flex items-center gap-1.5">
+              <Database class="w-3.5 h-3.5 text-warning" />
+              New Registry Values ({diffResults.new_registry_values?.length ?? 0})
+            </span>
+            <div class="border border-border-default rounded-lg bg-app-bg p-4 max-h-[300px] overflow-y-auto font-mono text-[10px] space-y-1.5">
+              {#if !diffResults.new_registry_values || diffResults.new_registry_values.length === 0}
+                <span class="text-text-muted italic block py-4 text-center">No new registry values detected.</span>
+              {:else}
+                {#each diffResults.new_registry_values as value}
+                  <span class="block text-success break-all select-all">+ {value}</span>
                 {/each}
               {/if}
             </div>
