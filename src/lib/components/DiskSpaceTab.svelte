@@ -3,7 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { openPath } from "@tauri-apps/plugin-opener";
-  import { FolderOpen, Play, RefreshCw, Square, HardDrive, File, Folder } from "@lucide/svelte";
+  import { FolderOpen, Play, RefreshCw, Square, HardDrive, File, Folder, Search, X } from "@lucide/svelte";
   import { toast } from "../toast.svelte";
 
   interface DiskTreeNode {
@@ -62,6 +62,13 @@
     bytes: number;
   }
 
+  interface DiskFileSearchResult {
+    files: DiskFile[];
+    total_matches: number;
+    indexed_files: number;
+    index_complete: boolean;
+  }
+
   interface LayoutRect {
     node: DiskTreeNode;
     x: number;
@@ -87,6 +94,11 @@
   let hoverPath = $state<string | null>(null);
   let tooltip = $state<{ x: number; y: number; node: DiskTreeNode } | null>(null);
   let fileQuery = $state("");
+  let fileExtensionFilter = $state<string | null>(null);
+  let searchResult = $state<DiskFileSearchResult | null>(null);
+  let isSearching = $state(false);
+  let searchTimer: ReturnType<typeof setTimeout> | undefined;
+  let searchSequence = 0;
   let isQuarantining = $state(false);
 
   let filteredTopFiles = $derived(
@@ -100,6 +112,12 @@
         })
       : []
   );
+
+  let displayFiles = $derived(
+    searchResult ? searchResult.files : filteredTopFiles
+  );
+
+  let isSearchActive = $derived(fileQuery.trim().length > 0 || fileExtensionFilter !== null);
 
   const DIR_COLORS = ["#33545A", "#3E5364", "#4B465E", "#5A4B43", "#3C5747", "#45566B"];
   const EXT_COLORS: Record<string, string> = {
@@ -151,6 +169,63 @@
     return /^[a-zA-Z]:[\\/]*$/.test(value.trim());
   }
 
+  function clearFileSearch() {
+    clearTimeout(searchTimer);
+    searchResult = null;
+    isSearching = false;
+    searchSequence += 1;
+  }
+
+  function scheduleFileSearch() {
+    clearTimeout(searchTimer);
+    if (!isSearchActive) {
+      clearFileSearch();
+      return;
+    }
+    searchTimer = setTimeout(runFileSearch, 200);
+  }
+
+  async function runFileSearch() {
+    if (!result || !isSearchActive) {
+      searchResult = null;
+      return;
+    }
+
+    const sequence = ++searchSequence;
+    isSearching = true;
+    try {
+      const response = await invoke<DiskFileSearchResult>("search_disk_files", {
+        path: result.root_path,
+        query: fileQuery.trim(),
+        extension: fileExtensionFilter,
+        limit: 500,
+      });
+      if (sequence === searchSequence) {
+        searchResult = response;
+      }
+    } catch {
+      if (sequence === searchSequence) {
+        searchResult = null;
+      }
+    } finally {
+      if (sequence === searchSequence) {
+        isSearching = false;
+      }
+    }
+  }
+
+  function showFilesByExtension(extension: string) {
+    fileExtensionFilter = extension;
+    fileQuery = "";
+    activeView = "files";
+    scheduleFileSearch();
+  }
+
+  function clearExtensionFilter() {
+    fileExtensionFilter = null;
+    scheduleFileSearch();
+  }
+
   async function scanDisk() {
     const target = pathInput.trim();
     if (!target) {
@@ -166,6 +241,9 @@
     focusNode = null;
     focusStack = [];
     selectedNode = null;
+    fileQuery = "";
+    fileExtensionFilter = null;
+    clearFileSearch();
 
     try {
       const scanResult = await invoke<DiskScanResult>("scan_disk_space", {
@@ -381,7 +459,7 @@
   }
 
   function exportTopFilesCsv() {
-    if (!result || filteredTopFiles.length === 0) {
+    if (!result || displayFiles.length === 0) {
       toast.show("No files to export for this filter.", "warning");
       return;
     }
@@ -389,7 +467,7 @@
     const escapeCsv = (value: string) => `"${value.replace(/"/g, '""')}"`;
     const rows = [
       ["Name", "Path", "Extension", "LogicalBytes", "AllocatedBytes"],
-      ...filteredTopFiles.map((file) => [
+      ...displayFiles.map((file) => [
         file.name,
         file.path,
         file.extension,
@@ -522,6 +600,7 @@
     window.addEventListener("resize", onResize);
 
     return () => {
+      clearTimeout(searchTimer);
       unlisten.then((cleanup) => cleanup());
       window.removeEventListener("resize", onResize);
     };
@@ -797,20 +876,40 @@
         </div>
       {:else if activeView === "files"}
         <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-          <input
-            bind:value={fileQuery}
-            placeholder="Filter top files by name, path or extension…"
-            aria-label="Filter largest files"
-            class="flex-1 px-3 py-2 rounded-lg bg-surface-bg border border-border-default focus:border-accent/50 focus:ring-1 focus:ring-accent/30 outline-none text-xs text-text-primary placeholder:text-text-muted"
-          />
+          <div class="relative flex-1">
+            <Search class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-muted" aria-hidden="true" />
+            <input
+              bind:value={fileQuery}
+              oninput={scheduleFileSearch}
+              placeholder="Search every scanned file by name or path…"
+              aria-label="Search all scanned files"
+              class="w-full pl-9 pr-3 py-2 rounded-lg bg-surface-bg border border-border-default focus:border-accent/50 focus:ring-1 focus:ring-accent/30 outline-none text-xs text-text-primary placeholder:text-text-muted"
+            />
+          </div>
+          {#if fileExtensionFilter}
+            <button
+              onclick={clearExtensionFilter}
+              class="px-2.5 py-2 rounded-lg bg-accent-subtle border border-accent/30 text-[11px] font-mono text-accent flex items-center gap-1.5 hover:bg-accent/20 transition-colors"
+              title="Clear extension filter"
+            >
+              .{fileExtensionFilter}
+              <X class="w-3 h-3" aria-hidden="true" />
+            </button>
+          {/if}
           <button
             onclick={exportTopFilesCsv}
             class="px-3 py-2 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-xs font-semibold text-text-secondary hover:text-text-primary transition-colors"
           >
             Export CSV
           </button>
-          <span class="text-[11px] font-mono text-text-muted self-center">
-            {filteredTopFiles.length} / {result.top_files.length} shown
+          <span class="text-[11px] font-mono text-text-muted self-center" aria-live="polite">
+            {#if isSearching}
+              Searching…
+            {:else if isSearchActive && searchResult}
+              {searchResult.total_matches.toLocaleString()} matches · {searchResult.indexed_files.toLocaleString()} indexed{searchResult.index_complete ? "" : " (capped)"}
+            {:else}
+              Top {displayFiles.length} by size · search covers all scanned files
+            {/if}
           </span>
         </div>
 
@@ -826,7 +925,7 @@
                 </tr>
               </thead>
               <tbody class="divide-y divide-border-default">
-                {#each filteredTopFiles as file}
+                {#each displayFiles as file}
                   <tr class="hover:bg-elevated-bg/50 cursor-pointer" onclick={() => openFileFolder(file)}>
                     <td class="px-4 py-2.5">
                       <span class="text-text-primary font-mono break-all">{file.name}</span>
@@ -839,7 +938,7 @@
                 {:else}
                   <tr>
                     <td colspan="4" class="px-4 py-8 text-center text-text-muted">
-                      No top files match this filter.
+                      {isSearching ? "Searching indexed files…" : isSearchActive ? "No scanned files match this search." : "No top files match this filter."}
                     </td>
                   </tr>
                 {/each}
@@ -848,9 +947,14 @@
           </div>
         </div>
       {:else if activeView === "types"}
-        <div class="border border-border-default rounded-lg bg-surface-bg/40 p-4 space-y-3">
+        <div class="border border-border-default rounded-lg bg-surface-bg/40 p-2 space-y-1">
           {#each result.file_types as type}
-            <div>
+            <button
+              type="button"
+              onclick={() => showFilesByExtension(type.extension)}
+              title="Show all .{type.extension || '(none)'} files by size"
+              class="w-full text-left p-2 rounded-md hover:bg-elevated-bg/70 focus-visible:bg-elevated-bg/70 transition-colors"
+            >
               <div class="flex items-center justify-between text-xs font-mono gap-3">
                 <span class="flex items-center gap-2 text-text-primary">
                   <span class="w-2.5 h-2.5 rounded-sm" style="background: {colorForExtension(type.extension)}"></span>
@@ -867,7 +971,7 @@
                   style="width: {result.total_allocated > 0 ? Math.max(1, (type.size_bytes / result.total_allocated) * 100) : 0}%; background: {colorForExtension(type.extension)}"
                 ></div>
               </div>
-            </div>
+            </button>
           {/each}
         </div>
       {:else}

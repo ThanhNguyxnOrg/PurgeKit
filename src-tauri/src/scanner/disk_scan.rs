@@ -70,7 +70,110 @@ pub struct DiskScanResult {
     pub errors: u64,
     pub truncated: bool,
     pub engine: String,
+    #[serde(skip)]
+    pub file_index: Option<DiskFileIndex>,
 }
+
+pub const MAX_INDEXED_FILES: usize = 400_000;
+
+#[derive(Debug, Clone)]
+pub struct CachedDiskFile {
+    pub path: String,
+    pub size_bytes: u64,
+    pub allocated_bytes: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DiskFileIndex {
+    pub root_path: String,
+    pub files: Vec<CachedDiskFile>,
+    pub complete: bool,
+}
+
+#[derive(Debug, Default)]
+pub struct DiskFileCache(pub Arc<std::sync::Mutex<HashMap<String, Arc<DiskFileIndex>>>>);
+
+#[derive(Debug, Serialize, Clone)]
+pub struct DiskFileSearchResult {
+    pub files: Vec<DiskFile>,
+    pub total_matches: usize,
+    pub indexed_files: usize,
+    pub index_complete: bool,
+}
+
+fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
+    let haystack = haystack.as_bytes();
+    let needle = needle.as_bytes();
+    if needle.is_empty() {
+        return true;
+    }
+    if needle.len() > haystack.len() {
+        return false;
+    }
+    haystack
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle))
+}
+
+fn file_extension(path: &str) -> Option<String> {
+    Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.to_lowercase())
+}
+
+pub fn search_cached_files(
+    index: &DiskFileIndex,
+    query: &str,
+    extension: Option<&str>,
+    limit: usize,
+) -> DiskFileSearchResult {
+    let query = query.trim();
+    let extension = extension
+        .map(|value| value.trim().trim_start_matches('.').to_lowercase())
+        .filter(|value| !value.is_empty());
+    let limit = limit.clamp(1, 2_000);
+
+    let mut matches: Vec<&CachedDiskFile> = Vec::new();
+    for file in &index.files {
+        let file_extension = file_extension(&file.path);
+        if let Some(wanted) = extension.as_deref() {
+            if !(*file_extension.as_deref().unwrap_or("(none)")).eq_ignore_ascii_case(wanted) {
+                continue;
+            }
+        }
+        if !query.is_empty() && !contains_ascii_case_insensitive(&file.path, query) {
+            continue;
+        }
+        matches.push(file);
+    }
+
+    let total_matches = matches.len();
+    matches.sort_unstable_by_key(|file| Reverse(file.allocated_bytes.max(file.size_bytes)));
+    matches.truncate(limit);
+
+    let files = matches
+        .into_iter()
+        .map(|file| DiskFile {
+            name: Path::new(&file.path)
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_else(|| file.path.clone()),
+            path: file.path.clone(),
+            extension: file_extension(&file.path).unwrap_or_else(|| "(none)".to_string()),
+            size_bytes: file.size_bytes,
+            allocated_bytes: file.allocated_bytes,
+        })
+        .collect();
+
+    DiskFileSearchResult {
+        files,
+        total_matches,
+        indexed_files: index.files.len(),
+        index_complete: index.complete,
+    }
+}
+
 
 pub(crate) struct FlatNode {
     pub(crate) name: String,
@@ -361,6 +464,8 @@ pub(crate) fn finalize_scan(
     let mut file_types: HashMap<String, (u64, u64)> = HashMap::new();
     let mut total_files = 0u64;
     let mut total_dirs = 0u64;
+    let mut indexed_files: Vec<CachedDiskFile> = Vec::new();
+    let mut index_complete = true;
 
     for (index, node) in nodes.iter().enumerate().skip(1) {
         if node.is_dir {
@@ -369,6 +474,16 @@ pub(crate) fn finalize_scan(
         }
 
         total_files += 1;
+        if indexed_files.len() < MAX_INDEXED_FILES {
+            indexed_files.push(CachedDiskFile {
+                path: node.path.clone(),
+                size_bytes: node.size_bytes,
+                allocated_bytes: node.allocated_bytes,
+            });
+        } else {
+            index_complete = false;
+        }
+
         let weight = node.allocated_bytes.max(node.size_bytes);
         if top_heap.len() < 100 {
             top_heap.push(Reverse((weight, index)));
@@ -476,7 +591,7 @@ pub(crate) fn finalize_scan(
         crate::winutil::volume_space(&root_path).unwrap_or((0, 0));
 
     DiskScanResult {
-        root_path,
+        root_path: root_path.clone(),
         root: root_node,
         top_files,
         file_types,
@@ -491,6 +606,11 @@ pub(crate) fn finalize_scan(
         errors,
         truncated: budget.truncated,
         engine: engine.to_string(),
+        file_index: Some(DiskFileIndex {
+            root_path,
+            files: indexed_files,
+            complete: index_complete,
+        }),
     }
 }
 
@@ -580,6 +700,38 @@ mod tests {
         let _ = fs::create_dir_all(&root);
         let result = scan_disk_tree(&root.to_string_lossy(), 2, 10, false, &cancel, |_| {});
         assert!(result.is_err());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn builds_searchable_file_index() {
+        let root = std::env::temp_dir().join("purgekit_disk_index_test");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("nested")).unwrap();
+        fs::write(root.join("Big_Setup.EXE"), vec![0u8; 2048]).unwrap();
+        fs::write(root.join("nested\\notes.txt"), b"hello").unwrap();
+        fs::write(root.join("nested\\backup.bin"), vec![0u8; 1024]).unwrap();
+
+        let cancel = AtomicBool::new(false);
+        let result = scan_disk_tree(&root.to_string_lossy(), 3, 20, false, &cancel, |_| {}).unwrap();
+        let index = result.file_index.as_ref().unwrap();
+        assert_eq!(index.files.len(), 3);
+        assert!(index.complete);
+
+        let search = search_cached_files(index, "setup", None, 10);
+        assert_eq!(search.total_matches, 1);
+        assert_eq!(search.files[0].name, "Big_Setup.EXE");
+        assert_eq!(search.files[0].extension, "exe");
+
+        let by_extension = search_cached_files(index, "", Some(".TXT"), 10);
+        assert_eq!(by_extension.total_matches, 1);
+        assert_eq!(by_extension.files[0].name, "notes.txt");
+
+        let sorted = search_cached_files(index, "", None, 2);
+        assert_eq!(sorted.total_matches, 3);
+        assert_eq!(sorted.files.len(), 2);
+        assert_eq!(sorted.files[0].name, "Big_Setup.EXE");
+
         let _ = fs::remove_dir_all(&root);
     }
 }

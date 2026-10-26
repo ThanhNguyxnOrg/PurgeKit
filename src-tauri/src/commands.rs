@@ -679,6 +679,7 @@ fn collect_pending_reboot_operations(
 pub async fn scan_disk_space(
     app: AppHandle,
     state: tauri::State<'_, scanner::DiskScanState>,
+    cache: tauri::State<'_, scanner::disk_scan::DiskFileCache>,
     path: String,
     max_depth: Option<u32>,
     max_children: Option<usize>,
@@ -686,8 +687,9 @@ pub async fn scan_disk_space(
 ) -> Result<scanner::DiskScanResult, String> {
     state.0.store(false, Ordering::Relaxed);
     let cancel = state.0.clone();
+    let cache = cache.0.clone();
 
-    tauri::async_runtime::spawn_blocking(move || {
+    let mut result = tauri::async_runtime::spawn_blocking(move || {
         let max_depth = max_depth.unwrap_or(4);
         let max_children = max_children.unwrap_or(40);
         let find_duplicates = find_duplicates.unwrap_or(false);
@@ -723,7 +725,46 @@ pub async fn scan_disk_space(
         )
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())??;
+
+    if let Some(index) = result.file_index.take() {
+        let key = index.root_path.to_lowercase();
+        if let Ok(mut indexes) = cache.lock() {
+            indexes.insert(key, std::sync::Arc::new(index));
+        }
+    }
+
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn search_disk_files(
+    cache: tauri::State<'_, scanner::disk_scan::DiskFileCache>,
+    path: String,
+    query: String,
+    extension: Option<String>,
+    limit: Option<usize>,
+) -> Result<scanner::disk_scan::DiskFileSearchResult, String> {
+    let key = crate::winutil::canonicalize_path_safety(&path)
+        .to_string_lossy()
+        .to_lowercase();
+    let index = {
+        let indexes = cache
+            .0
+            .lock()
+            .map_err(|_| "Disk file index is unavailable".to_string())?;
+        indexes
+            .get(&key)
+            .cloned()
+            .ok_or_else(|| "Scan this path before searching its files.".to_string())?
+    };
+
+    Ok(scanner::disk_scan::search_cached_files(
+        &index,
+        &query,
+        extension.as_deref(),
+        limit.unwrap_or(500),
+    ))
 }
 
 #[tauri::command]

@@ -22,6 +22,7 @@ pub fn run() {
         .manage(scanner::DiskScanState(std::sync::Arc::new(
             std::sync::atomic::AtomicBool::new(false),
         )))
+        .manage(scanner::disk_scan::DiskFileCache::default())
         .invoke_handler(tauri::generate_handler![
             commands::get_installed_apps,
             commands::get_dev_tools,
@@ -37,6 +38,7 @@ pub fn run() {
             commands::get_pending_reboot_items,
             commands::scan_disk_space,
             commands::cancel_disk_scan,
+            commands::search_disk_files,
             commands::get_path_entries,
             commands::save_path_entries,
             commands::run_uninstall_command,
