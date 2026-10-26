@@ -41,6 +41,7 @@ pub fn run() {
             commands::save_path_entries,
             commands::run_uninstall_command,
             commands::run_app_command,
+            commands::get_dev_extensions,
             commands::get_global_cli_packages,
             commands::uninstall_global_cli_package,
             commands::get_cli_package_bin_names,

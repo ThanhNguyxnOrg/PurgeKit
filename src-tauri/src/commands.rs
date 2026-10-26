@@ -810,6 +810,13 @@ pub async fn run_app_command(command: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn get_dev_extensions() -> Result<Vec<scanner::DevExtension>, String> {
+    tauri::async_runtime::spawn_blocking(move || Ok(scanner::dev_extensions::scan_dev_extensions()))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub async fn get_global_cli_packages() -> Result<Vec<GlobalCliPackage>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         Ok(scanner::scan_global_cli_packages())

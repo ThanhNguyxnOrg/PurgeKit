@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
+  import { openPath } from "@tauri-apps/plugin-opener";
   import { Terminal, RefreshCw, Trash2, HardDrive, AlertCircle, CheckCircle, FolderOpen, X, Square, CheckSquare, Folder, Database, File, Cpu } from "@lucide/svelte";
   import { toast } from "../toast.svelte";
 
@@ -45,7 +46,15 @@
     is_active: boolean;
   }
 
-  let activeSubTab = $state("caches"); // "caches" | "packages" | "toolchains"
+  interface DevExtension {
+    ide: string;
+    name: string;
+    version: string | null;
+    path: string;
+    size_bytes: number;
+  }
+
+  let activeSubTab = $state("caches"); // "caches" | "packages" | "toolchains" | "extensions"
 
   let tools = $state<DevToolInfo[]>([]);
   let pathIssuesCount = $state(0);
@@ -60,6 +69,10 @@
   let toolchains = $state<ToolchainVersion[]>([]);
   let isToolchainsLoading = $state(false);
   let uninstallingToolchains = $state<Record<string, boolean>>({});
+
+  // IDE extension inventory
+  let extensions = $state<DevExtension[]>([]);
+  let isExtensionsLoading = $state(false);
 
   // Remnants Modal States
   let activePackage = $state<GlobalCliPackage | null>(null);
@@ -112,10 +125,23 @@
     }
   }
 
+  async function loadExtensions() {
+    isExtensionsLoading = true;
+    try {
+      extensions = await invoke<DevExtension[]>("get_dev_extensions");
+    } catch (e) {
+      console.error("Failed to load IDE extensions:", e);
+      toast.show("Failed to load IDE extensions!", "error");
+    } finally {
+      isExtensionsLoading = false;
+    }
+  }
+
   function refreshAll() {
     loadDevTools();
     loadGlobalPackages();
     loadToolchains();
+    loadExtensions();
   }
 
   async function uninstallPackage(pkg: GlobalCliPackage) {
@@ -215,6 +241,7 @@
     loadDevTools();
     loadGlobalPackages();
     loadToolchains();
+    loadExtensions();
   });
 
   // Helper to format file size
@@ -294,6 +321,10 @@
 
   let totalToolchainsCount = $derived(
     toolchains.length
+  );
+
+  let totalExtensionsSize = $derived(
+    extensions.reduce((sum, extension) => sum + extension.size_bytes, 0)
   );
 
   async function uninstallToolchain(tc: ToolchainVersion) {
@@ -379,6 +410,13 @@
           {activeSubTab === 'toolchains' ? 'bg-surface-bg border border-border-default text-accent shadow-sm' : 'text-text-secondary hover:text-text-primary border border-transparent'}"
       >
         Toolchain Runtimes
+      </button>
+      <button
+        onclick={() => activeSubTab = "extensions"}
+        class="px-4 py-1.5 rounded-md text-xs font-semibold transition-all duration-150 cursor-pointer
+          {activeSubTab === 'extensions' ? 'bg-surface-bg border border-border-default text-accent shadow-sm' : 'text-text-secondary hover:text-text-primary border border-transparent'}"
+      >
+        IDE Extensions
       </button>
     </div>
   </div>
@@ -689,6 +727,70 @@
             </div>
           {/if}
         </div>
+      </div>
+
+    {:else if activeSubTab === 'extensions'}
+      <div class="border border-border-default rounded-lg bg-surface-bg/30 p-5 space-y-4 animate-fade-in">
+        <div class="flex items-center justify-between gap-4 border-b border-border-default pb-3">
+          <div>
+            <h3 class="text-sm font-bold text-text-primary flex items-center gap-2">
+              <Terminal class="w-4 h-4 text-accent" />
+              IDE Extensions
+            </h3>
+            <span class="text-[11px] text-text-muted">
+              VS Code, Cursor, Windsurf and JetBrains plugin inventories
+            </span>
+          </div>
+          <div class="flex items-center gap-3">
+            <span class="text-xs font-mono text-text-secondary">
+              {extensions.length} extensions · {formatSize(totalExtensionsSize)}
+            </span>
+            <button
+              onclick={loadExtensions}
+              disabled={isExtensionsLoading}
+              class="p-1.5 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg transition-colors"
+              aria-label="Refresh IDE extensions"
+            >
+              <RefreshCw class="w-3.5 h-3.5 text-text-secondary {isExtensionsLoading ? 'animate-spin text-accent' : ''}" />
+            </button>
+          </div>
+        </div>
+
+        {#if isExtensionsLoading}
+          <div class="flex items-center justify-center py-8 gap-2">
+            <RefreshCw class="w-4 h-4 text-accent animate-spin" />
+            <span class="text-xs text-text-muted font-mono">Scanning IDE extension folders...</span>
+          </div>
+        {:else if extensions.length === 0}
+          <div class="py-8 text-center text-xs text-text-muted border border-dashed border-border-default rounded-lg">
+            No IDE extensions detected in the common VS Code/JetBrains locations.
+          </div>
+        {:else}
+          <div class="divide-y divide-border-default max-h-[520px] overflow-y-auto pr-1">
+            {#each extensions as extension}
+              <div class="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0">
+                <div class="flex-1 min-w-0">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="text-xs font-semibold text-text-primary truncate" title={extension.name}>{extension.name}</span>
+                    {#if extension.version}
+                      <span class="text-[10px] font-mono text-text-muted">v{extension.version}</span>
+                    {/if}
+                    <span class="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded border border-border-default text-text-muted">{extension.ide}</span>
+                  </div>
+                  <div class="text-[10px] font-mono text-text-disabled mt-1 truncate" title={extension.path}>{extension.path}</div>
+                </div>
+                <span class="text-xs font-mono text-text-secondary whitespace-nowrap">{formatSize(extension.size_bytes)}</span>
+                <button
+                  onclick={() => openPath(extension.path)}
+                  class="px-2.5 py-1.5 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-text-secondary hover:text-text-primary text-[10px] font-semibold transition-colors"
+                  aria-label="Open {extension.name} folder"
+                >
+                  Open
+                </button>
+              </div>
+            {/each}
+          </div>
+        {/if}
       </div>
     {/if}
 

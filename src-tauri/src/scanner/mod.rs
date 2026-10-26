@@ -14,11 +14,13 @@ pub mod inventory;
 pub mod portable_apps;
 pub mod disk_scan;
 pub mod mft_scan;
+pub mod dev_extensions;
 
 
 pub use registry::{InstalledApp, scan_registry};
 pub use inventory::{build_inventory, InventoryApp};
 pub use disk_scan::{DiskScanResult, DiskScanState};
+pub use dev_extensions::DevExtension;
 pub use uwp::scan_uwp_apps;
 pub use cli_dev::{DevToolInfo, scan_dev_tools, GlobalCliPackage, scan_global_cli_packages, uninstall_global_cli_package, get_cli_package_bin_names, get_cli_package_remnants};
 pub use remnants::{RemnantItem, scan_app_remnants, purge_all_remnants};
