@@ -67,17 +67,18 @@ pub struct DiskScanResult {
     pub elapsed_ms: u64,
     pub errors: u64,
     pub truncated: bool,
+    pub engine: String,
 }
 
-struct FlatNode {
-    name: String,
-    path: String,
-    parent: Option<usize>,
-    is_dir: bool,
-    size_bytes: u64,
-    allocated_bytes: u64,
-    file_count: u64,
-    extension: String,
+pub(crate) struct FlatNode {
+    pub(crate) name: String,
+    pub(crate) path: String,
+    pub(crate) parent: Option<usize>,
+    pub(crate) is_dir: bool,
+    pub(crate) size_bytes: u64,
+    pub(crate) allocated_bytes: u64,
+    pub(crate) file_count: u64,
+    pub(crate) extension: String,
 }
 
 struct TreeBudget {
@@ -191,8 +192,6 @@ where
     }];
 
     let mut stack: Vec<(usize, usize)> = vec![(0, 0)];
-    let mut top_files: BinaryHeap<Reverse<(u64, usize)>> = BinaryHeap::new();
-    let mut file_types: HashMap<String, (u64, u64)> = HashMap::new();
     let mut errors = 0u64;
     let mut scanned_bytes = 0u64;
     let mut file_total = 0u64;
@@ -279,21 +278,6 @@ where
         } else {
             file_total += 1;
             scanned_bytes += size_bytes;
-            let weight = allocated_bytes.max(size_bytes);
-            if top_files.len() < 100 {
-                top_files.push(Reverse((weight, index)));
-            } else if let Some(Reverse((smallest, _))) = top_files.peek() {
-                if weight > *smallest {
-                    top_files.pop();
-                    top_files.push(Reverse((weight, index)));
-                }
-            }
-
-            let entry_stats = file_types
-                .entry(extension)
-                .or_insert((0, 0));
-            entry_stats.0 += allocated_bytes;
-            entry_stats.1 += 1;
         }
 
         if nodes.len() % 1024 == 0 {
@@ -306,8 +290,30 @@ where
         }
     }
 
-    // Bottom-up aggregate sizes and counts. The walk is in pre-order, so parents
-    // always have a lower index than their descendants.
+    Ok(finalize_scan(
+        nodes,
+        root_path.to_string_lossy().to_string(),
+        max_depth,
+        max_children,
+        find_duplicates,
+        errors,
+        started,
+        "traversal",
+    ))
+}
+
+pub(crate) fn finalize_scan(
+    mut nodes: Vec<FlatNode>,
+    root_path: String,
+    max_depth: u32,
+    max_children: usize,
+    find_duplicates: bool,
+    errors: u64,
+    started: Instant,
+    engine: &str,
+) -> DiskScanResult {
+    // Bottom-up aggregate sizes and counts. Nodes are emitted in parent-before-
+    // child order by both scanners.
     for index in (1..nodes.len()).rev() {
         let (parent, size_bytes, allocated_bytes, file_count) = {
             let node = &nodes[index];
@@ -349,7 +355,34 @@ where
         budget.truncated = true;
     }
 
-    let mut top_file_indices: Vec<usize> = top_files
+    let mut top_heap: BinaryHeap<Reverse<(u64, usize)>> = BinaryHeap::new();
+    let mut file_types: HashMap<String, (u64, u64)> = HashMap::new();
+    let mut total_files = 0u64;
+    let mut total_dirs = 0u64;
+
+    for (index, node) in nodes.iter().enumerate().skip(1) {
+        if node.is_dir {
+            total_dirs += 1;
+            continue;
+        }
+
+        total_files += 1;
+        let weight = node.allocated_bytes.max(node.size_bytes);
+        if top_heap.len() < 100 {
+            top_heap.push(Reverse((weight, index)));
+        } else if let Some(Reverse((smallest, _))) = top_heap.peek() {
+            if weight > *smallest {
+                top_heap.pop();
+                top_heap.push(Reverse((weight, index)));
+            }
+        }
+
+        let entry_stats = file_types.entry(node.extension.clone()).or_insert((0, 0));
+        entry_stats.0 += node.allocated_bytes;
+        entry_stats.1 += 1;
+    }
+
+    let mut top_file_indices: Vec<usize> = top_heap
         .into_iter()
         .map(|Reverse((_, index))| index)
         .collect();
@@ -435,13 +468,11 @@ where
         Vec::new()
     };
 
-    let total_files = file_total;
-    let total_dirs = dir_total;
     let total_size = root_node.size_bytes;
     let total_allocated = root_node.allocated_bytes;
 
-    Ok(DiskScanResult {
-        root_path: root_path.to_string_lossy().to_string(),
+    DiskScanResult {
+        root_path,
         root: root_node,
         top_files,
         file_types,
@@ -453,7 +484,8 @@ where
         elapsed_ms: started.elapsed().as_millis() as u64,
         errors,
         truncated: budget.truncated,
-    })
+        engine: engine.to_string(),
+    }
 }
 
 #[cfg(test)]

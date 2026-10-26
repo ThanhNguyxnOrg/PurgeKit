@@ -111,6 +111,7 @@
   let bulkUninstallError = $state("");
   // Auto-purge is destructive and opt-in. Users must review leftovers first.
   let bulkAutoPurge = $state(false);
+  let bulkForceOnFailure = $state(false);
   let bulkRemnants = $state<RemnantItem[]>([]);
   let selectedBulkRemnants = $state<Record<string, boolean>>({});
   let bulkUninstallCurrent = $state(0);
@@ -316,6 +317,7 @@
         appName: app.display_name,
         publisher: app.publisher,
         installLocation: app.install_location,
+        appId: app.is_uwp ? app.id : null,
       });
 
       // Only auto-select the strongest evidence. High/Medium/Low items remain
@@ -478,6 +480,7 @@
       const result = await invoke<{ success: number; fail: number; errors?: string[] }>(
         "force_remove_app",
         {
+          appName: app.display_name,
           installLocation: app.install_location,
           registryPath: source === "registry" ? app.registry_path || null : null,
           hive: source === "registry" ? app.hive || null : null,
@@ -681,6 +684,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
       const remainingRemnants = await invoke<RemnantItem[]>("run_bulk_silent_uninstall", {
         appIds: selectedIds,
         autoPurge: bulkAutoPurge,
+        forceOnFailure: bulkForceOnFailure,
       });
       
       bulkRemnants = remainingRemnants;
@@ -1447,7 +1451,19 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
             />
             <div class="flex flex-col">
               <span class="text-xs font-semibold text-text-secondary">Auto-Purge Leftovers</span>
-              <span class="text-[9px] text-text-muted font-sans font-medium">Delete remnants silently</span>
+              <span class="text-[10px] text-text-muted font-sans font-medium">Delete remnants silently</span>
+            </div>
+          </label>
+
+          <label class="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              bind:checked={bulkForceOnFailure}
+              class="rounded border-border-default text-accent focus:ring-accent bg-surface-bg cursor-pointer w-4 h-4"
+            />
+            <div class="flex flex-col">
+              <span class="text-xs font-semibold text-text-secondary">Force Fallback</span>
+              <span class="text-[10px] text-text-muted font-sans font-medium">If uninstaller fails</span>
             </div>
           </label>
 

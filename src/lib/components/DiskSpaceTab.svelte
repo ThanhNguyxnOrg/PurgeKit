@@ -50,6 +50,7 @@
     elapsed_ms: number;
     errors: number;
     truncated: boolean;
+    engine: "mft" | "traversal";
   }
 
   interface DiskProgress {
@@ -142,6 +143,10 @@
 
   function nodeWeight(node: DiskTreeNode): number {
     return Math.max(node.allocated_bytes, node.size_bytes);
+  }
+
+  function isDriveRoot(value: string): boolean {
+    return /^[a-zA-Z]:[\\/]*$/.test(value.trim());
   }
 
   async function scanDisk() {
@@ -644,11 +649,22 @@
         </div>
       </div>
 
-      {#if result.truncated}
-        <div class="p-3 rounded-lg bg-amber-950/20 border border-amber-900/40 text-xs text-amber-300">
-          The tree is truncated to keep the UI responsive. Largest files and file types still cover the full scan.
-        </div>
-      {/if}
+      <div class="flex flex-wrap items-center gap-2 text-[11px]">
+        <span class="px-2 py-1 rounded border font-mono
+          {result.engine === 'mft'
+            ? 'bg-data-cyan/10 text-data-cyan border-data-cyan/30'
+            : 'bg-surface-bg text-text-muted border-border-default'}">
+          {result.engine === "mft" ? "MFT FAST SCAN" : "TRAVERSAL FALLBACK"}
+        </span>
+        {#if result.engine !== "mft" && isDriveRoot(pathInput)}
+          <span class="text-warning">
+            MFT unavailable for this drive/session. Run as Administrator on local NTFS for the fast path.
+          </span>
+        {/if}
+        {#if result.truncated}
+          <span class="text-text-muted">Tree truncated; top files/types still cover the full scan.</span>
+        {/if}
+      </div>
 
       <div class="flex items-center gap-2 border-b border-border-default">
         <button

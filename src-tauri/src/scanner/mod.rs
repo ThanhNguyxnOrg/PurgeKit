@@ -13,6 +13,7 @@ pub mod dev_rules;
 pub mod inventory;
 pub mod portable_apps;
 pub mod disk_scan;
+pub mod mft_scan;
 
 
 pub use registry::{InstalledApp, scan_registry};

@@ -202,6 +202,7 @@ pub async fn get_app_remnants(
     app_name: String,
     publisher: Option<String>,
     install_location: Option<String>,
+    app_id: Option<String>,
 ) -> Result<Vec<RemnantItem>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let _ = app.emit("remnant-scan-progress", ProgressPayload {
@@ -211,7 +212,41 @@ pub async fn get_app_remnants(
             message: format!("Searching residual paths for '{}'...", app_name).into(),
         });
         
-        let remnants = scanner::scan_app_remnants(&app_name, publisher.as_deref(), install_location.as_deref());
+        let mut remnants = scanner::scan_app_remnants(
+            &app_name,
+            publisher.as_deref(),
+            install_location.as_deref(),
+        );
+
+        // Remove-AppxPackage leaves per-package app data behind. The package
+        // family name is the only safe identifier for this folder.
+        if let Some(app_id) = app_id {
+            let valid_id = !app_id.is_empty()
+                && app_id.len() <= 200
+                && app_id.chars().all(|character| {
+                    character.is_ascii_alphanumeric()
+                        || matches!(character, '.' | '_' | '-')
+                });
+            if valid_id {
+                if let Some(local_app_data) =
+                    std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from)
+                {
+                    let package_data = local_app_data.join("Packages").join(&app_id);
+                    if package_data.is_dir() {
+                        let path_str = package_data.to_string_lossy().to_string();
+                        if crate::winutil::is_safe_remnant_path(&path_str).is_ok() {
+                            remnants.push(RemnantItem {
+                                path: path_str,
+                                item_type: "Directory".to_string(),
+                                size: scanner::cli_dev::calculate_dir_size(&package_data),
+                                confidence: "VeryHigh".to_string(),
+                                score: 95,
+                            });
+                        }
+                    }
+                }
+            }
+        }
         
         let _ = app.emit("remnant-scan-progress", ProgressPayload {
             phase: "completed".into(),
@@ -424,64 +459,113 @@ pub async fn remove_uninstall_entry(hive: String, registry_path: String) -> Resu
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-pub async fn force_remove_app(
-    install_location: Option<String>,
-    registry_path: Option<String>,
-    hive: Option<String>,
+fn force_remove_app_sync(
+    app_name: Option<&str>,
+    install_location: Option<&str>,
+    registry_path: Option<&str>,
+    hive: Option<&str>,
 ) -> Result<PurgeResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut success = 0u32;
-        let mut fail = 0u32;
-        let mut errors = Vec::new();
-        let mut location_failed = false;
+    let mut success = 0u32;
+    let mut fail = 0u32;
+    let mut errors = Vec::new();
+    let mut location_failed = false;
 
-        if let Some(location) = install_location.filter(|path| !path.trim().is_empty()) {
-            let path = std::path::Path::new(&location);
-            if path.exists() {
-                let item = RemnantItem {
-                    path: location.clone(),
-                    item_type: if path.is_dir() { "Directory" } else { "File" }.to_string(),
-                    size: 0,
-                    confidence: "VeryHigh".to_string(),
-                    score: 100,
-                };
-                match scanner::remnants::purge_remnant_item(&item) {
+    if let Some(location) = install_location.filter(|path| !path.trim().is_empty()) {
+        let path = std::path::Path::new(location);
+        if path.exists() {
+            let item = RemnantItem {
+                path: location.to_string(),
+                item_type: if path.is_dir() { "Directory" } else { "File" }.to_string(),
+                size: 0,
+                confidence: "VeryHigh".to_string(),
+                score: 100,
+            };
+            match scanner::remnants::purge_remnant_item(&item) {
+                Ok(()) => success += 1,
+                Err(e) => {
+                    fail += 1;
+                    location_failed = true;
+                    errors.push(format!("{}: {}", location, e));
+                }
+            }
+        }
+    }
+
+    // Keep the registry entry when the install folder could not be removed,
+    // so the application remains visible and can be retried.
+    if !location_failed {
+        if let (Some(registry_path), Some(hive)) = (registry_path, hive) {
+            if !registry_path.trim().is_empty() {
+                match remove_uninstall_entry_sync(hive, registry_path) {
                     Ok(()) => success += 1,
                     Err(e) => {
                         fail += 1;
-                        location_failed = true;
-                        errors.push(format!("{}: {}", location, e));
+                        errors.push(format!("{}: {}", registry_path, e));
                     }
                 }
             }
         }
+    }
 
-        // Keep the registry entry when the install folder could not be removed,
-        // so the application remains visible and can be retried.
-        if !location_failed {
-            if let (Some(registry_path), Some(hive)) = (registry_path, hive) {
-                if !registry_path.trim().is_empty() {
-                    match remove_uninstall_entry_sync(&hive, &registry_path) {
+    // Deep cleanup only when the install directory was known and removed.
+    // Every extra item is revalidated by purge_remnant_item before deletion.
+    if !location_failed {
+        if let (Some(name), Some(location)) = (app_name, install_location) {
+            if !name.trim().is_empty() && !location.trim().is_empty() {
+                let token = name.to_lowercase();
+                let mut related = scanner::autoruns::scan_aseps(&token, Some(location));
+                related.extend(
+                    scanner::com_purger::scan_com_orphans(&token, Some(location))
+                        .into_iter()
+                        .filter(|item| item.score >= 95),
+                );
+
+                for item in related {
+                    if item.score < 80 {
+                        continue;
+                    }
+                    if item.path.eq_ignore_ascii_case(location)
+                        || registry_path.map_or(false, |path| item.path.eq_ignore_ascii_case(path))
+                    {
+                        continue;
+                    }
+                    match scanner::remnants::purge_remnant_item(&item) {
                         Ok(()) => success += 1,
                         Err(e) => {
                             fail += 1;
-                            errors.push(format!("{}: {}", registry_path, e));
+                            errors.push(format!("{}: {}", item.path, e));
                         }
                     }
                 }
             }
         }
+    }
 
-        if success == 0 && fail == 0 {
-            return Err("Nothing to remove: no install location or registry entry was provided.".to_string());
-        }
+    if success == 0 && fail == 0 {
+        return Err("Nothing to remove: no install location or registry entry was provided.".to_string());
+    }
 
-        Ok(PurgeResult {
-            success,
-            fail,
-            errors,
-        })
+    Ok(PurgeResult {
+        success,
+        fail,
+        errors,
+    })
+}
+
+#[tauri::command]
+pub async fn force_remove_app(
+    app_name: Option<String>,
+    install_location: Option<String>,
+    registry_path: Option<String>,
+    hive: Option<String>,
+) -> Result<PurgeResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        force_remove_app_sync(
+            app_name.as_deref(),
+            install_location.as_deref(),
+            registry_path.as_deref(),
+            hive.as_deref(),
+        )
     })
     .await
     .map_err(|e| e.to_string())?
@@ -535,15 +619,37 @@ pub async fn scan_disk_space(
     let cancel = state.0.clone();
 
     tauri::async_runtime::spawn_blocking(move || {
-        let app_handle = app.clone();
-        scanner::disk_scan::scan_disk_tree(
+        let max_depth = max_depth.unwrap_or(4);
+        let max_children = max_children.unwrap_or(40);
+        let find_duplicates = find_duplicates.unwrap_or(false);
+
+        let mft_app = app.clone();
+        let mft_result = scanner::mft_scan::scan_ntfs_mft(
             &path,
-            max_depth.unwrap_or(4),
-            max_children.unwrap_or(40),
-            find_duplicates.unwrap_or(false),
+            max_depth,
+            max_children,
+            find_duplicates,
             &cancel,
             move |progress| {
-                let _ = app_handle.emit("disk-scan-progress", progress);
+                let _ = mft_app.emit("disk-scan-progress", progress);
+            },
+        );
+        if let Ok(result) = mft_result {
+            return Ok(result);
+        }
+
+        // MFT requires an elevated process and a local NTFS volume. Fall back to
+        // the traversal engine, which also supports folders, network shares and
+        // non-NTFS drives.
+        let fallback_app = app.clone();
+        scanner::disk_scan::scan_disk_tree(
+            &path,
+            max_depth,
+            max_children,
+            find_duplicates,
+            &cancel,
+            move |progress| {
+                let _ = fallback_app.emit("disk-scan-progress", progress);
             },
         )
     })
@@ -710,8 +816,7 @@ pub async fn start_install_tracking(
     tauri::async_runtime::spawn_blocking(move || {
         let sys_drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".to_string());
         let drive_char = sys_drive.chars().next().unwrap_or('C').to_ascii_uppercase();
-        let current_usn = unsafe { crate::tracker::query_current_usn(drive_char) }?;
-        let start_time = std::time::SystemTime::now();
+        let current_usn = crate::tracker::query_current_usn(drive_char)?;
         
         // Take registry baseline
         let mut reg_baseline = Vec::new();
@@ -726,7 +831,6 @@ pub async fn start_install_tracking(
         *active = Some(crate::tracker::TrackingSession {
             start_usn: current_usn,
             name,
-            start_time,
             reg_baseline,
         });
         
@@ -748,8 +852,7 @@ pub async fn stop_install_tracking(
 
         let sys_drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".to_string());
         let drive_char = sys_drive.chars().next().unwrap_or('C').to_ascii_uppercase();
-        let _current_usn = unsafe { crate::tracker::query_current_usn(drive_char) }?;
-        let usn_changes = unsafe { crate::tracker::read_usn_changes(drive_char, session.start_usn) }?;
+        let usn_changes = crate::tracker::read_usn_changes(drive_char, session.start_usn)?;
         
         // Scan registry after installation
         let mut current_reg = Vec::new();
@@ -770,45 +873,13 @@ pub async fn stop_install_tracking(
             }
         }
 
-        // Deduplicate and filter USN changes to get new file/folder paths.
-        let mut new_files = Vec::new();
-        let dirs = vec![
-            std::env::var_os("ProgramFiles").map(std::path::PathBuf::from),
-            std::env::var_os("ProgramFiles(x86)").map(std::path::PathBuf::from),
-            std::env::var_os("APPDATA").map(std::path::PathBuf::from),
-            std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from),
-            std::env::var_os("ProgramData").map(std::path::PathBuf::from),
-        ];
-
-        // Convert usn_changes to a HashSet for O(1) filename matching
-        let usn_set: HashSet<String> = usn_changes.into_iter().map(|s| s.to_lowercase()).collect();
-        
-        for dir in dirs.into_iter().flatten() {
-            if !dir.exists() { continue; }
-            for entry in walkdir::WalkDir::new(&dir)
-                .max_depth(4)
-                .into_iter()
-                .filter_map(|e| e.ok())
-            {
-                let path = entry.path();
-                if let Ok(metadata) = path.metadata() {
-                    let modified = metadata.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                    
-                    let is_newer = modified >= session.start_time;
-                    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
-                    
-                    let is_tracked = if !usn_set.is_empty() {
-                        is_newer && usn_set.contains(&filename)
-                    } else {
-                        is_newer
-                    };
-
-                    if is_tracked && crate::winutil::is_safe_to_delete(&path.to_string_lossy()).is_ok() {
-                        new_files.push(path.to_string_lossy().to_string());
-                    }
-                }
-            }
-        }
+        // The USN iterator returns full paths directly. Filter out paths that
+        // PurgeKit must never treat as app-owned remnants (personal folders,
+        // SystemRoot, credential directories).
+        let mut new_files: Vec<String> = usn_changes
+            .into_iter()
+            .filter(|path| crate::winutil::is_safe_remnant_path(path).is_ok())
+            .collect();
 
         // De-duplicate lists
         new_registry_keys.sort();
@@ -1287,6 +1358,7 @@ pub async fn run_bulk_silent_uninstall(
     app: AppHandle,
     app_ids: Vec<String>,
     auto_purge: bool,
+    force_on_failure: Option<bool>,
 ) -> Result<Vec<RemnantItem>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let mut all_apps = scanner::scan_registry();
@@ -1324,7 +1396,7 @@ pub async fn run_bulk_silent_uninstall(
             });
 
             let secure_path = crate::winutil::get_secure_system_path();
-            let uninstall_success = if target_app.is_uwp {
+            let mut uninstall_success = if target_app.is_uwp {
                 if let Some(ref uninst_str) = target_app.uninstall_string {
                     let prefix = "powershell -NoProfile -Command \"Remove-AppxPackage -Package ";
                     if let Some(package_full) = uninst_str.strip_prefix(prefix).and_then(|s| s.strip_suffix('"')) {
@@ -1352,6 +1424,52 @@ pub async fn run_bulk_silent_uninstall(
             } else {
                 false
             };
+
+            if !uninstall_success && force_on_failure.unwrap_or(false) && !target_app.is_uwp {
+                match force_remove_app_sync(
+                    Some(&target_app.display_name),
+                    target_app.install_location.as_deref(),
+                    Some(&target_app.registry_path),
+                    Some(&target_app.hive),
+                ) {
+                    Ok(result) if result.fail == 0 && result.success > 0 => {
+                        uninstall_success = true;
+                        let _ = app.emit("bulk-uninstall-progress", BulkUninstallProgress {
+                            app_id: id.clone(),
+                            app_name: app_name.clone(),
+                            phase: "uninstalling".into(),
+                            current,
+                            total,
+                            message: format!("Force removal fallback completed for {}.", app_name),
+                        });
+                    }
+                    Ok(result) => {
+                        let _ = app.emit("bulk-uninstall-progress", BulkUninstallProgress {
+                            app_id: id.clone(),
+                            app_name: app_name.clone(),
+                            phase: "error".into(),
+                            current,
+                            total,
+                            message: format!(
+                                "Force fallback for {} left {} failure(s): {}",
+                                app_name,
+                                result.fail,
+                                result.errors.first().cloned().unwrap_or_default()
+                            ),
+                        });
+                    }
+                    Err(error) => {
+                        let _ = app.emit("bulk-uninstall-progress", BulkUninstallProgress {
+                            app_id: id.clone(),
+                            app_name: app_name.clone(),
+                            phase: "error".into(),
+                            current,
+                            total,
+                            message: format!("Force fallback failed for {}: {}", app_name, error),
+                        });
+                    }
+                }
+            }
 
             if !uninstall_success {
                 let _ = app.emit("bulk-uninstall-progress", BulkUninstallProgress {
