@@ -763,13 +763,18 @@ pub async fn search_disk_files(
             .ok_or_else(|| "Scan this path before searching its files.".to_string())?
     };
 
-    Ok(scanner::disk_scan::search_cached_files(
-        &index,
-        &query,
-        extension.as_deref(),
-        prefix.as_deref(),
-        limit.unwrap_or(500),
-    ))
+    let limit = limit.unwrap_or(500);
+    tauri::async_runtime::spawn_blocking(move || {
+        scanner::disk_scan::search_cached_files(
+            &index,
+            &query,
+            extension.as_deref(),
+            prefix.as_deref(),
+            limit,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
