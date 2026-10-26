@@ -60,6 +60,10 @@
 }
 
 @layer base {
+  html {
+    color-scheme: dark;
+  }
+
   * {
     border-color: var(--color-border-default);
     scrollbar-width: thin;
@@ -73,6 +77,17 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     overflow: hidden;
+  }
+
+  input[type="checkbox"],
+  input[type="radio"],
+  progress {
+    accent-color: var(--color-accent);
+  }
+
+  ::selection {
+    background-color: rgba(232, 93, 38, 0.35);
+    color: #ffffff;
   }
 
   /* Custom Scrollbar styling */
