@@ -287,7 +287,14 @@ where
     F: FnMut(DiskScanProgress),
 {
     let started = Instant::now();
-    let root_path = crate::winutil::canonicalize_path_safety(root);
+    let expanded_root = crate::winutil::expand_env_strings(root);
+    if !Path::new(&expanded_root).is_absolute() {
+        return Err(format!(
+            "Enter an absolute path to scan (for example C:\\ or C:\\Folder): {}",
+            root
+        ));
+    }
+    let root_path = crate::winutil::canonicalize_path_safety(&expanded_root);
     if !root_path.exists() {
         return Err(format!("Path does not exist: {}", root));
     }
@@ -744,6 +751,15 @@ mod tests {
         assert_eq!(result.duplicate_groups[0].file_count, 2);
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rejects_relative_and_drive_relative_roots() {
+        let cancel = AtomicBool::new(false);
+        for root in [r"C:", r"relative\path", "."] {
+            let result = scan_disk_tree(root, 2, 10, false, &cancel, |_| {});
+            assert!(result.is_err(), "{} should be rejected", root);
+        }
     }
 
     #[test]
