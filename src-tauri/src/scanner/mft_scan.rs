@@ -154,8 +154,12 @@ where
             size_bytes: if is_dir { 0 } else { name_attr.logical_size },
             allocated_bytes: if is_dir {
                 0
+            } else if name_attr.physical_size > 0 {
+                // physical_size already accounts for compression and sparse runs.
+                name_attr.physical_size
             } else {
-                name_attr.physical_size.max(name_attr.logical_size)
+                // Resident data lives inside the MFT record itself.
+                name_attr.logical_size
             },
         };
 
