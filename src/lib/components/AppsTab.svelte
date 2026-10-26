@@ -32,6 +32,9 @@
     is_portable?: boolean;
     is_uninstallable?: boolean;
     requires_admin?: boolean;
+    modify_path?: string | null;
+    release_type?: string | null;
+    is_update?: boolean;
   }
 
   interface RemnantItem {
@@ -503,6 +506,19 @@
       toast.show(`Force remove failed: ${e.toString()}`, "error");
     } finally {
       isForceRemoving = false;
+    }
+  }
+
+  async function runModify(app: InstalledApp) {
+    if (!app.modify_path) return;
+    if (!confirm(`Run the registered Modify command for "${app.display_name}"?\n\n${app.modify_path}`)) {
+      return;
+    }
+    try {
+      await invoke("run_app_command", { command: app.modify_path });
+      toast.show(`Modify command finished for ${app.display_name}.`, "success");
+    } catch (e: any) {
+      toast.show(`Modify command failed: ${e.toString()}`, "error");
     }
   }
 
@@ -1010,6 +1026,9 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                                 : 'bg-surface-bg text-text-secondary border-border-default'}">
                       {appSource(app) === 'registry' ? app.hive : appSource(app).toUpperCase()}
                     </span>
+                    {#if app.is_update}
+                      <span class="ml-1 px-1 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-950/30 text-amber-300 border border-amber-800/40">UPDATE</span>
+                    {/if}
                   </td>
                   
                   <!-- Actions -->
@@ -1043,6 +1062,15 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                           Remove folder
                         </button>
                       {:else if app.uninstall_string}
+                        {#if app.modify_path}
+                          <button
+                            onclick={() => runModify(app)}
+                            title="Run the registered Modify command"
+                            class="px-2.5 py-1.5 rounded-lg bg-surface-bg hover:bg-elevated-bg text-text-secondary hover:text-text-primary transition-all border border-border-default flex items-center gap-1.5 text-xs font-semibold active:scale-95 cursor-pointer"
+                          >
+                            Modify
+                          </button>
+                        {/if}
                         <button
                           onclick={() => openPreflight(app)}
                           title="Uninstall and Deep Clean Remnants"

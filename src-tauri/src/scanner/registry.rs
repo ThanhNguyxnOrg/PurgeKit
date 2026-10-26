@@ -12,6 +12,9 @@ pub struct InstalledApp {
     pub publisher: Option<String>,
     pub uninstall_string: Option<String>,
     pub quiet_uninstall_string: Option<String>,
+    pub modify_path: Option<String>,
+    #[serde(default)]
+    pub release_type: Option<String>,
     pub install_location: Option<String>,
     pub install_date: Option<String>,
     pub display_icon: Option<String>,
@@ -151,6 +154,8 @@ fn scan_uninstall_key(
         let publisher: Option<String> = subkey.get_value("Publisher").ok();
         let uninstall_string: Option<String> = subkey.get_value("UninstallString").ok();
         let quiet_uninstall_string: Option<String> = subkey.get_value("QuietUninstallString").ok();
+        let modify_path: Option<String> = subkey.get_value("ModifyPath").ok();
+        let release_type: Option<String> = subkey.get_value("ReleaseType").ok();
         let mut install_location: Option<String> = subkey.get_value("InstallLocation").ok();
         let install_date: Option<String> = subkey.get_value("InstallDate").ok();
         let mut display_icon: Option<String> = subkey.get_value("DisplayIcon").ok();
@@ -381,6 +386,8 @@ fn scan_uninstall_key(
             publisher,
             uninstall_string,
             quiet_uninstall_string,
+            modify_path,
+            release_type,
             install_location,
             install_date,
             display_icon,

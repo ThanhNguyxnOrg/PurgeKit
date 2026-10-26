@@ -805,6 +805,11 @@ pub async fn run_uninstall_command(uninstall_string: String) -> Result<(), Strin
 }
 
 #[tauri::command]
+pub async fn run_app_command(command: String) -> Result<(), String> {
+    run_uninstall_command(command).await
+}
+
+#[tauri::command]
 pub async fn get_global_cli_packages() -> Result<Vec<GlobalCliPackage>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         Ok(scanner::scan_global_cli_packages())
@@ -1730,6 +1735,8 @@ mod tests {
             publisher: None,
             uninstall_string: uninst.map(|s| s.to_string()),
             quiet_uninstall_string: quiet.map(|s| s.to_string()),
+            modify_path: None,
+            release_type: None,
             install_location: None,
             install_date: None,
             display_icon: None,

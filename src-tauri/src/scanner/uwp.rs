@@ -105,6 +105,8 @@ pub fn scan_uwp_apps() -> Vec<InstalledApp> {
             publisher: raw.publisher_id.clone(),
             uninstall_string: Some(uninstall_string.clone()),
             quiet_uninstall_string: Some(uninstall_string),
+            modify_path: None,
+            release_type: None,
             install_location: Some(loc),
             install_date: None, // PowerShell Get-AppxPackage does not easily return install date without slower commands
             display_icon: None, // Store app icons are resolved using AppxManifest.xml, which we can implement later

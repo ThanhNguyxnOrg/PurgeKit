@@ -18,6 +18,9 @@ pub struct InventoryApp {
     pub is_portable: bool,
     pub is_uninstallable: bool,
     pub requires_admin: bool,
+    pub modify_path: Option<String>,
+    pub release_type: Option<String>,
+    pub is_update: bool,
 }
 
 fn location_requires_admin(location: Option<&str>) -> bool {
@@ -44,15 +47,26 @@ fn wrap(
         "store" | "cli" | "toolchain" | "portable" => true,
         _ => false,
     };
-    let classification = dev_rules::classify(
+    let is_update = source == "registry"
+        && (app.release_type.as_deref().map_or(false, |release| {
+            release.eq_ignore_ascii_case("update") || release.eq_ignore_ascii_case("security update")
+        }) || app.display_name.to_lowercase().starts_with("update for ")
+            || app.display_name.to_lowercase().starts_with("security update"));
+    let mut classification = dev_rules::classify(
         &app.display_name,
         app.publisher.as_deref(),
         app.install_location.as_deref(),
         source,
         managed_by.as_deref(),
     );
+    if is_update && !classification.categories.iter().any(|category| category == "Windows Update") {
+        classification.categories.push("Windows Update".to_string());
+    }
 
     InventoryApp {
+        modify_path: app.modify_path.clone(),
+        release_type: app.release_type.clone(),
+        is_update,
         app,
         source: source.to_string(),
         categories: classification.categories,
@@ -130,6 +144,8 @@ pub fn build_inventory() -> Vec<InventoryApp> {
             publisher: Some(package.manager.clone()),
             uninstall_string: None,
             quiet_uninstall_string: None,
+            modify_path: None,
+            release_type: None,
             install_location: Some(package.path.clone()),
             install_date: None,
             display_icon: None,
@@ -150,6 +166,8 @@ pub fn build_inventory() -> Vec<InventoryApp> {
             publisher: Some(toolchain.manager.clone()),
             uninstall_string: None,
             quiet_uninstall_string: None,
+            modify_path: None,
+            release_type: None,
             install_location: Some(toolchain.path.clone()),
             install_date: None,
             display_icon: None,
@@ -181,6 +199,8 @@ pub fn build_inventory() -> Vec<InventoryApp> {
             publisher: None,
             uninstall_string: None,
             quiet_uninstall_string: None,
+            modify_path: None,
+            release_type: None,
             install_location: Some(portable.path),
             install_date: None,
             display_icon: None,
@@ -217,6 +237,8 @@ mod tests {
             publisher: Some(publisher.to_string()),
             uninstall_string: Some("uninstall.exe".to_string()),
             quiet_uninstall_string: None,
+            modify_path: None,
+            release_type: None,
             install_location: None,
             install_date: None,
             display_icon: None,
