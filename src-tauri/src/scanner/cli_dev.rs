@@ -868,6 +868,9 @@ fn scan_deno_packages(packages: &mut Vec<GlobalCliPackage>) {
                     Some(n) => n,
                     None => continue,
                 };
+                if file_name.ends_with('~') {
+                    continue;
+                }
 
                 let name = if file_name.ends_with(".cmd") {
                     file_name[..file_name.len() - 4].to_string()
@@ -895,6 +898,23 @@ fn scan_deno_packages(packages: &mut Vec<GlobalCliPackage>) {
     }
 }
 
+fn go_binary_name(file_name: &str) -> Option<String> {
+    if file_name.ends_with('~') || !file_name.to_ascii_lowercase().ends_with(".exe") {
+        return None;
+    }
+
+    let stem = &file_name[..file_name.len() - 4];
+    if stem.is_empty() || stem.starts_with('.') {
+        return None;
+    }
+    let stem_lower = stem.to_ascii_lowercase();
+    if [".tmp", ".bak", ".old"].iter().any(|suffix| stem_lower.ends_with(suffix)) {
+        return None;
+    }
+
+    Some(stem.to_string())
+}
+
 fn scan_go_packages(packages: &mut Vec<GlobalCliPackage>) {
     let userprofile = match env::var_os("USERPROFILE").map(PathBuf::from) {
         Some(p) => p,
@@ -915,11 +935,16 @@ fn scan_go_packages(packages: &mut Vec<GlobalCliPackage>) {
                     None => continue,
                 };
 
-                let name = if file_name.ends_with(".exe") {
-                    file_name[..file_name.len() - 4].to_string()
-                } else {
-                    file_name.to_string()
+                let name = match go_binary_name(file_name) {
+                    Some(name) => name,
+                    None => continue,
                 };
+                if packages
+                    .iter()
+                    .any(|package| package.manager == "go" && package.name.eq_ignore_ascii_case(&name))
+                {
+                    continue;
+                }
 
                 let size = path.metadata().map(|m| m.len()).unwrap_or(0);
                 packages.push(GlobalCliPackage {
@@ -1448,6 +1473,17 @@ pub fn get_cli_package_remnants(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn go_binary_name_ignores_backups_and_non_executables() {
+        assert_eq!(go_binary_name("gopls.exe"), Some("gopls".to_string()));
+        assert_eq!(go_binary_name("staticcheck.EXE"), Some("staticcheck".to_string()));
+        assert_eq!(go_binary_name("gopls.exe~"), None);
+        assert_eq!(go_binary_name("notes.txt"), None);
+        assert_eq!(go_binary_name(".exe"), None);
+        assert_eq!(go_binary_name("tool.tmp.exe"), None);
+        assert_eq!(go_binary_name("tool.bak.exe"), None);
+    }
 
     #[test]
     fn test_find_vscode_fallback_path() {
