@@ -115,6 +115,22 @@ fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
         .any(|window| window.eq_ignore_ascii_case(needle))
 }
 
+fn is_under_prefix(path: &str, prefix: &str) -> bool {
+    let prefix = prefix.trim_end_matches(['\\', '/']);
+    if prefix.is_empty() {
+        return true;
+    }
+    let path_bytes = path.as_bytes();
+    let prefix_bytes = prefix.as_bytes();
+    if path_bytes.len() <= prefix_bytes.len() {
+        return false;
+    }
+    if !path_bytes[..prefix_bytes.len()].eq_ignore_ascii_case(prefix_bytes) {
+        return false;
+    }
+    matches!(path_bytes[prefix_bytes.len()], b'\\' | b'/')
+}
+
 fn file_extension(path: &str) -> Option<String> {
     Path::new(path)
         .extension()
@@ -126,16 +142,23 @@ pub fn search_cached_files(
     index: &DiskFileIndex,
     query: &str,
     extension: Option<&str>,
+    prefix: Option<&str>,
     limit: usize,
 ) -> DiskFileSearchResult {
     let query = query.trim();
     let extension = extension
         .map(|value| value.trim().trim_start_matches('.').to_lowercase())
         .filter(|value| !value.is_empty());
+    let prefix = prefix.map(str::trim).filter(|value| !value.is_empty());
     let limit = limit.clamp(1, 2_000);
 
     let mut matches: Vec<&CachedDiskFile> = Vec::new();
     for file in &index.files {
+        if let Some(prefix) = prefix {
+            if !is_under_prefix(&file.path, prefix) {
+                continue;
+            }
+        }
         let file_extension = file_extension(&file.path);
         if let Some(wanted) = extension.as_deref() {
             if !(*file_extension.as_deref().unwrap_or("(none)")).eq_ignore_ascii_case(wanted) {
@@ -768,16 +791,25 @@ mod tests {
         assert_eq!(index.files.len(), 3);
         assert!(index.complete);
 
-        let search = search_cached_files(index, "setup", None, 10);
+        let search = search_cached_files(index, "setup", None, None, 10);
         assert_eq!(search.total_matches, 1);
         assert_eq!(search.files[0].name, "Big_Setup.EXE");
         assert_eq!(search.files[0].extension, "exe");
 
-        let by_extension = search_cached_files(index, "", Some(".TXT"), 10);
+        let by_extension = search_cached_files(index, "", Some(".TXT"), None, 10);
         assert_eq!(by_extension.total_matches, 1);
         assert_eq!(by_extension.files[0].name, "notes.txt");
 
-        let sorted = search_cached_files(index, "", None, 2);
+        let scoped = search_cached_files(
+            index,
+            "",
+            None,
+            Some(&root.join("nested").to_string_lossy()),
+            10,
+        );
+        assert_eq!(scoped.total_matches, 2);
+
+        let sorted = search_cached_files(index, "", None, None, 2);
         assert_eq!(sorted.total_matches, 3);
         assert_eq!(sorted.files.len(), 2);
         assert_eq!(sorted.files[0].name, "Big_Setup.EXE");

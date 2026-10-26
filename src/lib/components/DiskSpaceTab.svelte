@@ -95,6 +95,7 @@
   let tooltip = $state<{ x: number; y: number; node: DiskTreeNode } | null>(null);
   let fileQuery = $state("");
   let fileExtensionFilter = $state<string | null>(null);
+  let fileScope = $state<"all" | "folder">("all");
   let searchResult = $state<DiskFileSearchResult | null>(null);
   let isSearching = $state(false);
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -117,7 +118,11 @@
     searchResult ? searchResult.files : filteredTopFiles
   );
 
-  let isSearchActive = $derived(fileQuery.trim().length > 0 || fileExtensionFilter !== null);
+  let isSearchActive = $derived(
+    fileQuery.trim().length > 0 ||
+      fileExtensionFilter !== null ||
+      (fileScope === "folder" && focusNode !== null)
+  );
 
   const DIR_COLORS = ["#33545A", "#3E5364", "#4B465E", "#5A4B43", "#3C5747", "#45566B"];
   const EXT_COLORS: Record<string, string> = {
@@ -198,6 +203,7 @@
         path: result.root_path,
         query: fileQuery.trim(),
         extension: fileExtensionFilter,
+        prefix: fileScope === "folder" ? focusNode?.path ?? null : null,
         limit: 500,
       });
       if (sequence === searchSequence) {
@@ -226,6 +232,11 @@
     scheduleFileSearch();
   }
 
+  function setFileScope(scope: "all" | "folder") {
+    fileScope = scope;
+    scheduleFileSearch();
+  }
+
   async function scanDisk() {
     const target = pathInput.trim();
     if (!target) {
@@ -243,6 +254,7 @@
     selectedNode = null;
     fileQuery = "";
     fileExtensionFilter = null;
+    fileScope = "all";
     clearFileSearch();
 
     try {
@@ -578,6 +590,13 @@
   });
 
   $effect(() => {
+    if (activeView === "files" && fileScope === "folder") {
+      focusNode;
+      scheduleFileSearch();
+    }
+  });
+
+  $effect(() => {
     if (!canvasEl) return;
     const parent = canvasEl.parentElement;
     if (!parent) return;
@@ -896,6 +915,24 @@
               <X class="w-3 h-3" aria-hidden="true" />
             </button>
           {/if}
+          <div class="flex items-center rounded-lg border border-border-default overflow-hidden" role="group" aria-label="File search scope">
+            <button
+              onclick={() => setFileScope("all")}
+              aria-pressed={fileScope === "all"}
+              class="px-2.5 py-2 text-[11px] font-semibold transition-colors {fileScope === 'all' ? 'bg-accent-subtle text-accent' : 'bg-surface-bg text-text-muted hover:text-text-primary'}"
+            >
+              Whole scan
+            </button>
+            <button
+              onclick={() => setFileScope("folder")}
+              aria-pressed={fileScope === "folder"}
+              disabled={!focusNode}
+              title={focusNode ? `Limit to ${focusNode.path}` : "Open a folder in the treemap first"}
+              class="px-2.5 py-2 text-[11px] font-semibold border-l border-border-default transition-colors disabled:opacity-40 {fileScope === 'folder' ? 'bg-accent-subtle text-accent' : 'bg-surface-bg text-text-muted hover:text-text-primary'}"
+            >
+              This folder
+            </button>
+          </div>
           <button
             onclick={exportTopFilesCsv}
             class="px-3 py-2 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-xs font-semibold text-text-secondary hover:text-text-primary transition-colors"

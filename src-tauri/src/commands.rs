@@ -730,6 +730,9 @@ pub async fn scan_disk_space(
     if let Some(index) = result.file_index.take() {
         let key = index.root_path.to_lowercase();
         if let Ok(mut indexes) = cache.lock() {
+            // The UI searches one scan at a time; dropping older indexes keeps
+            // memory bounded on multi-hundred-thousand-file volumes.
+            indexes.clear();
             indexes.insert(key, std::sync::Arc::new(index));
         }
     }
@@ -743,6 +746,7 @@ pub async fn search_disk_files(
     path: String,
     query: String,
     extension: Option<String>,
+    prefix: Option<String>,
     limit: Option<usize>,
 ) -> Result<scanner::disk_scan::DiskFileSearchResult, String> {
     let key = crate::winutil::canonicalize_path_safety(&path)
@@ -763,6 +767,7 @@ pub async fn search_disk_files(
         &index,
         &query,
         extension.as_deref(),
+        prefix.as_deref(),
         limit.unwrap_or(500),
     ))
 }
