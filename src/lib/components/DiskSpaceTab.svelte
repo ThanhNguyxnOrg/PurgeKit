@@ -30,11 +30,19 @@
     file_count: number;
   }
 
+  interface DuplicateGroup {
+    name: string;
+    size_bytes: number;
+    file_count: number;
+    files: DiskFile[];
+  }
+
   interface DiskScanResult {
     root_path: string;
     root: DiskTreeNode;
     top_files: DiskFile[];
     file_types: FileTypeStat[];
+    duplicate_groups: DuplicateGroup[];
     total_files: number;
     total_dirs: number;
     total_size: number;
@@ -64,13 +72,66 @@
   let focusNode = $state<DiskTreeNode | null>(null);
   let focusStack = $state<DiskTreeNode[]>([]);
   let selectedNode = $state<DiskTreeNode | null>(null);
-  let activeView = $state<"treemap" | "files" | "types">("treemap");
+  let activeView = $state<"treemap" | "files" | "types" | "duplicates">("treemap");
+  let findDuplicates = $state(false);
+  let lastScanHadDuplicates = $state(false);
   let isScanning = $state(false);
   let isCancelling = $state(false);
   let progress = $state<DiskProgress | null>(null);
   let errorMessage = $state("");
   let canvasEl = $state<HTMLCanvasElement | null>(null);
   let layoutRects: LayoutRect[] = [];
+  let hoverPath = $state<string | null>(null);
+  let tooltip = $state<{ x: number; y: number; node: DiskTreeNode } | null>(null);
+  let fileQuery = $state("");
+  let isQuarantining = $state(false);
+
+  let filteredTopFiles = $derived(
+    result
+      ? result.top_files.filter((file) => {
+          const query = fileQuery.trim().toLowerCase();
+          return !query ||
+            file.name.toLowerCase().includes(query) ||
+            file.path.toLowerCase().includes(query) ||
+            file.extension.toLowerCase().includes(query);
+        })
+      : []
+  );
+
+  const DIR_COLORS = ["#33545A", "#3E5364", "#4B465E", "#5A4B43", "#3C5747", "#45566B"];
+  const EXT_COLORS: Record<string, string> = {
+    code: "#3E8C88",
+    web: "#6E6AA8",
+    image: "#B98545",
+    media: "#A85B6B",
+    archive: "#7A6345",
+    document: "#65758C",
+    binary: "#6B7280",
+    other: "#4D6470",
+  };
+  const CODE_EXTENSIONS = new Set(["rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "c", "cc", "cpp", "h", "hpp", "cs", "php", "rb", "swift", "kt", "kts", "sh", "ps1"]);
+  const WEB_EXTENSIONS = new Set(["html", "htm", "css", "scss", "sass", "vue", "svelte", "astro"]);
+  const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp", "avif"]);
+  const MEDIA_EXTENSIONS = new Set(["mp4", "mkv", "avi", "mov", "mp3", "wav", "flac", "ogg", "webm"]);
+  const ARCHIVE_EXTENSIONS = new Set(["zip", "7z", "rar", "tar", "gz", "xz", "bz2", "iso"]);
+  const DOCUMENT_EXTENSIONS = new Set(["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "md", "json", "yaml", "yml", "toml", "xml"]);
+  const BINARY_EXTENSIONS = new Set(["exe", "dll", "msi", "bin", "sys", "lib", "pdb", "node"]);
+
+  function extensionGroup(extension: string): string {
+    const ext = extension.toLowerCase();
+    if (CODE_EXTENSIONS.has(ext)) return "code";
+    if (WEB_EXTENSIONS.has(ext)) return "web";
+    if (IMAGE_EXTENSIONS.has(ext)) return "image";
+    if (MEDIA_EXTENSIONS.has(ext)) return "media";
+    if (ARCHIVE_EXTENSIONS.has(ext)) return "archive";
+    if (DOCUMENT_EXTENSIONS.has(ext)) return "document";
+    if (BINARY_EXTENSIONS.has(ext)) return "binary";
+    return "other";
+  }
+
+  function colorForExtension(extension: string): string {
+    return EXT_COLORS[extensionGroup(extension)] || EXT_COLORS.other;
+  }
 
   function formatBytes(bytes: number): string {
     if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
@@ -104,7 +165,9 @@
         path: target,
         maxDepth: 4,
         maxChildren: 40,
+        findDuplicates,
       });
+      lastScanHadDuplicates = findDuplicates;
       result = scanResult;
       focusStack = [scanResult.root];
       focusNode = scanResult.root;
@@ -186,10 +249,13 @@
     for (const character of node.name) {
       hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
     }
-    const hue = (hash + index * 29) % 360;
-    return node.is_dir
-      ? `hsl(${hue} 45% 32%)`
-      : `hsl(${hue} 38% 24%)`;
+    if (node.is_dir) {
+      return DIR_COLORS[(hash + index) % DIR_COLORS.length];
+    }
+    const extension = node.name.includes(".")
+      ? node.name.split(".").pop() || ""
+      : "";
+    return colorForExtension(extension);
   }
 
   function drawTreemap() {
@@ -232,11 +298,13 @@
 
     layoutRects = binaryTreemap(children, 2, 2, width - 4, height - 4);
     layoutRects.forEach((rect, index) => {
+      const highlighted =
+        rect.node.path === hoverPath || rect.node.path === selectedNode?.path;
       context.fillStyle = colorForNode(rect.node, index);
       context.fillRect(rect.x, rect.y, rect.w, rect.h);
 
-      context.strokeStyle = "rgba(9, 11, 15, 0.85)";
-      context.lineWidth = 1;
+      context.strokeStyle = highlighted ? "#F4F5F7" : "rgba(9, 11, 15, 0.85)";
+      context.lineWidth = highlighted ? 2 : 1;
       context.strokeRect(rect.x + 0.5, rect.y + 0.5, Math.max(0, rect.w - 1), Math.max(0, rect.h - 1));
 
       if (rect.w > 58 && rect.h > 30) {
@@ -262,15 +330,125 @@
     const bounds = canvas.getBoundingClientRect();
     const x = event.clientX - bounds.left;
     const y = event.clientY - bounds.top;
-    const hit = layoutRects.find(
-      (rect) => x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h
-    );
+    const hit = rectAt(x, y);
     if (!hit) return;
 
     selectedNode = hit.node;
     if (hit.node.is_dir && hit.node.children.length > 0) {
       focusStack = [...focusStack, hit.node];
       focusNode = hit.node;
+    }
+  }
+
+  function rectAt(x: number, y: number): LayoutRect | undefined {
+    return layoutRects.find(
+      (rect) => x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h
+    );
+  }
+
+  function handleCanvasMove(event: MouseEvent) {
+    const canvas = canvasEl;
+    if (!canvas) return;
+    const bounds = canvas.getBoundingClientRect();
+    const x = event.clientX - bounds.left;
+    const y = event.clientY - bounds.top;
+    const hit = rectAt(x, y);
+    hoverPath = hit?.node.path || null;
+    tooltip = hit ? { x, y, node: hit.node } : null;
+    canvas.style.cursor = hit ? (hit.node.is_dir ? "zoom-in" : "pointer") : "crosshair";
+  }
+
+  function handleCanvasLeave() {
+    hoverPath = null;
+    tooltip = null;
+  }
+
+  function exportTreemapPng() {
+    if (!canvasEl) return;
+    const link = document.createElement("a");
+    link.href = canvasEl.toDataURL("image/png");
+    link.download = `purgekit_treemap_${new Date().toISOString().slice(0, 10)}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
+  function exportTopFilesCsv() {
+    if (!result || filteredTopFiles.length === 0) {
+      toast.show("No files to export for this filter.", "warning");
+      return;
+    }
+
+    const escapeCsv = (value: string) => `"${value.replace(/"/g, '""')}"`;
+    const rows = [
+      ["Name", "Path", "Extension", "LogicalBytes", "AllocatedBytes"],
+      ...filteredTopFiles.map((file) => [
+        file.name,
+        file.path,
+        file.extension,
+        String(file.size_bytes),
+        String(file.allocated_bytes),
+      ]),
+    ];
+    const csv = "\uFEFF" + rows.map((row) => row.map(escapeCsv).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `purgekit_disk_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  async function quarantineSelected() {
+    const node = selectedNode;
+    if (!node || !result) return;
+    if (node.path === result.root_path) {
+      toast.show("Select a child folder or file first; the scan root is protected.", "warning");
+      return;
+    }
+
+    const confirmed = confirm(
+      `Quarantine "${node.name}"?\n\n` +
+      `${node.path}\n\n` +
+      `The item is moved to PurgeKit quarantine and can be restored from Settings. ` +
+      `The scan result will be cleared.`
+    );
+    if (!confirmed) return;
+
+    isQuarantining = true;
+    try {
+      const response = await invoke<{ success: number; fail: number; errors?: string[] }>(
+        "force_remove_app",
+        {
+          installLocation: node.path,
+          registryPath: null,
+          hive: null,
+        }
+      );
+
+      if (response.fail > 0) {
+        toast.show(
+          `Quarantine failed: ${response.errors?.[0] || "see logs"}`,
+          "error"
+        );
+        return;
+      }
+
+      toast.show(`Quarantined ${node.name}.`, "success");
+      result = null;
+      focusNode = null;
+      focusStack = [];
+      selectedNode = null;
+      hoverPath = null;
+      tooltip = null;
+      layoutRects = [];
+    } catch (e: any) {
+      toast.show(`Quarantine failed: ${e.toString()}`, "error");
+    } finally {
+      isQuarantining = false;
     }
   }
 
@@ -307,6 +485,8 @@
     focusNode;
     activeView;
     canvasEl;
+    hoverPath;
+    selectedNode;
     if (canvasEl && activeView === "treemap") {
       requestAnimationFrame(drawTreemap);
     }
@@ -392,6 +572,15 @@
       >
         C:\
       </button>
+      <label class="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-bg border border-border-default text-xs font-semibold text-text-secondary cursor-pointer select-none">
+        <input
+          type="checkbox"
+          bind:checked={findDuplicates}
+          disabled={isScanning}
+          class="rounded border-border-default text-accent focus:ring-accent bg-surface-bg cursor-pointer w-3.5 h-3.5"
+        />
+        Duplicates
+      </label>
       <button
         onclick={scanDisk}
         disabled={isScanning || !pathInput.trim()}
@@ -428,26 +617,29 @@
 
   <div class="flex-1 overflow-y-auto p-6 space-y-4">
     {#if result}
-      <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <div class="p-4 rounded-lg bg-surface-bg/60 border border-border-default">
-          <span class="text-[10px] uppercase tracking-wider text-text-muted font-mono">Allocated</span>
-          <p class="text-lg font-bold text-text-primary font-mono mt-1">{formatBytes(result.total_allocated)}</p>
+      <div class="instrument-panel grid grid-cols-2 lg:grid-cols-4 divide-x divide-y lg:divide-y-0 divide-border-default overflow-hidden">
+        <div class="px-4 py-3.5">
+          <span class="readout-label">Allocated</span>
+          <p class="readout text-2xl font-semibold text-data-cyan mt-1">{formatBytes(result.total_allocated)}</p>
         </div>
-        <div class="p-4 rounded-lg bg-surface-bg/60 border border-border-default">
-          <span class="text-[10px] uppercase tracking-wider text-text-muted font-mono">Logical</span>
-          <p class="text-lg font-bold text-text-primary font-mono mt-1">{formatBytes(result.total_size)}</p>
+        <div class="px-4 py-3.5">
+          <span class="readout-label">Logical</span>
+          <p class="readout text-2xl font-semibold text-text-primary mt-1">{formatBytes(result.total_size)}</p>
         </div>
-        <div class="p-4 rounded-lg bg-surface-bg/60 border border-border-default">
-          <span class="text-[10px] uppercase tracking-wider text-text-muted font-mono">Files / Folders</span>
-          <p class="text-lg font-bold text-text-primary font-mono mt-1">
-            {result.total_files.toLocaleString()} / {result.total_dirs.toLocaleString()}
+        <div class="px-4 py-3.5">
+          <span class="readout-label">Files / folders</span>
+          <p class="readout text-2xl font-semibold text-text-primary mt-1">
+            {result.total_files.toLocaleString()}
+            <span class="text-base text-text-muted"> / {result.total_dirs.toLocaleString()}</span>
           </p>
         </div>
-        <div class="p-4 rounded-lg bg-surface-bg/60 border border-border-default">
-          <span class="text-[10px] uppercase tracking-wider text-text-muted font-mono">Scan time</span>
-          <p class="text-lg font-bold text-text-primary font-mono mt-1">{(result.elapsed_ms / 1000).toFixed(2)}s</p>
+        <div class="px-4 py-3.5">
+          <span class="readout-label">Scan time</span>
+          <p class="readout text-2xl font-semibold text-text-primary mt-1">
+            {(result.elapsed_ms / 1000).toFixed(2)}<span class="text-base text-text-muted">s</span>
+          </p>
           {#if result.errors > 0}
-            <p class="text-[10px] text-amber-300 mt-1">{result.errors} entries skipped</p>
+            <p class="text-[11px] text-warning mt-1">{result.errors} entries skipped</p>
           {/if}
         </div>
       </div>
@@ -477,7 +669,24 @@
         >
           File types
         </button>
+        <button
+          onclick={() => activeView = "duplicates"}
+          class="px-3 py-2 text-xs font-semibold border-b-2 transition-colors {activeView === 'duplicates' ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-primary'}"
+        >
+          Duplicates
+          {#if findDuplicates}
+            <span class="ml-1 font-mono text-[10px] text-text-muted">({result.duplicate_groups.length})</span>
+          {/if}
+        </button>
         <div class="flex-1"></div>
+        {#if activeView === "treemap"}
+          <button
+            onclick={exportTreemapPng}
+            class="px-3 py-2 text-xs font-semibold text-text-secondary hover:text-text-primary"
+          >
+            Save PNG
+          </button>
+        {/if}
         <button
           onclick={openSelected}
           class="px-3 py-2 text-xs font-semibold text-text-secondary hover:text-text-primary flex items-center gap-1.5"
@@ -502,8 +711,33 @@
           <span class="text-text-muted font-mono ml-2">{formatBytes(nodeWeight(focusNode || result.root))}</span>
         </div>
 
-        <div class="relative w-full h-[520px] border border-border-default rounded-lg overflow-hidden bg-app-bg">
-          <canvas bind:this={canvasEl} onclick={handleCanvasClick} class="block w-full h-full cursor-crosshair"></canvas>
+        <div
+          class="relative w-full h-[520px] border border-border-default rounded-lg overflow-hidden bg-app-bg"
+          role="img"
+          aria-label="Treemap of {focusNode ? focusNode.path : result.root_path}. Use the Largest files tab for a keyboard-accessible list."
+        >
+          <canvas
+            bind:this={canvasEl}
+            onclick={handleCanvasClick}
+            onmousemove={handleCanvasMove}
+            onmouseleave={handleCanvasLeave}
+            aria-hidden="true"
+            class="block w-full h-full cursor-crosshair"
+          ></canvas>
+
+          {#if tooltip}
+            <div
+              class="absolute z-10 pointer-events-none max-w-[320px] rounded-md border border-border-strong bg-elevated-bg/95 px-2.5 py-2 shadow-xl"
+              style="left: {tooltip.x + 12}px; top: {tooltip.y + 12}px"
+            >
+              <span class="block text-[11px] font-semibold text-text-primary break-all">{tooltip.node.name}</span>
+              <span class="block text-[10px] font-mono text-text-muted mt-0.5 break-all">{tooltip.node.path}</span>
+              <span class="block text-[10px] font-mono text-data-cyan mt-1">
+                {formatBytes(nodeWeight(tooltip.node))} · {tooltip.node.file_count.toLocaleString()} files
+                {#if tooltip.node.is_dir}· click to zoom{:else}· click to select{/if}
+              </span>
+            </div>
+          {/if}
         </div>
 
         <div class="flex flex-wrap items-center justify-between gap-3 text-xs">
@@ -511,17 +745,56 @@
             <Folder class="w-3.5 h-3.5 text-accent" />
             <span class="break-all">{selectedNode ? selectedNode.path : (focusNode ? focusNode.path : "")}</span>
           </div>
-          {#if selectedNode}
-            <span class="font-mono text-text-secondary">
-              {formatBytes(nodeWeight(selectedNode))} · {selectedNode.file_count.toLocaleString()} files
+          <div class="flex items-center gap-2">
+            {#if selectedNode}
+              <span class="font-mono text-text-secondary">
+                {formatBytes(nodeWeight(selectedNode))} · {selectedNode.file_count.toLocaleString()} files
+              </span>
+              <button
+                onclick={quarantineSelected}
+                disabled={isQuarantining}
+                class="px-2.5 py-1.5 rounded-md bg-danger/10 hover:bg-danger text-danger hover:text-white border border-danger/20 text-[11px] font-semibold transition-colors disabled:opacity-40"
+              >
+                {isQuarantining ? "Quarantining…" : "Quarantine"}
+              </button>
+            {/if}
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-3 text-[11px] text-text-muted">
+          <span class="font-mono">Click to zoom or select · hover for details</span>
+          <span class="text-border-strong">/</span>
+          <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-sm" style="background: {DIR_COLORS[0]}"></span>folder</span>
+          {#each result.file_types.slice(0, 6) as type}
+            <span class="flex items-center gap-1.5">
+              <span class="w-2 h-2 rounded-sm" style="background: {colorForExtension(type.extension)}"></span>
+              {type.extension || "(none)"}
             </span>
-          {/if}
+          {/each}
         </div>
       {:else if activeView === "files"}
+        <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+          <input
+            bind:value={fileQuery}
+            placeholder="Filter top files by name, path or extension…"
+            aria-label="Filter largest files"
+            class="flex-1 px-3 py-2 rounded-lg bg-surface-bg border border-border-default focus:border-accent/50 focus:ring-1 focus:ring-accent/30 outline-none text-xs text-text-primary placeholder:text-text-muted"
+          />
+          <button
+            onclick={exportTopFilesCsv}
+            class="px-3 py-2 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-xs font-semibold text-text-secondary hover:text-text-primary transition-colors"
+          >
+            Export CSV
+          </button>
+          <span class="text-[11px] font-mono text-text-muted self-center">
+            {filteredTopFiles.length} / {result.top_files.length} shown
+          </span>
+        </div>
+
         <div class="border border-border-default rounded-lg overflow-hidden">
           <div class="overflow-x-auto">
             <table class="w-full text-left text-xs min-w-[620px]">
-              <thead class="bg-sidebar-bg text-text-muted uppercase tracking-wider font-mono">
+              <thead class="bg-sidebar-bg text-text-muted uppercase tracking-wider font-mono sticky top-0 z-10">
                 <tr>
                   <th class="px-4 py-3">File</th>
                   <th class="px-4 py-3">Extension</th>
@@ -530,27 +803,36 @@
                 </tr>
               </thead>
               <tbody class="divide-y divide-border-default">
-                {#each result.top_files as file}
+                {#each filteredTopFiles as file}
                   <tr class="hover:bg-elevated-bg/50 cursor-pointer" onclick={() => openFileFolder(file)}>
                     <td class="px-4 py-2.5">
                       <span class="text-text-primary font-mono break-all">{file.name}</span>
-                      <span class="block text-[10px] text-text-muted font-mono truncate max-w-[560px]" title={file.path}>{file.path}</span>
+                      <span class="block text-[11px] text-text-muted font-mono truncate max-w-[560px]" title={file.path}>{file.path}</span>
                     </td>
                     <td class="px-4 py-2.5 font-mono text-text-secondary">{file.extension}</td>
                     <td class="px-4 py-2.5 text-right font-mono text-text-primary">{formatBytes(file.allocated_bytes)}</td>
                     <td class="px-4 py-2.5 text-right font-mono text-text-muted">{formatBytes(file.size_bytes)}</td>
+                  </tr>
+                {:else}
+                  <tr>
+                    <td colspan="4" class="px-4 py-8 text-center text-text-muted">
+                      No top files match this filter.
+                    </td>
                   </tr>
                 {/each}
               </tbody>
             </table>
           </div>
         </div>
-      {:else}
+      {:else if activeView === "types"}
         <div class="border border-border-default rounded-lg bg-surface-bg/40 p-4 space-y-3">
           {#each result.file_types as type}
             <div>
-              <div class="flex items-center justify-between text-xs font-mono">
-                <span class="text-text-primary">{type.extension || "(none)"}</span>
+              <div class="flex items-center justify-between text-xs font-mono gap-3">
+                <span class="flex items-center gap-2 text-text-primary">
+                  <span class="w-2.5 h-2.5 rounded-sm" style="background: {colorForExtension(type.extension)}"></span>
+                  {type.extension || "(none)"}
+                </span>
                 <span class="text-text-muted">
                   {formatBytes(type.size_bytes)} · {type.file_count.toLocaleString()} files ·
                   {result.total_allocated > 0 ? ((type.size_bytes / result.total_allocated) * 100).toFixed(1) : "0.0"}%
@@ -558,13 +840,54 @@
               </div>
               <div class="h-2 bg-app-bg rounded-full overflow-hidden mt-1">
                 <div
-                  class="h-full bg-accent/70 rounded-full"
-                  style="width: {result.total_allocated > 0 ? Math.max(1, (type.size_bytes / result.total_allocated) * 100) : 0}%"
+                  class="h-full rounded-full"
+                  style="width: {result.total_allocated > 0 ? Math.max(1, (type.size_bytes / result.total_allocated) * 100) : 0}%; background: {colorForExtension(type.extension)}"
                 ></div>
               </div>
             </div>
           {/each}
         </div>
+      {:else}
+        {#if !lastScanHadDuplicates}
+          <div class="p-6 border border-dashed border-border-default rounded-lg bg-surface-bg/20 text-center text-xs text-text-muted">
+            Enable the <b class="text-text-secondary">Duplicates</b> option and scan again to compare files by name + size.
+          </div>
+        {:else if result.duplicate_groups.length === 0}
+          <div class="p-6 border border-dashed border-border-default rounded-lg bg-surface-bg/20 text-center text-xs text-text-muted">
+            No duplicate groups found (same name + size).
+          </div>
+        {:else}
+          <div class="space-y-3">
+            {#each result.duplicate_groups as group}
+              <div class="instrument-panel p-3.5 space-y-2">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <div class="flex items-center gap-2 min-w-0">
+                    <File class="w-4 h-4 text-text-muted flex-shrink-0" />
+                    <span class="text-sm font-semibold text-text-primary truncate" title={group.name}>{group.name}</span>
+                    <span class="text-[10px] font-mono text-text-muted">{group.file_count} copies</span>
+                  </div>
+                  <span class="readout text-xs text-data-cyan">
+                    {formatBytes(group.size_bytes)} each · {formatBytes(group.size_bytes * (group.file_count - 1))} waste
+                  </span>
+                </div>
+                <div class="space-y-1">
+                  {#each group.files as file}
+                    <button
+                      onclick={() => openFileFolder(file)}
+                      class="w-full text-left px-2 py-1.5 rounded bg-app-bg/60 hover:bg-elevated-bg text-[11px] font-mono text-text-muted hover:text-text-primary transition-colors break-all"
+                      title={file.path}
+                    >
+                      {file.path}
+                    </button>
+                  {/each}
+                  {#if group.file_count > group.files.length}
+                    <span class="block text-[10px] text-text-muted px-2">+{group.file_count - group.files.length} more copies</span>
+                  {/if}
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
       {/if}
     {:else}
       <div class="flex flex-col items-center justify-center h-80 border border-dashed border-border-default rounded-xl bg-surface-bg/20 text-center gap-3">

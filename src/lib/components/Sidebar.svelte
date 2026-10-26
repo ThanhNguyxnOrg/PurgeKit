@@ -35,6 +35,9 @@
       {@const Icon = item.icon}
       <button
         onclick={() => activeTab = item.id}
+        aria-label={item.label}
+        aria-current={activeTab === item.id ? "page" : undefined}
+        title={item.label}
         class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 group/btn relative overflow-hidden
           {activeTab === item.id
             ? 'text-accent bg-accent-subtle border-accent/20'
@@ -45,8 +48,11 @@
           <div class="absolute left-0 top-2 bottom-2 w-1 bg-accent rounded-r-md"></div>
         {/if}
 
-        <Icon class="w-5 h-5 flex-shrink-0 transition-transform duration-200 group-hover/btn:scale-105
-          {activeTab === item.id ? 'text-accent' : 'text-text-secondary group-hover/btn:text-text-primary'}" />
+        <Icon
+          aria-hidden="true"
+          class="w-5 h-5 flex-shrink-0 transition-transform duration-200 group-hover/btn:scale-105
+          {activeTab === item.id ? 'text-accent' : 'text-text-secondary group-hover/btn:text-text-primary'}"
+        />
         
         <span class="opacity-0 group-hover/sidebar:opacity-100 transition-opacity duration-200 delay-75 whitespace-nowrap font-sans font-normal">
           {item.label}
@@ -59,6 +65,9 @@
   <div class="p-2 border-t border-border-default">
     <button
       onclick={() => activeTab = 'settings'}
+      aria-label="Settings"
+      aria-current={activeTab === 'settings' ? "page" : undefined}
+      title="Settings"
       class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 group/btn relative overflow-hidden
         {activeTab === 'settings'
           ? 'text-accent bg-accent-subtle border-accent/20'
@@ -68,8 +77,11 @@
         <div class="absolute left-0 top-2 bottom-2 w-1 bg-accent rounded-r-md"></div>
       {/if}
 
-      <Settings class="w-5 h-5 flex-shrink-0 transition-transform duration-200 group-hover/btn:rotate-45
-        {activeTab === 'settings' ? 'text-accent' : 'text-text-secondary group-hover/btn:text-text-primary'}" />
+      <Settings
+        aria-hidden="true"
+        class="w-5 h-5 flex-shrink-0 transition-transform duration-200 group-hover/btn:rotate-45
+        {activeTab === 'settings' ? 'text-accent' : 'text-text-secondary group-hover/btn:text-text-primary'}"
+      />
       
       <span class="opacity-0 group-hover/sidebar:opacity-100 transition-opacity duration-200 delay-75 whitespace-nowrap font-sans font-normal">
         Settings

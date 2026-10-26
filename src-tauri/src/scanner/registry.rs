@@ -172,6 +172,14 @@ fn scan_uninstall_key(
                 }
             }
         }
+
+        if install_location.is_none() {
+            install_location = infer_install_location(
+                uninstall_string.as_deref(),
+                display_icon.as_deref(),
+                display_name,
+            );
+        }
         
         let mut icon_base64 = None;
         if let Some(ref icon_path) = display_icon {
@@ -386,6 +394,67 @@ fn scan_uninstall_key(
     }
 }
 
+fn clean_icon_path(icon: &str) -> String {
+    let cleaned = icon.trim().trim_matches('"');
+    if let Some((path, suffix)) = cleaned.rsplit_once(',') {
+        if suffix.chars().all(|character| character.is_ascii_digit()) {
+            return path.to_string();
+        }
+    }
+    cleaned.to_string()
+}
+
+fn infer_install_location(
+    uninstall_string: Option<&str>,
+    display_icon: Option<&str>,
+    display_name: &str,
+) -> Option<String> {
+    let name_words: Vec<String> = display_name
+        .to_lowercase()
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|word| word.len() >= 3)
+        .map(|word| word.to_string())
+        .collect();
+
+    for candidate in [uninstall_string, display_icon].into_iter().flatten() {
+        let command = clean_icon_path(candidate);
+        let Some(executable) = crate::scanner::registry::get_executable_from_uninstall_string(&command)
+        else {
+            continue;
+        };
+        let path = Path::new(executable.trim().trim_matches('"'));
+        if !path.is_file() {
+            continue;
+        }
+        let Some(parent) = path.parent() else {
+            continue;
+        };
+        if crate::winutil::is_safe_remnant_path(&parent.to_string_lossy()).is_err() {
+            continue;
+        }
+        let folder = parent
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        if folder.is_empty() {
+            continue;
+        }
+        let folder_tokens: Vec<&str> = folder
+            .split(|character: char| !character.is_alphanumeric())
+            .filter(|token| token.len() >= 3)
+            .collect();
+        let matches_name = name_words.iter().any(|word| {
+            folder.contains(word) || folder_tokens.iter().any(|token| token.contains(word))
+        });
+        if matches_name {
+            return Some(parent.to_string_lossy().to_string());
+        }
+    }
+
+    None
+}
+
 fn get_msi_product_property(product_code: &str, property_name: &str) -> Option<String> {
     use std::os::windows::ffi::OsStrExt;
     use std::ffi::OsString;
@@ -488,6 +557,23 @@ mod tests {
             get_executable_from_uninstall_string(""),
             None
         );
+    }
+
+    #[test]
+    fn test_infer_install_location_from_uninstall_string() {
+        let root = std::env::temp_dir().join("purgekit_infer_location_test");
+        let app_dir = root.join("My App");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&app_dir).unwrap();
+        let uninstaller = app_dir.join("uninstall.exe");
+        std::fs::write(&uninstaller, b"stub").unwrap();
+
+        let command = format!("\"{}\" /S", uninstaller.to_string_lossy());
+        let inferred = infer_install_location(Some(&command), None, "My App");
+        assert!(inferred.is_some(), "expected inferred install location");
+        assert!(inferred.unwrap().to_lowercase().contains("my app"));
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

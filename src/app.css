@@ -1,33 +1,62 @@
 @import "tailwindcss";
 
 @theme {
-  --color-app-bg: #0D0D10;
-  --color-sidebar-bg: #111114;
-  --color-surface-bg: #18181B;
-  --color-elevated-bg: #1F1F23;
-  --color-overlay-bg: rgba(13, 13, 16, 0.6);
-  
-  --color-border-default: #27272A;
-  --color-border-subtle: #1F1F23;
-  --color-border-strong: #3F3F46;
-  
-  --color-text-primary: #FAFAFA;
-  --color-text-secondary: #A1A1AA;
-  --color-text-muted: #71717A;
-  --color-text-disabled: #52525B;
-  
-  --color-accent: #E85D26;
-  --color-accent-hover: #D4501F;
-  --color-accent-subtle: rgba(232, 93, 38, 0.12);
-  
-  --color-success: #22C55E;
-  --color-warning: #F59E0B;
-  --color-danger: #EF4444;
-  --color-info: #3B82F6;
-  --color-brand-purple: #A855F7;
+  --color-app-bg: #0B0D10;
+  --color-sidebar-bg: #101318;
+  --color-surface-bg: #15191F;
+  --color-elevated-bg: #1C222A;
+  --color-overlay-bg: rgba(8, 10, 13, 0.72);
+
+  --color-border-default: #2A313B;
+  --color-border-subtle: #1B2028;
+  --color-border-strong: #46505F;
+
+  --color-text-primary: #F4F5F7;
+  --color-text-secondary: #B2BAC6;
+  --color-text-muted: #8C96A5;
+  --color-text-disabled: #606A78;
+
+  --color-accent: #F26B3A;
+  --color-accent-hover: #DB582B;
+  --color-accent-subtle: rgba(242, 107, 58, 0.12);
+
+  --color-success: #5FD39A;
+  --color-warning: #F2B84B;
+  --color-danger: #F26868;
+  --color-info: #5BC8D8;
+  --color-brand-purple: #B28CFF;
+
+  --color-data-cyan: #5BC8D8;
+  --color-data-green: #6FD3A3;
+  --color-data-amber: #E7B45A;
+  --color-data-rose: #D77A8A;
 
   --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+@layer components {
+  .instrument-panel {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 38%),
+      var(--color-surface-bg);
+    border: 1px solid var(--color-border-default);
+    border-radius: 0.5rem;
+  }
+
+  .readout {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+
+  .readout-label {
+    font-family: var(--font-mono);
+    font-size: 0.625rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+  }
 }
 
 @layer base {
@@ -69,6 +98,20 @@
   input:focus, select:focus, textarea:focus {
     outline: none;
     border-color: var(--color-accent);
+  }
+
+  :where(button, a, input, select, textarea, [tabindex]):focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }
 

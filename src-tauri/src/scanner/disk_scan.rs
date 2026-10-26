@@ -46,11 +46,20 @@ pub struct FileTypeStat {
 }
 
 #[derive(Debug, Serialize, Clone)]
+pub struct DuplicateGroup {
+    pub name: String,
+    pub size_bytes: u64,
+    pub file_count: usize,
+    pub files: Vec<DiskFile>,
+}
+
+#[derive(Debug, Serialize, Clone)]
 pub struct DiskScanResult {
     pub root_path: String,
     pub root: DiskTreeNode,
     pub top_files: Vec<DiskFile>,
     pub file_types: Vec<FileTypeStat>,
+    pub duplicate_groups: Vec<DuplicateGroup>,
     pub total_files: u64,
     pub total_dirs: u64,
     pub total_size: u64,
@@ -141,6 +150,7 @@ pub fn scan_disk_tree<F>(
     root: &str,
     max_depth: u32,
     max_children: usize,
+    find_duplicates: bool,
     cancel: &AtomicBool,
     mut on_progress: F,
 ) -> Result<DiskScanResult, String>
@@ -372,6 +382,59 @@ where
     file_types.sort_by_key(|stat| Reverse(stat.size_bytes));
     file_types.truncate(20);
 
+    let duplicate_groups = if find_duplicates {
+        let mut grouped: HashMap<(u64, String), Vec<usize>> = HashMap::new();
+        for (index, node) in nodes.iter().enumerate().skip(1) {
+            if node.is_dir || node.size_bytes == 0 {
+                continue;
+            }
+            grouped
+                .entry((node.size_bytes, node.name.to_lowercase()))
+                .or_default()
+                .push(index);
+        }
+
+        let mut groups: Vec<DuplicateGroup> = grouped
+            .into_iter()
+            .filter(|(_, indices)| indices.len() > 1)
+            .map(|((size_bytes, name), mut indices)| {
+                indices.sort_by_key(|index| Reverse(nodes[*index].allocated_bytes));
+                let file_count = indices.len();
+                let files = indices
+                    .into_iter()
+                    .take(25)
+                    .map(|index| {
+                        let node = &nodes[index];
+                        DiskFile {
+                            name: node.name.clone(),
+                            path: node.path.clone(),
+                            extension: node.extension.clone(),
+                            size_bytes: node.size_bytes,
+                            allocated_bytes: node.allocated_bytes,
+                        }
+                    })
+                    .collect();
+                DuplicateGroup {
+                    name,
+                    size_bytes,
+                    file_count,
+                    files,
+                }
+            })
+            .collect();
+        groups.sort_by_key(|group| {
+            Reverse(
+                group
+                    .size_bytes
+                    .saturating_mul(group.file_count.saturating_sub(1) as u64),
+            )
+        });
+        groups.truncate(500);
+        groups
+    } else {
+        Vec::new()
+    };
+
     let total_files = file_total;
     let total_dirs = dir_total;
     let total_size = root_node.size_bytes;
@@ -382,6 +445,7 @@ where
         root: root_node,
         top_files,
         file_types,
+        duplicate_groups,
         total_files,
         total_dirs,
         total_size,
@@ -413,6 +477,7 @@ mod tests {
             &root.to_string_lossy(),
             3,
             20,
+            false,
             &cancel,
             |_progress| {},
         )
@@ -435,7 +500,7 @@ mod tests {
         let root = std::env::var("PURGEKIT_DISK_SMOKE")
             .unwrap_or_else(|_| r"D:\Code\PurgeKit\src-tauri\src".to_string());
         let cancel = AtomicBool::new(false);
-        let result = scan_disk_tree(&root, 4, 40, &cancel, |_| {}).unwrap();
+        let result = scan_disk_tree(&root, 4, 40, true, &cancel, |_| {}).unwrap();
         println!(
             "disk smoke: {} files, {} dirs, {} logical, {} allocated, {} ms, truncated={}",
             result.total_files,
@@ -454,11 +519,28 @@ mod tests {
     }
 
     #[test]
+    fn finds_name_and_size_duplicates() {
+        let root = std::env::temp_dir().join("purgekit_disk_duplicate_test");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("a")).unwrap();
+        fs::create_dir_all(root.join("b")).unwrap();
+        fs::write(root.join("a\\copy.txt"), b"0123456789").unwrap();
+        fs::write(root.join("b\\copy.txt"), b"0123456789").unwrap();
+
+        let cancel = AtomicBool::new(false);
+        let result = scan_disk_tree(&root.to_string_lossy(), 3, 20, true, &cancel, |_| {}).unwrap();
+        assert_eq!(result.duplicate_groups.len(), 1);
+        assert_eq!(result.duplicate_groups[0].file_count, 2);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn reports_cancelled_scan() {
         let cancel = AtomicBool::new(true);
         let root = std::env::temp_dir().join("purgekit_disk_scan_cancel_test");
         let _ = fs::create_dir_all(&root);
-        let result = scan_disk_tree(&root.to_string_lossy(), 2, 10, &cancel, |_| {});
+        let result = scan_disk_tree(&root.to_string_lossy(), 2, 10, false, &cancel, |_| {});
         assert!(result.is_err());
         let _ = fs::remove_dir_all(&root);
     }

@@ -529,6 +529,7 @@ pub async fn scan_disk_space(
     path: String,
     max_depth: Option<u32>,
     max_children: Option<usize>,
+    find_duplicates: Option<bool>,
 ) -> Result<scanner::DiskScanResult, String> {
     state.0.store(false, Ordering::Relaxed);
     let cancel = state.0.clone();
@@ -539,6 +540,7 @@ pub async fn scan_disk_space(
             &path,
             max_depth.unwrap_or(4),
             max_children.unwrap_or(40),
+            find_duplicates.unwrap_or(false),
             &cancel,
             move |progress| {
                 let _ = app_handle.emit("disk-scan-progress", progress);

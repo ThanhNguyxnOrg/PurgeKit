@@ -226,6 +226,41 @@
   );
   let bulkableVisibleCount = $derived(filteredApps.filter(canBulkUninstall).length);
 
+  let remnantGroups = $derived(
+    [
+      { type: "Directory", label: "Folders" },
+      { type: "File", label: "Files" },
+      { type: "RegistryKey", label: "Registry keys" },
+      { type: "RegistryValue", label: "Registry values" },
+      { type: "ScheduledTask", label: "Scheduled tasks" },
+    ]
+      .map((group) => ({
+        ...group,
+        items: remnants.filter((item) => item.item_type === group.type),
+      }))
+      .filter((group) => group.items.length > 0)
+  );
+
+  function selectGroup(type: string, selected: boolean) {
+    remnants
+      .filter((item) => item.item_type === type)
+      .forEach((item) => {
+        selectedRemnants[item.path] = selected;
+      });
+  }
+
+  function remnantReason(item: RemnantItem): string {
+    if (item.item_type === "ScheduledTask") return "Task references this app or its install path";
+    if (item.item_type === "RegistryKey" || item.item_type === "RegistryValue") {
+      return item.path.toLowerCase().includes("\\uninstall\\")
+        ? "Registered uninstall entry"
+        : "Name/path-matched registry trace";
+    }
+    return item.confidence === "VeryHigh"
+      ? "Strong install-location match"
+      : "Name-matched leftover in a scanned location";
+  }
+
   // Helper to format file size
   function formatSize(bytes: number | null): string {
     if (bytes === null || bytes <= 0 || isNaN(bytes)) return "Unknown";
@@ -707,7 +742,35 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
     clearAppSelection();
     loadApps();
   }
+
+  function handleGlobalKeydown(event: KeyboardEvent) {
+    if (event.key !== "Escape") return;
+
+    if (preflightApp && !isForceRemoving) {
+      event.preventDefault();
+      closePreflight();
+      return;
+    }
+
+    if (
+      activeApp &&
+      !isPurging &&
+      uninstallStep !== "uninstalling" &&
+      uninstallStep !== "scanning"
+    ) {
+      event.preventDefault();
+      closeRemnantsModal();
+      return;
+    }
+
+    if (isBulkUninstalling && bulkUninstallStep !== "running") {
+      event.preventDefault();
+      closeBulkModal();
+    }
+  }
 </script>
+
+<svelte:window onkeydown={handleGlobalKeydown} />
 
 <div class="flex-1 flex flex-col h-full bg-app-bg text-text-primary relative">
   <!-- Section Header -->
@@ -1007,11 +1070,16 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
 
   <!-- Uninstall Preflight Modal -->
   {#if preflightApp}
-    <div class="fixed inset-0 z-50 bg-overlay-bg backdrop-blur-md flex items-center justify-center p-4">
+    <div
+      class="fixed inset-0 z-50 bg-overlay-bg backdrop-blur-md flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="preflight-title"
+    >
       <div class="bg-surface-bg border border-border-default w-full max-w-xl rounded-xl flex flex-col max-h-[88vh] shadow-2xl relative overflow-hidden animate-scale-up duration-200">
         <header class="p-6 border-b border-border-default flex items-start justify-between gap-4">
           <div>
-            <h3 class="text-base font-bold text-text-primary">Confirm uninstall</h3>
+            <h3 id="preflight-title" class="text-base font-bold text-text-primary">Confirm uninstall</h3>
             <p class="text-xs text-text-muted mt-1">
               Review exactly what PurgeKit will run before anything is removed.
             </p>
@@ -1154,12 +1222,17 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
 
   <!-- Remnants Modal Overlay -->
   {#if activeApp}
-    <div class="fixed inset-0 z-50 bg-overlay-bg backdrop-blur-md flex items-center justify-center p-4">
+    <div
+      class="fixed inset-0 z-50 bg-overlay-bg backdrop-blur-md flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="remnants-title"
+    >
       <div class="bg-surface-bg border border-border-default w-full max-w-2xl rounded-xl flex flex-col max-h-[85vh] shadow-2xl relative overflow-hidden animate-scale-up duration-200">
         <!-- Header -->
         <header class="p-6 border-b border-border-default flex items-center justify-between">
           <div>
-            <h3 class="text-base font-bold text-text-primary">
+            <h3 id="remnants-title" class="text-base font-bold text-text-primary">
               Deep Clean remnants for: <span class="text-accent">{activeApp.display_name}</span>
             </h3>
             <p class="text-xs text-text-muted mt-1">Review files, directories, and registry keys to be permanently purged.</p>
@@ -1242,53 +1315,70 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                 </span>
               </div>
 
-              <!-- List -->
-              <div class="space-y-2">
-                {#each remnants as item}
-                  <button
-                    onclick={() => toggleSelection(item.path)}
-                    class="w-full flex items-start gap-3 p-3 rounded-lg border text-left transition-all hover:bg-elevated-bg/50
-                      {selectedRemnants[item.path] ? 'bg-accent-subtle/30 border-accent/20' : 'bg-surface-bg border-border-default'}"
-                  >
-                    <div class="mt-0.5 text-accent flex-shrink-0">
-                      {#if selectedRemnants[item.path]}
-                        <CheckSquare class="w-4 h-4 text-accent" />
-                      {:else}
-                        <Square class="w-4 h-4 text-text-muted" />
-                      {/if}
-                    </div>
-
-                    <div class="w-8 h-8 rounded bg-app-bg border border-border-default flex items-center justify-center text-text-secondary flex-shrink-0">
-                      {#if item.item_type === 'Directory'}
-                        <Folder class="w-4.5 h-4.5 text-warning" />
-                      {:else if item.item_type === 'RegistryKey'}
-                        <Database class="w-4.5 h-4.5 text-brand-purple" />
-                      {:else}
-                        <File class="w-4.5 h-4.5 text-info" />
-                      {/if}
-                    </div>
-
-                    <div class="flex-1 min-w-0">
-                      <span class="block text-xs font-mono font-medium text-text-primary break-all">{item.path}</span>
-                      <div class="flex flex-wrap items-center gap-2 mt-1">
-                        <span class="text-[9px] font-mono uppercase px-1 rounded bg-app-bg border border-border-default text-text-muted">
-                          {item.item_type}
-                        </span>
-                        {#if item.size > 0}
-                          <span class="text-[9px] font-mono text-text-muted">{formatSize(item.size)}</span>
-                        {/if}
-                        <span class="text-[9px] font-mono px-1 rounded border font-semibold
-                          {item.confidence === 'VeryHigh' ? 'bg-emerald-950/30 text-emerald-400 border-emerald-800/40' : ''}
-                          {item.confidence === 'High' ? 'bg-blue-950/30 text-blue-400 border-blue-800/40' : ''}
-                          {item.confidence === 'Medium' ? 'bg-amber-950/30 text-amber-400 border-amber-800/40' : ''}
-                          {item.confidence === 'Low' ? 'bg-rose-950/30 text-rose-400 border-rose-800/40' : ''}"
-                        >
-                          {item.confidence} ({item.score}%)
-                        </span>
+              <!-- Grouped list -->
+              <div class="space-y-4">
+                {#each remnantGroups as group}
+                  <section class="space-y-2">
+                    <div class="flex items-center justify-between gap-3">
+                      <h4 class="text-[11px] font-mono uppercase tracking-wider text-text-muted">
+                        {group.label} <span class="text-text-secondary">({group.items.length})</span>
+                      </h4>
+                      <div class="flex items-center gap-2 text-[10px]">
+                        <button onclick={() => selectGroup(group.type, true)} class="text-accent hover:text-accent-hover font-semibold">All</button>
+                        <span class="text-border-default">|</span>
+                        <button onclick={() => selectGroup(group.type, false)} class="text-text-muted hover:text-text-primary font-semibold">None</button>
                       </div>
                     </div>
 
-                  </button>
+                    {#each group.items as item}
+                      <button
+                        onclick={() => toggleSelection(item.path)}
+                        class="w-full flex items-start gap-3 p-3 rounded-lg border text-left transition-all hover:bg-elevated-bg/50
+                          {selectedRemnants[item.path] ? 'bg-accent-subtle/30 border-accent/20' : 'bg-surface-bg border-border-default'}"
+                      >
+                        <div class="mt-0.5 text-accent flex-shrink-0">
+                          {#if selectedRemnants[item.path]}
+                            <CheckSquare class="w-4 h-4 text-accent" />
+                          {:else}
+                            <Square class="w-4 h-4 text-text-muted" />
+                          {/if}
+                        </div>
+
+                        <div class="w-8 h-8 rounded bg-app-bg border border-border-default flex items-center justify-center text-text-secondary flex-shrink-0">
+                          {#if item.item_type === 'Directory'}
+                            <Folder class="w-4.5 h-4.5 text-warning" />
+                          {:else if item.item_type === 'RegistryKey' || item.item_type === 'RegistryValue'}
+                            <Database class="w-4.5 h-4.5 text-brand-purple" />
+                          {:else if item.item_type === 'ScheduledTask'}
+                            <RefreshCw class="w-4.5 h-4.5 text-info" />
+                          {:else}
+                            <File class="w-4.5 h-4.5 text-info" />
+                          {/if}
+                        </div>
+
+                        <div class="flex-1 min-w-0">
+                          <span class="block text-xs font-mono font-medium text-text-primary break-all">{item.path}</span>
+                          <span class="block text-[10px] text-text-muted mt-1">{remnantReason(item)}</span>
+                          <div class="flex flex-wrap items-center gap-2 mt-1">
+                            <span class="text-[9px] font-mono uppercase px-1 rounded bg-app-bg border border-border-default text-text-muted">
+                              {item.item_type}
+                            </span>
+                            {#if item.size > 0}
+                              <span class="text-[9px] font-mono text-text-muted">{formatSize(item.size)}</span>
+                            {/if}
+                            <span class="text-[9px] font-mono px-1 rounded border font-semibold
+                              {item.confidence === 'VeryHigh' ? 'bg-emerald-950/30 text-emerald-400 border-emerald-800/40' : ''}
+                              {item.confidence === 'High' ? 'bg-blue-950/30 text-blue-400 border-blue-800/40' : ''}
+                              {item.confidence === 'Medium' ? 'bg-amber-950/30 text-amber-400 border-amber-800/40' : ''}
+                              {item.confidence === 'Low' ? 'bg-rose-950/30 text-rose-400 border-rose-800/40' : ''}"
+                            >
+                              {item.confidence} ({item.score}%)
+                            </span>
+                          </div>
+                        </div>
+                      </button>
+                    {/each}
+                  </section>
                 {/each}
               </div>
             {/if}
@@ -1385,12 +1475,17 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
 
   <!-- Bulk Uninstall Modal -->
   {#if isBulkUninstalling}
-    <div class="absolute inset-0 bg-app-bg/60 backdrop-blur-sm z-50 flex items-center justify-center p-6 animate-fade-in">
+    <div
+      class="absolute inset-0 bg-app-bg/60 backdrop-blur-sm z-50 flex items-center justify-center p-6 animate-fade-in"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="bulk-title"
+    >
       <div class="bg-sidebar-bg border border-border-strong w-full max-w-3xl rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] animate-scale-up">
         <!-- Header -->
         <header class="p-6 border-b border-border-default flex items-center justify-between">
           <div>
-            <h3 class="text-base font-bold text-text-primary">
+            <h3 id="bulk-title" class="text-base font-bold text-text-primary">
               Bulk Silent Uninstallation
             </h3>
             <p class="text-xs text-text-muted mt-1">

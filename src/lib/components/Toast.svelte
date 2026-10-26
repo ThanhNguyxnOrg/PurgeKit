@@ -4,7 +4,7 @@
   import { CheckCircle, AlertTriangle, Info, AlertOctagon, X } from "@lucide/svelte";
 </script>
 
-<div class="fixed bottom-6 right-6 z-[100] flex flex-col gap-3 max-w-sm w-full pointer-events-none">
+<div class="fixed bottom-6 right-6 z-[100] flex flex-col gap-3 max-w-sm w-full pointer-events-none" role="status" aria-live="polite" aria-atomic="false">
   {#each toast.toasts as t (t.id)}
     <div
       class="flex items-start gap-3 p-4 rounded-xl border backdrop-blur-md shadow-lg transition-all duration-300 pointer-events-auto
@@ -31,6 +31,7 @@
       <button
         onclick={() => toast.remove(t.id)}
         class="text-text-secondary hover:text-text-primary p-0.5 rounded transition-colors cursor-pointer"
+        aria-label="Dismiss notification"
       >
         <X class="w-3.5 h-3.5" />
       </button>
