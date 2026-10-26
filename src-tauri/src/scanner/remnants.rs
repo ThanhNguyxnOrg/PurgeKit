@@ -241,6 +241,33 @@ fn clean_match_token(app_name: &str) -> String {
     kept.join(" ").trim().to_lowercase()
 }
 
+fn levenshtein_distance(left: &str, right: &str) -> usize {
+    let left: Vec<char> = left.chars().collect();
+    let right: Vec<char> = right.chars().collect();
+    if left.is_empty() {
+        return right.len();
+    }
+    if right.is_empty() {
+        return left.len();
+    }
+
+    let mut previous: Vec<usize> = (0..=right.len()).collect();
+    let mut current = vec![0usize; right.len() + 1];
+
+    for (i, left_char) in left.iter().enumerate() {
+        current[0] = i + 1;
+        for (j, right_char) in right.iter().enumerate() {
+            let substitution = previous[j] + usize::from(left_char != right_char);
+            let insertion = current[j] + 1;
+            let deletion = previous[j + 1] + 1;
+            current[j + 1] = substitution.min(insertion).min(deletion);
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+
+    previous[right.len()]
+}
+
 fn is_remnant_match(name: &str, token: &str, strict: bool) -> bool {
     let name_lower = name.to_lowercase();
     let token_lower = token.to_lowercase();
@@ -255,6 +282,15 @@ fn is_remnant_match(name: &str, token: &str, strict: bool) -> bool {
 
     if strict {
         return false;
+    }
+
+    // Allow small typos/version suffixes without turning substring matches into
+    // a catch-all. Keep strict matching for personal folders.
+    if token_lower.len() >= 6 {
+        let max_distance = if token_lower.len() >= 10 { 2 } else { 1 };
+        if levenshtein_distance(&name_lower, &token_lower) <= max_distance {
+            return true;
+        }
     }
 
     let normalize = |s: &str| s.replace(' ', "").replace('-', "").replace('_', "");
@@ -920,4 +956,37 @@ pub fn purge_all_remnants(items: &[RemnantItem]) -> (u32, u32) {
         }
     }
     (success_count, fail_count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn levenshtein_distance_counts_edits() {
+        assert_eq!(levenshtein_distance("", ""), 0);
+        assert_eq!(levenshtein_distance("abc", ""), 3);
+        assert_eq!(levenshtein_distance("kitten", "sitting"), 3);
+        assert_eq!(levenshtein_distance("photoscape", "photoscap"), 1);
+    }
+
+    #[test]
+    fn fuzzy_match_allows_small_typos_only_for_long_names() {
+        assert!(is_remnant_match("photoscape", "photoscap", false));
+        assert!(is_remnant_match("obs-studio", "obs-studios", false));
+        // Short names must stay exact to avoid catching unrelated folders.
+        assert!(!is_remnant_match("vlc", "vcl", false));
+        assert!(!is_remnant_match("vlc", "vcl", true));
+        // Strict matching never fuzzes personal-folder names.
+        assert!(!is_remnant_match("photoscape", "photoscap", true));
+    }
+
+    #[test]
+    fn exact_and_normalized_matches_still_work() {
+        assert!(is_remnant_match("VLC", "vlc", true));
+        assert!(is_remnant_match(".vlc", "vlc", true));
+        assert!(is_remnant_match("visual studio code", "visualstudiocode", false));
+        assert!(is_remnant_match("my-app-data", "app", false));
+        assert!(!is_remnant_match("my-app-data", "other", false));
+    }
 }
