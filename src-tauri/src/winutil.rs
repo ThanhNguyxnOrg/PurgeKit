@@ -157,9 +157,62 @@ pub fn allocated_size(path: &Path) -> u64 {
     path.metadata().map(|metadata| metadata.len()).unwrap_or(0)
 }
 
-/// Total and currently-free bytes for the volume containing `path`.
-pub fn volume_space(path: &str) -> Option<(u64, u64)> {
+/// Volume serial number plus NTFS file index for a path. Two paths with the
+/// same identity are hard links to the same file data.
+pub fn file_identity(path: &Path) -> Option<(u32, u64)> {
     #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::Storage::FileSystem::{
+            CreateFileW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+            FILE_ATTRIBUTE_NORMAL, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ,
+            FILE_SHARE_WRITE, OPEN_EXISTING,
+        };
+
+        let wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+
+        unsafe {
+            let handle = CreateFileW(
+                wide.as_ptr(),
+                FILE_READ_ATTRIBUTES,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                std::ptr::null_mut(),
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                std::ptr::null_mut(),
+            );
+            if handle == INVALID_HANDLE_VALUE {
+                return None;
+            }
+
+            let mut info: BY_HANDLE_FILE_INFORMATION = std::mem::zeroed();
+            let ok = GetFileInformationByHandle(handle, &mut info);
+            CloseHandle(handle);
+            if ok == 0 {
+                return None;
+            }
+
+            return Some((
+                info.dwVolumeSerialNumber,
+                ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64,
+            ));
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        None
+    }
+}
+
+/// Total and currently-free bytes for the volume containing `path`.
+pub fn volume_space(path: &str) -> Option<(u64, u64)> {    #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
         use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;

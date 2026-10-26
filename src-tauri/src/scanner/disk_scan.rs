@@ -1,6 +1,6 @@
 use serde::Serialize;
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -401,10 +401,35 @@ where
         max_depth,
         max_children,
         find_duplicates,
+        true,
         errors,
         started,
         "traversal",
     ))
+}
+
+fn dedupe_hardlinked_nodes(nodes: &mut [FlatNode]) {
+    // Hard links share content, so candidates must share a size. Grouping by
+    // size keeps file-handle opens limited to ambiguous files.
+    let mut by_size: HashMap<u64, Vec<usize>> = HashMap::new();
+    for (index, node) in nodes.iter().enumerate().skip(1) {
+        if !node.is_dir && node.size_bytes > 0 {
+            by_size.entry(node.size_bytes).or_default().push(index);
+        }
+    }
+
+    let mut seen: HashSet<(u32, u64)> = HashSet::new();
+    for indices in by_size.values().filter(|indices| indices.len() > 1) {
+        for &index in indices {
+            let Some(identity) = crate::winutil::file_identity(Path::new(&nodes[index].path)) else {
+                continue;
+            };
+            if !seen.insert(identity) {
+                nodes[index].size_bytes = 0;
+                nodes[index].allocated_bytes = 0;
+            }
+        }
+    }
 }
 
 pub(crate) fn finalize_scan(
@@ -413,10 +438,15 @@ pub(crate) fn finalize_scan(
     max_depth: u32,
     max_children: usize,
     find_duplicates: bool,
+    dedupe_hardlinks: bool,
     errors: u64,
     started: Instant,
     engine: &str,
 ) -> DiskScanResult {
+    if dedupe_hardlinks {
+        dedupe_hardlinked_nodes(&mut nodes);
+    }
+
     // Bottom-up aggregate sizes and counts. Nodes are emitted in parent-before-
     // child order by both scanners.
     for index in (1..nodes.len()).rev() {
@@ -700,6 +730,26 @@ mod tests {
         let _ = fs::create_dir_all(&root);
         let result = scan_disk_tree(&root.to_string_lossy(), 2, 10, false, &cancel, |_| {});
         assert!(result.is_err());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn counts_hardlinked_files_once() {
+        let root = std::env::temp_dir().join("purgekit_disk_hardlink_test");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let original = root.join("original.bin");
+        fs::write(&original, vec![7u8; 4096]).unwrap();
+        if fs::hard_link(&original, root.join("alias.bin")).is_err() {
+            let _ = fs::remove_dir_all(&root);
+            return;
+        }
+
+        let cancel = AtomicBool::new(false);
+        let result = scan_disk_tree(&root.to_string_lossy(), 2, 20, false, &cancel, |_| {}).unwrap();
+        assert_eq!(result.total_files, 2);
+        assert_eq!(result.total_size, 4096);
+
         let _ = fs::remove_dir_all(&root);
     }
 

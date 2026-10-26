@@ -284,6 +284,7 @@ where
         max_depth,
         max_children,
         find_duplicates,
+        false,
         errors,
         started,
         "mft",
