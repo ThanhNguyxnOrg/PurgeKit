@@ -83,6 +83,7 @@
     y: number;
     w: number;
     h: number;
+    depth: number;
   }
 
   let pathInput = $state("C:\\");
@@ -315,7 +316,7 @@
   ): LayoutRect[] {
     if (items.length === 0 || w <= 1 || h <= 1) return output;
     if (items.length === 1) {
-      output.push({ node: items[0], x, y, w, h });
+      output.push({ node: items[0], x, y, w, h, depth: 0 });
       return output;
     }
 
@@ -350,6 +351,53 @@
     return output;
   }
 
+  const NESTED_MAX_DEPTH = 4;
+  const NESTED_MIN_AREA = 1500;
+
+  function nestedTreemap(
+    items: DiskTreeNode[],
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    depth: number,
+    output: LayoutRect[] = []
+  ): LayoutRect[] {
+    if (items.length === 0 || w <= 2 || h <= 2) return output;
+
+    const levelRects = binaryTreemap(items, x, y, w, h);
+    for (const rect of levelRects) {
+      output.push({ ...rect, depth });
+
+      const child = rect.node;
+      if (
+        depth >= NESTED_MAX_DEPTH ||
+        !child.is_dir ||
+        child.children.length === 0 ||
+        rect.w * rect.h < NESTED_MIN_AREA
+      ) {
+        continue;
+      }
+
+      const kids = [...child.children]
+        .filter((kid) => nodeWeight(kid) > 0)
+        .sort((left, right) => nodeWeight(right) - nodeWeight(left));
+      if (kids.length === 0) continue;
+
+      const hasLabel = depth === 0
+        ? rect.w > 70 && rect.h > 48
+        : rect.w > 54 && rect.h > 30;
+      const header = hasLabel ? (depth === 0 ? 36 : 16) : 4;
+      const innerW = rect.w - 4;
+      const innerH = rect.h - header - 2;
+      if (innerW <= 6 || innerH <= 6) continue;
+
+      nestedTreemap(kids, rect.x + 2, rect.y + header, innerW, innerH, depth + 1, output);
+    }
+
+    return output;
+  }
+
   function colorForNode(node: DiskTreeNode, index: number): string {
     let hash = 0;
     for (const character of node.name) {
@@ -373,7 +421,7 @@
     if (!parent) return;
 
     const width = Math.max(320, parent.clientWidth);
-    const height = 520;
+    const height = Math.max(280, parent.clientHeight);
     const ratio = window.devicePixelRatio || 1;
     canvas.width = Math.round(width * ratio);
     canvas.height = Math.round(height * ratio);
@@ -402,29 +450,42 @@
       return;
     }
 
-    layoutRects = binaryTreemap(children, 2, 2, width - 4, height - 4);
+    layoutRects = nestedTreemap(children, 2, 2, width - 4, height - 4, 0);
     layoutRects.forEach((rect, index) => {
       const highlighted =
         rect.node.path === hoverPath || rect.node.path === selectedNode?.path;
       context.fillStyle = colorForNode(rect.node, index);
       context.fillRect(rect.x, rect.y, rect.w, rect.h);
+      if (rect.depth > 0) {
+        // Deeper levels sit visually inside their folder instead of competing
+        // with it.
+        context.fillStyle = "rgba(9, 11, 15, 0.12)";
+        context.fillRect(rect.x, rect.y, rect.w, rect.h);
+      }
 
       context.strokeStyle = highlighted ? "#F4F5F7" : "rgba(9, 11, 15, 0.85)";
       context.lineWidth = highlighted ? 2 : 1;
       context.strokeRect(rect.x + 0.5, rect.y + 0.5, Math.max(0, rect.w - 1), Math.max(0, rect.h - 1));
 
-      if (rect.w > 58 && rect.h > 30) {
+      const hasLabel = rect.depth === 0
+        ? rect.w > 70 && rect.h > 48
+        : rect.w > 54 && rect.h > 30;
+      if (hasLabel) {
         context.save();
         context.beginPath();
         context.rect(rect.x + 3, rect.y + 3, rect.w - 6, rect.h - 6);
         context.clip();
         context.fillStyle = "#f4f6f8";
-        context.font = "11px ui-monospace, Consolas, monospace";
+        context.font = rect.depth === 0
+          ? "11px ui-monospace, Consolas, monospace"
+          : "10px ui-monospace, Consolas, monospace";
         context.textAlign = "left";
-        context.fillText(rect.node.name, rect.x + 7, rect.y + 18, rect.w - 14);
-        context.fillStyle = "rgba(244, 246, 248, 0.7)";
-        context.font = "10px ui-monospace, Consolas, monospace";
-        context.fillText(formatBytes(nodeWeight(rect.node)), rect.x + 7, rect.y + 33, rect.w - 14);
+        context.fillText(rect.node.name, rect.x + 7, rect.y + (rect.depth === 0 ? 18 : 13), rect.w - 14);
+        if (rect.depth === 0) {
+          context.fillStyle = "rgba(244, 246, 248, 0.7)";
+          context.font = "10px ui-monospace, Consolas, monospace";
+          context.fillText(formatBytes(nodeWeight(rect.node)), rect.x + 7, rect.y + 33, rect.w - 14);
+        }
         context.restore();
       }
     });
@@ -441,15 +502,36 @@
 
     selectedNode = hit.node;
     if (hit.node.is_dir && hit.node.children.length > 0) {
-      focusStack = [...focusStack, hit.node];
+      const path = result ? pathToNode(result.root, hit.node.path) : [hit.node];
+      focusStack = path.length > 0 ? path : [hit.node];
       focusNode = hit.node;
     }
   }
 
+  function pathToNode(rootNode: DiskTreeNode, targetPath: string): DiskTreeNode[] {
+    const stack: DiskTreeNode[] = [];
+    const walk = (current: DiskTreeNode): boolean => {
+      stack.push(current);
+      if (current.path === targetPath) return true;
+      for (const child of current.children) {
+        if (walk(child)) return true;
+      }
+      stack.pop();
+      return false;
+    };
+    return walk(rootNode) ? stack : [];
+  }
+
   function rectAt(x: number, y: number): LayoutRect | undefined {
-    return layoutRects.find(
-      (rect) => x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h
-    );
+    // Rectangles are emitted parent-first; reverse order makes the deepest
+    // nested rectangle win a hit.
+    for (let index = layoutRects.length - 1; index >= 0; index--) {
+      const rect = layoutRects[index];
+      if (x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h) {
+        return rect;
+      }
+    }
+    return undefined;
   }
 
   function handleCanvasMove(event: MouseEvent) {
@@ -460,7 +542,21 @@
     const y = event.clientY - bounds.top;
     const hit = rectAt(x, y);
     hoverPath = hit?.node.path || null;
-    tooltip = hit ? { x, y, node: hit.node } : null;
+    if (hit) {
+      // Keep the tooltip inside the canvas container instead of clipping it
+      // against the near edge.
+      const tooltipWidth = 332;
+      const tooltipHeight = 86;
+      const left = x + tooltipWidth + 12 > bounds.width
+        ? Math.max(4, x - tooltipWidth - 12)
+        : x + 12;
+      const top = y + tooltipHeight + 12 > bounds.height
+        ? Math.max(4, y - tooltipHeight - 12)
+        : y + 12;
+      tooltip = { x: left, y: top, node: hit.node };
+    } else {
+      tooltip = null;
+    }
     canvas.style.cursor = hit ? (hit.node.is_dir ? "zoom-in" : "pointer") : "crosshair";
   }
 
@@ -854,7 +950,7 @@
         </div>
 
         <div
-          class="relative w-full h-[520px] border border-border-default rounded-lg overflow-hidden bg-app-bg"
+          class="disk-treemap relative w-full border border-border-default rounded-lg overflow-hidden bg-app-bg"
           role="img"
           aria-label="Treemap of {focusNode ? focusNode.path : result.root_path}. Use the Largest files tab for a keyboard-accessible list."
         >
@@ -870,7 +966,7 @@
           {#if tooltip}
             <div
               class="absolute z-10 pointer-events-none max-w-[320px] rounded-md border border-border-strong bg-elevated-bg/95 px-2.5 py-2 shadow-xl"
-              style="left: {tooltip.x + 12}px; top: {tooltip.y + 12}px"
+              style="left: {tooltip.x}px; top: {tooltip.y}px"
             >
               <span class="block text-[11px] font-semibold text-text-primary break-all">{tooltip.node.name}</span>
               <span class="block text-[10px] font-mono text-text-muted mt-0.5 break-all">{tooltip.node.path}</span>
