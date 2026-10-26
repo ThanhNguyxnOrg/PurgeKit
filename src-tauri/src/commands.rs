@@ -783,6 +783,11 @@ pub fn cancel_disk_scan(state: tauri::State<'_, scanner::DiskScanState>) {
 }
 
 #[tauri::command]
+pub fn list_disk_drives() -> Vec<crate::winutil::DriveInfo> {
+    crate::winutil::list_ready_drives()
+}
+
+#[tauri::command]
 pub async fn get_pending_reboot_items() -> Result<Vec<PendingRebootItem>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let session_manager = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)

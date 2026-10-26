@@ -39,6 +39,7 @@ pub fn run() {
             commands::scan_disk_space,
             commands::cancel_disk_scan,
             commands::search_disk_files,
+            commands::list_disk_drives,
             commands::get_path_entries,
             commands::save_path_entries,
             commands::run_uninstall_command,

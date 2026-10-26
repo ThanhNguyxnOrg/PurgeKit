@@ -3,7 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { openPath } from "@tauri-apps/plugin-opener";
-  import { FolderOpen, Play, RefreshCw, Square, HardDrive, File, Folder, Search, X } from "@lucide/svelte";
+  import { FolderOpen, Play, Square, HardDrive, File, Folder, Search, X } from "@lucide/svelte";
   import { toast } from "../toast.svelte";
 
   interface DiskTreeNode {
@@ -69,6 +69,14 @@
     index_complete: boolean;
   }
 
+  interface DriveInfo {
+    letter: string;
+    label: string;
+    kind: "fixed" | "removable";
+    total_bytes: number;
+    free_bytes: number;
+  }
+
   interface LayoutRect {
     node: DiskTreeNode;
     x: number;
@@ -78,6 +86,7 @@
   }
 
   let pathInput = $state("C:\\");
+  let drives = $state<DriveInfo[]>([]);
   let result = $state<DiskScanResult | null>(null);
   let focusNode = $state<DiskTreeNode | null>(null);
   let focusStack = $state<DiskTreeNode[]>([]);
@@ -609,6 +618,10 @@
   });
 
   onMount(() => {
+    invoke<DriveInfo[]>("list_disk_drives")
+      .then((list) => { drives = list; })
+      .catch(() => {});
+
     const unlisten = listen<DiskProgress>("disk-scan-progress", (event) => {
       progress = event.payload;
     });
@@ -660,8 +673,8 @@
       </div>
     </div>
 
-    <div class="flex flex-col md:flex-row gap-3 md:items-center">
-      <div class="relative flex-1">
+    <div class="flex flex-col gap-2">
+      <div class="relative">
         <input
           bind:value={pathInput}
           onkeydown={(event) => event.key === "Enter" && !isScanning && scanDisk()}
@@ -670,30 +683,38 @@
           class="w-full px-3 py-2 rounded-lg bg-surface-bg border border-border-default focus:border-accent/50 focus:ring-1 focus:ring-accent/30 outline-none text-sm font-mono text-text-primary placeholder:text-text-muted"
         />
       </div>
-      <button
-        onclick={() => { pathInput = "C:\\"; scanDisk(); }}
-        disabled={isScanning}
-        class="px-3 py-2 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-xs font-semibold text-text-secondary disabled:opacity-40"
-      >
-        C:\
-      </button>
-      <label class="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-bg border border-border-default text-xs font-semibold text-text-secondary cursor-pointer select-none">
-        <input
-          type="checkbox"
-          bind:checked={findDuplicates}
-          disabled={isScanning}
-          class="rounded border-border-default text-accent focus:ring-accent bg-surface-bg cursor-pointer w-3.5 h-3.5"
-        />
-        Duplicates
-      </label>
-      <button
-        onclick={scanDisk}
-        disabled={isScanning || !pathInput.trim()}
-        class="px-3 py-2 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-xs font-semibold text-text-secondary disabled:opacity-40"
-      >
-        <RefreshCw class="w-3.5 h-3.5 inline mr-1" />
-        Scan path
-      </button>
+      <div class="flex flex-wrap items-center gap-2">
+        {#each drives as drive}
+          <button
+            onclick={() => { pathInput = `${drive.letter}:\\`; scanDisk(); }}
+            disabled={isScanning}
+            title="{drive.label || 'Local Disk'} · {formatBytes(drive.free_bytes)} free of {formatBytes(drive.total_bytes)}"
+            aria-label="Scan drive {drive.letter}:"
+            class="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-[11px] font-semibold text-text-secondary disabled:opacity-40 transition-colors"
+          >
+            <HardDrive class="w-3.5 h-3.5 text-text-muted" aria-hidden="true" />
+            <span class="font-mono text-text-primary">{drive.letter}:</span>
+            <span class="font-mono text-text-muted">{formatBytes(drive.free_bytes)} free</span>
+          </button>
+        {:else}
+          <button
+            onclick={() => { pathInput = "C:\\"; scanDisk(); }}
+            disabled={isScanning}
+            class="px-3 py-2 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-xs font-semibold text-text-secondary disabled:opacity-40"
+          >
+            C:\
+          </button>
+        {/each}
+        <label class="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-bg border border-border-default text-xs font-semibold text-text-secondary cursor-pointer select-none">
+          <input
+            type="checkbox"
+            bind:checked={findDuplicates}
+            disabled={isScanning}
+            class="rounded border-border-default text-accent focus:ring-accent bg-surface-bg cursor-pointer w-3.5 h-3.5"
+          />
+          Duplicates
+        </label>
+      </div>
     </div>
 
     {#if isScanning}

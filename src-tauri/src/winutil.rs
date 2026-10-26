@@ -1,5 +1,6 @@
 //! Centralized Win32 utility primitives shared by scanner modules and the CLI.
 
+use serde::Serialize;
 #[cfg(windows)]
 use windows_sys::Win32::System::Environment::ExpandEnvironmentStringsW;
 #[cfg(windows)]
@@ -213,6 +214,95 @@ pub fn file_identity(path: &Path) -> Option<(u32, u64)> {
     {
         let _ = path;
         None
+    }
+}
+
+/// A local volume that can be offered as a one-click scan target.
+#[derive(Debug, Serialize, Clone)]
+pub struct DriveInfo {
+    pub letter: String,
+    pub label: String,
+    pub kind: String,
+    pub total_bytes: u64,
+    pub free_bytes: u64,
+}
+
+pub fn list_ready_drives() -> Vec<DriveInfo> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
+        };
+
+        const DRIVE_REMOVABLE: u32 = 2;
+        const DRIVE_FIXED: u32 = 3;
+
+        let mask = unsafe { GetLogicalDrives() };
+        let mut drives = Vec::new();
+
+        for index in 0..26u8 {
+            if mask & (1 << index) == 0 {
+                continue;
+            }
+            let letter = (b'A' + index) as char;
+            let root = format!("{}:\\", letter);
+            let wide: Vec<u16> = std::ffi::OsStr::new(&root)
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+
+            let drive_type = unsafe { GetDriveTypeW(wide.as_ptr()) };
+            if drive_type != DRIVE_FIXED && drive_type != DRIVE_REMOVABLE {
+                continue;
+            }
+            let (total_bytes, free_bytes) = volume_space(&root).unwrap_or((0, 0));
+            if total_bytes == 0 {
+                continue;
+            }
+
+            let mut label_buffer = [0u16; 261];
+            let ok = unsafe {
+                GetVolumeInformationW(
+                    wide.as_ptr(),
+                    label_buffer.as_mut_ptr(),
+                    label_buffer.len() as u32,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    0,
+                )
+            };
+            let label = if ok != 0 {
+                let end = label_buffer
+                    .iter()
+                    .position(|value| *value == 0)
+                    .unwrap_or(label_buffer.len());
+                String::from_utf16_lossy(&label_buffer[..end])
+            } else {
+                String::new()
+            };
+
+            drives.push(DriveInfo {
+                letter: letter.to_string(),
+                label,
+                kind: if drive_type == DRIVE_REMOVABLE {
+                    "removable".to_string()
+                } else {
+                    "fixed".to_string()
+                },
+                total_bytes,
+                free_bytes,
+            });
+        }
+
+        drives
+    }
+
+    #[cfg(not(windows))]
+    {
+        Vec::new()
     }
 }
 
@@ -1019,5 +1109,18 @@ mod tests {
             extract_executable_path("calc"),
             "calc"
         );
+    }
+
+    #[test]
+    fn lists_the_system_drive_with_space() {
+        let drives = list_ready_drives();
+        let system_drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".to_string());
+        let letter = system_drive.trim_end_matches(':');
+        let drive = drives
+            .iter()
+            .find(|drive| drive.letter.eq_ignore_ascii_case(letter))
+            .expect("system drive should be listed");
+        assert!(drive.total_bytes > 0);
+        assert!(drive.free_bytes <= drive.total_bytes);
     }
 }
