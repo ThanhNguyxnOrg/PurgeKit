@@ -64,6 +64,8 @@ pub struct DiskScanResult {
     pub total_dirs: u64,
     pub total_size: u64,
     pub total_allocated: u64,
+    pub volume_total_bytes: u64,
+    pub volume_free_bytes: u64,
     pub elapsed_ms: u64,
     pub errors: u64,
     pub truncated: bool,
@@ -470,6 +472,8 @@ pub(crate) fn finalize_scan(
 
     let total_size = root_node.size_bytes;
     let total_allocated = root_node.allocated_bytes;
+    let (volume_total_bytes, volume_free_bytes) =
+        crate::winutil::volume_space(&root_path).unwrap_or((0, 0));
 
     DiskScanResult {
         root_path,
@@ -481,6 +485,8 @@ pub(crate) fn finalize_scan(
         total_dirs,
         total_size,
         total_allocated,
+        volume_total_bytes,
+        volume_free_bytes,
         elapsed_ms: started.elapsed().as_millis() as u64,
         errors,
         truncated: budget.truncated,

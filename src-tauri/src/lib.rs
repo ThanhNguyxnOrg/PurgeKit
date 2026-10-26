@@ -9,6 +9,7 @@ pub mod locker;
 pub mod tracker;
 pub mod winutil;
 pub mod startup_manager;
+pub mod logging;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

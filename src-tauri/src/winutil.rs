@@ -157,6 +157,36 @@ pub fn allocated_size(path: &Path) -> u64 {
     path.metadata().map(|metadata| metadata.len()).unwrap_or(0)
 }
 
+/// Total and currently-free bytes for the volume containing `path`.
+pub fn volume_space(path: &str) -> Option<(u64, u64)> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+
+        let wide: Vec<u16> = std::ffi::OsStr::new(path)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let mut free_to_caller: u64 = 0;
+        let mut total: u64 = 0;
+        let mut total_free: u64 = 0;
+        let ok = unsafe {
+            GetDiskFreeSpaceExW(
+                wide.as_ptr(),
+                &mut free_to_caller,
+                &mut total,
+                &mut total_free,
+            )
+        };
+        if ok != 0 {
+            return Some((total, free_to_caller));
+        }
+    }
+
+    None
+}
+
 #[cfg(windows)]
 pub fn is_reparse_point(metadata: &std::fs::Metadata) -> bool {
     use std::os::windows::fs::MetadataExt;

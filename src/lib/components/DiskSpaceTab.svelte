@@ -47,6 +47,8 @@
     total_dirs: number;
     total_size: number;
     total_allocated: number;
+    volume_total_bytes: number;
+    volume_free_bytes: number;
     elapsed_ms: number;
     errors: number;
     truncated: boolean;
@@ -622,7 +624,7 @@
 
   <div class="flex-1 overflow-y-auto p-6 space-y-4">
     {#if result}
-      <div class="instrument-panel grid grid-cols-2 lg:grid-cols-4 divide-x divide-y lg:divide-y-0 divide-border-default overflow-hidden">
+      <div class="instrument-panel grid grid-cols-2 lg:grid-cols-5 divide-x divide-y lg:divide-y-0 divide-border-default overflow-hidden">
         <div class="px-4 py-3.5">
           <span class="readout-label">Allocated</span>
           <p class="readout text-2xl font-semibold text-data-cyan mt-1">{formatBytes(result.total_allocated)}</p>
@@ -646,6 +648,11 @@
           {#if result.errors > 0}
             <p class="text-[11px] text-warning mt-1">{result.errors} entries skipped</p>
           {/if}
+        </div>
+        <div class="px-4 py-3.5">
+          <span class="readout-label">Volume free</span>
+          <p class="readout text-2xl font-semibold text-data-green mt-1">{formatBytes(result.volume_free_bytes)}</p>
+          <p class="text-[11px] text-text-muted mt-1">of {formatBytes(result.volume_total_bytes)}</p>
         </div>
       </div>
 

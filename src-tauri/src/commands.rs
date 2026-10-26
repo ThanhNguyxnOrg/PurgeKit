@@ -42,6 +42,8 @@ pub struct PurgeResult {
     pub fail: u32,
     #[serde(default)]
     pub errors: Vec<String>,
+    #[serde(default)]
+    pub log_path: Option<String>,
 }
 
 #[tauri::command]
@@ -311,6 +313,11 @@ pub async fn purge_remnants(app: AppHandle, items: Vec<RemnantItem>) -> Result<P
         }
 
         // 2. Deletion phase
+        let mut log_lines = vec![
+            format!("items: {}", total),
+            format!("backup_before_delete: {}", settings.backup_before_delete),
+            format!("create_restore_point: {}", settings.create_restore_point),
+        ];
         for (i, item) in items.iter().enumerate() {
             let _ = app.emit("purge-progress", ProgressPayload {
                 phase: "deleting".into(),
@@ -320,8 +327,17 @@ pub async fn purge_remnants(app: AppHandle, items: Vec<RemnantItem>) -> Result<P
             });
 
             match scanner::remnants::purge_remnant_item(item) {
-                Ok(_) => success += 1,
-                Err(_) => fail += 1,
+                Ok(_) => {
+                    success += 1;
+                    log_lines.push(format!("OK\t{}\t{}", item.item_type, item.path));
+                }
+                Err(error) => {
+                    fail += 1;
+                    log_lines.push(format!(
+                        "FAIL\t{}\t{}\t{}",
+                        item.item_type, item.path, error
+                    ));
+                }
             }
         }
 
@@ -342,10 +358,15 @@ pub async fn purge_remnants(app: AppHandle, items: Vec<RemnantItem>) -> Result<P
             message: "Purging completed successfully".into(),
         });
 
+        let log_path = crate::logging::write_operation_log("purge-remnants", &log_lines)
+            .ok()
+            .map(|path| path.to_string_lossy().to_string());
+
         Ok(PurgeResult {
             success,
             fail,
             errors: Vec::new(),
+            log_path,
         })
     }).await.map_err(|e| e.to_string())?
 }
@@ -469,6 +490,11 @@ fn force_remove_app_sync(
     let mut fail = 0u32;
     let mut errors = Vec::new();
     let mut location_failed = false;
+    let mut log_lines = vec![
+        format!("app_name: {}", app_name.unwrap_or("")),
+        format!("install_location: {}", install_location.unwrap_or("")),
+        format!("registry_path: {}", registry_path.unwrap_or("")),
+    ];
 
     if let Some(location) = install_location.filter(|path| !path.trim().is_empty()) {
         let path = std::path::Path::new(location);
@@ -481,11 +507,15 @@ fn force_remove_app_sync(
                 score: 100,
             };
             match scanner::remnants::purge_remnant_item(&item) {
-                Ok(()) => success += 1,
+                Ok(()) => {
+                    success += 1;
+                    log_lines.push(format!("OK\tfolder\t{}", location));
+                }
                 Err(e) => {
                     fail += 1;
                     location_failed = true;
                     errors.push(format!("{}: {}", location, e));
+                    log_lines.push(format!("FAIL\tfolder\t{}\t{}", location, e));
                 }
             }
         }
@@ -497,10 +527,14 @@ fn force_remove_app_sync(
         if let (Some(registry_path), Some(hive)) = (registry_path, hive) {
             if !registry_path.trim().is_empty() {
                 match remove_uninstall_entry_sync(hive, registry_path) {
-                    Ok(()) => success += 1,
+                    Ok(()) => {
+                        success += 1;
+                        log_lines.push(format!("OK\tregistry\t{}", registry_path));
+                    }
                     Err(e) => {
                         fail += 1;
                         errors.push(format!("{}: {}", registry_path, e));
+                        log_lines.push(format!("FAIL\tregistry\t{}\t{}", registry_path, e));
                     }
                 }
             }
@@ -530,10 +564,17 @@ fn force_remove_app_sync(
                         continue;
                     }
                     match scanner::remnants::purge_remnant_item(&item) {
-                        Ok(()) => success += 1,
+                        Ok(()) => {
+                            success += 1;
+                            log_lines.push(format!("OK\t{}\t{}", item.item_type, item.path));
+                        }
                         Err(e) => {
                             fail += 1;
                             errors.push(format!("{}: {}", item.path, e));
+                            log_lines.push(format!(
+                                "FAIL\t{}\t{}\t{}",
+                                item.item_type, item.path, e
+                            ));
                         }
                     }
                 }
@@ -545,10 +586,15 @@ fn force_remove_app_sync(
         return Err("Nothing to remove: no install location or registry entry was provided.".to_string());
     }
 
+    let log_path = crate::logging::write_operation_log("force-remove-app", &log_lines)
+        .ok()
+        .map(|path| path.to_string_lossy().to_string());
+
     Ok(PurgeResult {
         success,
         fail,
         errors,
+        log_path,
     })
 }
 
