@@ -3,6 +3,7 @@
   import { Shield, HardDrive, Info, Heart, RefreshCw, Bug, ExternalLink, CheckCircle, Trash2, Lightbulb } from "@lucide/svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { invoke } from "@tauri-apps/api/core";
+  import { getVersion } from "@tauri-apps/api/app";
   import { toast } from "../toast.svelte";
 
   let scanLevel = $state("safe");
@@ -13,6 +14,7 @@
   let projectScanPaths = $state<string[]>([]);
 
   let isCheckingUpdates = $state(false);
+  let appVersion = $state("");
   let updateMessage = $state<{ type: "success" | "error"; text: string } | null>(null);
 
   interface QuarantineItem {
@@ -23,8 +25,34 @@
     created_at: string;
   }
 
+  interface PendingRebootItem {
+    path: string;
+    source: string;
+  }
+
   let quarantineItems = $state<QuarantineItem[]>([]);
   let isLoadingQuarantine = $state(false);
+  let pendingRebootItems = $state<PendingRebootItem[]>([]);
+  let isLoadingPendingReboot = $state(false);
+
+  async function loadPendingReboot() {
+    isLoadingPendingReboot = true;
+    try {
+      pendingRebootItems = await invoke<PendingRebootItem[]>("get_pending_reboot_items");
+    } catch (e) {
+      console.error("Failed to load pending reboot items:", e);
+    } finally {
+      isLoadingPendingReboot = false;
+    }
+  }
+
+  async function loadAppVersion() {
+    try {
+      appVersion = await getVersion();
+    } catch {
+      appVersion = "";
+    }
+  }
 
   async function loadQuarantine() {
     isLoadingQuarantine = true;
@@ -102,20 +130,24 @@
   async function checkUpdates() {
     isCheckingUpdates = true;
     updateMessage = null;
-    setTimeout(() => {
-      isCheckingUpdates = false;
+    try {
+      appVersion = await getVersion();
       updateMessage = {
         type: "success",
-        text: "You are running the latest version: PurgeKit v0.1.0-alpha!"
+        text: `Installed version: PurgeKit v${appVersion}. Automatic update checks are not configured yet.`
       };
-    }, 1500);
+    } catch (e: any) {
+      updateMessage = { type: "error", text: `Could not read the installed version: ${e.toString()}` };
+    } finally {
+      isCheckingUpdates = false;
+    }
   }
 
   async function reportBug() {
     try {
       const osName = "Windows";
       const isAdminStr = isAdmin ? "Yes" : "No";
-      const appVersion = "v0.1.0-alpha";
+      const versionLabel = appVersion ? `v${appVersion}` : "unknown";
       
       const title = encodeURIComponent("[Bug] ");
       const body = encodeURIComponent(
@@ -130,7 +162,7 @@
         `A clear and concise description of what you expected to happen.\n\n` +
         `**System Environment Information:**\n` +
         `- OS: ${osName}\n` +
-        `- PurgeKit Version: ${appVersion}\n` +
+        `- PurgeKit Version: ${versionLabel}\n` +
         `- Running as Administrator: ${isAdminStr}\n\n` +
         `**Additional context**\n` +
         `Add any other context or logs here.`
@@ -169,6 +201,8 @@
   onMount(() => {
     loadSettings();
     loadQuarantine();
+    loadPendingReboot();
+    loadAppVersion();
   });
 </script>
 
@@ -334,6 +368,43 @@
       {/if}
     </section>
 
+    <!-- Pending Reboot Section -->
+    <section class="border border-border-default rounded-lg bg-surface-bg/30 p-5 space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="text-sm font-bold text-text-primary flex items-center gap-2">
+          <RefreshCw class="w-4 h-4 text-warning" />
+          Pending Reboot
+        </h3>
+        <button
+          onclick={loadPendingReboot}
+          disabled={isLoadingPendingReboot}
+          class="p-1.5 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg transition-colors cursor-pointer"
+          aria-label="Refresh pending reboot items"
+        >
+          <RefreshCw class="w-3.5 h-3.5 text-text-secondary {isLoadingPendingReboot ? 'animate-spin text-accent' : ''}" />
+        </button>
+      </div>
+
+      <p class="text-xs text-text-muted font-sans leading-relaxed">
+        Paths queued for deletion by Windows at the next reboot. They still occupy disk space until the reboot happens.
+      </p>
+
+      {#if pendingRebootItems.length === 0}
+        <div class="py-5 text-center border border-dashed border-border-default rounded-lg bg-surface-bg/10 text-xs text-text-muted">
+          No pending reboot deletions.
+        </div>
+      {:else}
+        <div class="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+          {#each pendingRebootItems as item}
+            <div class="p-3 rounded-lg bg-app-bg border border-border-default text-xs">
+              <span class="block font-mono text-text-primary break-all">{item.path}</span>
+              <span class="block text-[9px] text-text-muted font-mono mt-1">{item.source}</span>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </section>
+
     <!-- About Section -->
     <section class="border border-border-default rounded-lg bg-surface-bg/30 p-5 space-y-4">
       <h3 class="text-sm font-bold text-text-primary flex items-center gap-2">
@@ -348,7 +419,7 @@
         
         <div class="flex-1 space-y-2">
           <h4 class="text-base font-bold text-text-primary">PurgeKit Ultimate Uninstaller</h4>
-          <p class="text-xs text-text-muted font-mono">Version 0.1.0-alpha (Phase 1 Foundation)</p>
+          <p class="text-xs text-text-muted font-mono">Version {appVersion || "unknown"}</p>
           <p class="text-xs text-text-secondary leading-relaxed font-sans max-w-xl">
             A free, open-source tool developed to purge stubborn remnants and developer tool caches. Under Apache License 2.0.
           </p>
@@ -365,7 +436,7 @@
               class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white disabled:opacity-50 active:scale-95 transition-all shadow cursor-pointer"
             >
               <RefreshCw class="w-3.5 h-3.5 {isCheckingUpdates ? 'animate-spin' : ''}" />
-              {isCheckingUpdates ? 'Checking...' : 'Check for Updates'}
+              {isCheckingUpdates ? 'Reading...' : 'Version'}
             </button>
             
             <button

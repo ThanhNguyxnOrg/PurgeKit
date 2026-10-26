@@ -252,6 +252,9 @@ fn get_default_rules() -> Vec<DevToolRule> {
 }
 
 pub fn load_dev_tools_rules() -> Vec<DevToolRule> {
+    // User-writable JSON must never be able to inject commands into an elevated
+    // process. Keep the file as an inspected artifact/backward-compatible cache,
+    // but always execute the built-in definitions.
     let path = get_devtools_rules_path();
     if !path.exists() {
         if let Some(parent) = path.parent() {
@@ -261,15 +264,13 @@ pub fn load_dev_tools_rules() -> Vec<DevToolRule> {
         if let Ok(json_str) = serde_json::to_string_pretty(&defaults) {
             let _ = fs::write(&path, json_str);
         }
-        return defaults;
     }
-    
-    if let Ok(content) = fs::read_to_string(&path) {
-        if let Ok(rules) = serde_json::from_str::<Vec<DevToolRule>>(&content) {
-            return rules;
-        }
-    }
+
     get_default_rules()
+}
+
+pub fn get_builtin_rule(name: &str) -> Option<DevToolRule> {
+    get_default_rules().into_iter().find(|rule| rule.name == name)
 }
 
 pub fn scan_dev_tools() -> Vec<DevToolInfo> {
@@ -445,12 +446,22 @@ fn find_vscode_fallback_path() -> Option<PathBuf> {
 
 pub fn calculate_dir_size(path: &Path) -> u64 {
     let mut total_size = 0;
-    for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
-        if entry.file_type().is_file() {
-            if let Ok(metadata) = entry.metadata() {
-                total_size += metadata.len();
+    for entry in WalkDir::new(path)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
+        if let Ok(metadata) = fs::symlink_metadata(entry.path()) {
+            if crate::winutil::is_reparse_point(&metadata) {
+                continue;
             }
         }
+
+        total_size += crate::winutil::allocated_size(entry.path());
     }
     total_size
 }
@@ -1099,6 +1110,18 @@ pub fn uninstall_global_cli_package(name: &str, manager: &str) -> Result<(), Str
     Ok(())
 }
 
+fn distribution_name_from_dist_info(folder_name: &str) -> String {
+    let stripped = folder_name
+        .strip_suffix(".dist-info")
+        .unwrap_or(folder_name);
+    // Wheel dist-info names are "<name>-<version>". Package names may contain
+    // hyphens, so split from the right, not the left.
+    stripped
+        .rsplit_once('-')
+        .map(|(name, _version)| name.to_string())
+        .unwrap_or_else(|| stripped.to_string())
+}
+
 pub fn get_cli_package_bin_names(package_path: &str) -> Vec<String> {
     let mut bin_names = Vec::new();
     let path = Path::new(package_path);
@@ -1160,9 +1183,7 @@ pub fn get_cli_package_bin_names(package_path: &str) -> Vec<String> {
 
     if let Some(folder_name) = path.file_name().and_then(|n| n.to_str()) {
         let clean_folder = if folder_name.contains(".dist-info") {
-            let stripped = &folder_name[..folder_name.len() - 10];
-            let name_part = stripped.split('-').next().unwrap_or(stripped);
-            name_part.to_string()
+            distribution_name_from_dist_info(folder_name)
         } else if folder_name.contains('/') {
             folder_name.split('/').last().unwrap_or(folder_name).to_string()
         } else {
@@ -1180,7 +1201,7 @@ pub fn get_cli_package_bin_names(package_path: &str) -> Vec<String> {
 
 pub fn get_cli_package_remnants(
     name: &str,
-    _manager: &str,
+    manager: &str,
     package_path: &str,
     bin_names: Vec<String>,
 ) -> Vec<RemnantItem> {
@@ -1190,92 +1211,194 @@ pub fn get_cli_package_remnants(
     let localappdata = env::var_os("LOCALAPPDATA").map(PathBuf::from);
     let userprofile = env::var_os("USERPROFILE").map(PathBuf::from);
 
-    // 1. Check if the package folder still exists
-    let pkg_path = Path::new(package_path);
-    if pkg_path.exists() {
-        let size = calculate_dir_size(pkg_path);
+    let clean_name = name.rsplit('/').next().unwrap_or(name);
+    let package_path_buf = PathBuf::from(package_path);
+
+    // 1. The package path reported by the manager itself. This is the strongest
+    // evidence available and can be either a directory or a compiled binary.
+    if package_path_buf.exists() {
+        let size = if package_path_buf.is_dir() {
+            calculate_dir_size(&package_path_buf)
+        } else {
+            package_path_buf.metadata().map(|m| m.len()).unwrap_or(0)
+        };
         remnants.push(RemnantItem {
-            path: pkg_path.to_string_lossy().to_string(),
-            item_type: "Directory".to_string(),
+            path: package_path.to_string(),
+            item_type: if package_path_buf.is_dir() { "Directory" } else { "File" }.to_string(),
             size,
             confidence: "VeryHigh".to_string(),
             score: 100,
         });
     }
 
-    // 2. Scan bin directories for shims
-    let mut bin_dirs = Vec::new();
-
-    if let Some(ref p) = appdata {
-        bin_dirs.push(p.join("npm"));
-    }
-    if let Some(ref p) = localappdata {
-        bin_dirs.push(p.join("yarn").join("bin"));
-        bin_dirs.push(p.join("Yarn").join("bin"));
-    }
-    if let Some(ref p) = appdata {
-        bin_dirs.push(p.join("local").join("yarn").join("bin"));
-        bin_dirs.push(p.join("Yarn").join("global").join("node_modules").join(".bin"));
-        bin_dirs.push(p.join("Yarn").join("config").join("global").join("node_modules").join(".bin"));
-    }
-    if let Some(ref p) = localappdata {
-        bin_dirs.push(p.join("pnpm"));
-    }
-    if let Some(ref p) = appdata {
-        bin_dirs.push(p.join("pnpm"));
-    }
-    if let Some(ref p) = userprofile {
-        bin_dirs.push(p.join(".bun").join("bin"));
-        bin_dirs.push(p.join(".cargo").join("bin"));
-        bin_dirs.push(p.join("go").join("bin"));
-        bin_dirs.push(p.join(".deno").join("bin"));
-        bin_dirs.push(p.join(".dotnet").join("tools"));
-    }
-    if let Some(ref p) = appdata {
-        bin_dirs.push(p.join("Composer").join("vendor").join("bin"));
-    }
-
-    // Python Pip scripts folders
-    let python_parents = vec![appdata.clone(), localappdata.clone()];
-    for parent_opt in python_parents.into_iter().flatten() {
-        let python_dir = parent_opt.join("Python");
-        if python_dir.exists() {
-            if let Ok(versions) = fs::read_dir(&python_dir) {
-                for ver_entry in versions.filter_map(|e| e.ok()) {
-                    let scripts_dir = ver_entry.path().join("Scripts");
-                    if scripts_dir.exists() {
-                        bin_dirs.push(scripts_dir);
+    // 2. Package directories owned by the specific manager. Do not search the
+    // whole user profile or arbitrary dotfolders: ~/.aws, ~/.ssh and GOPATH
+    // are user data, not package remnants.
+    let mut package_dirs: Vec<PathBuf> = Vec::new();
+    match manager {
+        "npm" => {
+            if let Some(ref p) = appdata {
+                package_dirs.push(p.join("npm").join("node_modules").join(name));
+            }
+        }
+        "yarn" => {
+            if let Some(ref p) = appdata {
+                package_dirs.push(p.join("Yarn").join("global").join("node_modules").join(name));
+            }
+            if let Some(ref p) = localappdata {
+                package_dirs.push(p.join("Yarn").join("Data").join("global").join("node_modules").join(name));
+            }
+        }
+        "pnpm" => {
+            if let Some(ref p) = localappdata {
+                package_dirs.push(p.join("pnpm").join("node_modules").join(name));
+            }
+            if let Some(ref p) = appdata {
+                package_dirs.push(p.join("pnpm").join("node_modules").join(name));
+            }
+        }
+        "bun" => {
+            if let Some(ref p) = userprofile {
+                package_dirs.push(p.join(".bun").join("install").join("global").join("node_modules").join(name));
+            }
+        }
+        "dotnet" => {
+            if let Some(ref p) = userprofile {
+                package_dirs.push(p.join(".dotnet").join("tools").join(".store").join(name));
+            }
+        }
+        "composer" => {
+            if let Some(ref p) = appdata {
+                package_dirs.push(p.join("Composer").join("vendor").join(name));
+            }
+        }
+        "pip" => {
+            for parent in [appdata.as_ref(), localappdata.as_ref()].into_iter().flatten() {
+                let python_dir = parent.join("Python");
+                let Ok(versions) = fs::read_dir(&python_dir) else {
+                    continue;
+                };
+                for version in versions.filter_map(|entry| entry.ok()) {
+                    let site_packages = version.path().join("Lib").join("site-packages");
+                    if site_packages.is_dir() {
+                        package_dirs.push(site_packages.join(clean_name));
+                        package_dirs.push(site_packages.join(clean_name.replace('-', "_")));
                     }
                 }
             }
         }
+        _ => {}
+    }
+
+    for path in package_dirs {
+        if path.exists() && path != package_path_buf {
+            let size = if path.is_dir() {
+                calculate_dir_size(&path)
+            } else {
+                path.metadata().map(|m| m.len()).unwrap_or(0)
+            };
+            remnants.push(RemnantItem {
+                path: path.to_string_lossy().to_string(),
+                item_type: if path.is_dir() { "Directory" } else { "File" }.to_string(),
+                size,
+                confidence: "High".to_string(),
+                score: 85,
+            });
+        }
+    }
+
+    // 3. Bin shims owned by the package manager.
+    let mut bin_dirs: Vec<PathBuf> = Vec::new();
+    match manager {
+        "npm" => {
+            if let Some(ref p) = appdata {
+                bin_dirs.push(p.join("npm"));
+            }
+        }
+        "yarn" => {
+            if let Some(ref p) = localappdata {
+                bin_dirs.push(p.join("Yarn").join("bin"));
+                bin_dirs.push(p.join("Yarn").join("Data").join("global").join("node_modules").join(".bin"));
+            }
+            if let Some(ref p) = appdata {
+                bin_dirs.push(p.join("Yarn").join("bin"));
+                bin_dirs.push(p.join("Yarn").join("global").join("node_modules").join(".bin"));
+            }
+        }
+        "pnpm" => {
+            if let Some(ref p) = localappdata {
+                bin_dirs.push(p.join("pnpm"));
+            }
+            if let Some(ref p) = appdata {
+                bin_dirs.push(p.join("pnpm"));
+            }
+        }
+        "bun" => {
+            if let Some(ref p) = userprofile {
+                bin_dirs.push(p.join(".bun").join("bin"));
+            }
+        }
+        "cargo" => {
+            if let Some(ref p) = userprofile {
+                bin_dirs.push(p.join(".cargo").join("bin"));
+            }
+        }
+        "go" => {
+            if let Some(ref p) = userprofile {
+                bin_dirs.push(p.join("go").join("bin"));
+            }
+        }
+        "deno" => {
+            if let Some(ref p) = userprofile {
+                bin_dirs.push(p.join(".deno").join("bin"));
+            }
+        }
+        "dotnet" => {
+            if let Some(ref p) = userprofile {
+                bin_dirs.push(p.join(".dotnet").join("tools"));
+            }
+        }
+        "composer" => {
+            if let Some(ref p) = appdata {
+                bin_dirs.push(p.join("Composer").join("vendor").join("bin"));
+            }
+        }
+        "pip" => {
+            for parent in [appdata.as_ref(), localappdata.as_ref()].into_iter().flatten() {
+                for python_root in [parent.join("Python"), parent.join("Programs").join("Python")] {
+                    if let Ok(versions) = fs::read_dir(&python_root) {
+                        for version in versions.filter_map(|entry| entry.ok()) {
+                            let scripts = version.path().join("Scripts");
+                            if scripts.is_dir() {
+                                bin_dirs.push(scripts);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
     }
 
     bin_dirs.sort();
     bin_dirs.dedup();
 
     for bin_dir in bin_dirs {
-        if !bin_dir.exists() {
+        if !bin_dir.is_dir() {
             continue;
         }
-
         for bin_name in &bin_names {
-            let extensions = vec!["", ".cmd", ".ps1", ".bat", ".exe"];
-            for ext in extensions {
-                let file_name = if ext.is_empty() {
-                    bin_name.clone()
-                } else {
-                    format!("{}{}", bin_name, ext)
-                };
+            for extension in ["", ".cmd", ".ps1", ".bat", ".exe"] {
+                let file_name = format!("{}{}", bin_name, extension);
                 let shim_path = bin_dir.join(&file_name);
-                if shim_path.exists() && shim_path.is_file() {
+                if shim_path.is_file() {
                     if let Ok(meta) = shim_path.metadata() {
                         remnants.push(RemnantItem {
                             path: shim_path.to_string_lossy().to_string(),
                             item_type: "File".to_string(),
                             size: meta.len(),
                             confidence: "High".to_string(),
-                            score: 90,
+                            score: 80,
                         });
                     }
                 }
@@ -1283,185 +1406,42 @@ pub fn get_cli_package_remnants(
         }
     }
 
-    // 3. Scan configuration/cache directories
-    let mut search_names = Vec::new();
-    let clean_name = if name.contains('/') {
-        name.split('/').last().unwrap_or(name).to_string()
-    } else {
-        name.to_string()
-    };
-
-    search_names.push(clean_name.clone());
-    if name.contains('/') {
-        search_names.push(name.replace('/', "-"));
-        search_names.push(name.replace('@', ""));
-    }
-
-    for b in &bin_names {
-        if !search_names.contains(b) {
-            search_names.push(b.clone());
-        }
-    }
-
-    search_names.sort();
-    search_names.dedup();
-
-    let mut parent_dirs = Vec::new();
-    if let Some(ref p) = userprofile {
-        parent_dirs.push(p.clone());
-        parent_dirs.push(p.join(".config"));
-        parent_dirs.push(p.join(".cache"));
-    }
-    if let Some(ref p) = appdata {
-        parent_dirs.push(p.clone());
-    }
-    if let Some(ref p) = localappdata {
-        parent_dirs.push(p.clone());
-        parent_dirs.push(p.join("Temp"));
-    }
-
-    parent_dirs.sort();
-    parent_dirs.dedup();
-
-    for parent in parent_dirs {
-        if !parent.exists() {
-            continue;
-        }
-
-        for search_name in &search_names {
-            if search_name.len() < 3 || search_name == "cli" || search_name == "bin" || search_name == "npm" || search_name == "yarn" || search_name == "pnpm" || search_name == "bun" {
-                continue;
-            }
-
-            let folder_variations = vec![
-                format!(".{}", search_name),
-                search_name.clone(),
-            ];
-
-            for folder_var in folder_variations {
-                let target_path = parent.join(&folder_var);
-                if target_path.exists() && target_path.to_string_lossy().to_string() != package_path {
-                    if target_path.is_dir() {
-                        let size = calculate_dir_size(&target_path);
-                        let path_str = target_path.to_string_lossy().to_string();
-                        if !remnants.iter().any(|r| r.path == path_str) {
-                            remnants.push(RemnantItem {
-                                path: path_str,
-                                item_type: "Directory".to_string(),
-                                size,
-                                confidence: "Medium".to_string(),
-                                score: 70,
-                            });
-                        }
-                    } else if target_path.is_file() {
-                        if let Ok(meta) = target_path.metadata() {
-                            let path_str = target_path.to_string_lossy().to_string();
-                            if !remnants.iter().any(|r| r.path == path_str) {
-                                remnants.push(RemnantItem {
-                                    path: path_str,
-                                    item_type: "File".to_string(),
-                                    size: meta.len(),
-                                    confidence: "Medium".to_string(),
-                                    score: 70,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 4. Scan Environment Variables for remnants
-    let env_locations = vec![
-        ("HKCU", "Environment"),
-        ("HKLM", r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
-    ];
-
-    for (hive_name, subpath) in env_locations {
-        let hive = match hive_name {
-            "HKCU" => RegKey::predef(HKEY_CURRENT_USER),
-            "HKLM" => RegKey::predef(HKEY_LOCAL_MACHINE),
-            _ => continue,
-        };
-
-        if let Ok(key) = hive.open_subkey_with_flags(subpath, KEY_READ) {
-            for (val_name, val_data) in key.enum_values().filter_map(|x| x.ok()) {
-                let val_name_upper = val_name.to_uppercase();
-                let clean_name_upper = clean_name.to_uppercase();
-                
-                let is_match = val_name_upper == clean_name_upper 
-                    || val_name_upper.starts_with(&format!("{}_", clean_name_upper))
-                    || val_name_upper.ends_with(&format!("_{}", clean_name_upper));
-                
-                if is_match && val_name_upper != "PATH" && val_name_upper != "TEMP" && val_name_upper != "TMP" {
-                    let full_reg_path = format!(r"{}\{}", subpath, val_name);
-                    if crate::winutil::is_safe_registry_key(hive_name, &full_reg_path).is_ok() {
-                        remnants.push(RemnantItem {
-                            path: format!(r"{}\{}\{}", hive_name, subpath, val_name),
-                            item_type: "RegistryValue".to_string(),
-                            size: val_data.bytes.len() as u64,
-                            confidence: "High".to_string(),
-                            score: 85,
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    // 5. Scan npm cache _npx folder
-    if let Some(ref p) = appdata {
-        let npx_cache = p.join("npm-cache").join("_npx");
-        if npx_cache.exists() {
+    // 4. npm's _npx cache entries that explicitly reference this package.
+    if manager == "npm" {
+        if let Some(ref p) = appdata {
+            let npx_cache = p.join("npm-cache").join("_npx");
             if let Ok(entries) = fs::read_dir(&npx_cache) {
-                for entry in entries.filter_map(|e| e.ok()) {
+                for entry in entries.filter_map(|entry| entry.ok()) {
                     let path = entry.path();
-                    if path.is_dir() {
-                        let pkg_json = path.join("package.json");
-                        let mut matches_pkg = false;
-                        if pkg_json.exists() {
-                            if let Ok(content) = fs::read_to_string(&pkg_json) {
-                                if content.contains(&format!("\"{}\"", name)) {
-                                    matches_pkg = true;
-                                }
-                            }
-                        }
-                        if matches_pkg {
-                            let path_str = path.to_string_lossy().to_string();
-                            if crate::winutil::is_safe_to_delete(&path_str).is_ok() {
-                                let size = calculate_dir_size(&path);
-                                remnants.push(RemnantItem {
-                                    path: path_str,
-                                    item_type: "Directory".to_string(),
-                                    size,
-                                    confidence: "High".to_string(),
-                                    score: 90,
-                                });
-                            }
-                        }
+                    if !path.is_dir() {
+                        continue;
+                    }
+                    let package_json = path.join("package.json");
+                    let Ok(content) = fs::read_to_string(&package_json) else {
+                        continue;
+                    };
+                    if content.contains(&format!("\"{}\"", name))
+                        || content.contains(&format!("\"{}\"", clean_name))
+                    {
+                        let size = calculate_dir_size(&path);
+                        remnants.push(RemnantItem {
+                            path: path.to_string_lossy().to_string(),
+                            item_type: "Directory".to_string(),
+                            size,
+                            confidence: "High".to_string(),
+                            score: 80,
+                        });
                     }
                 }
             }
         }
     }
 
-    // Centralized Safety Gate Filter
-    remnants.retain(|item| {
-        match item.item_type.as_str() {
-            "File" | "Directory" => crate::winutil::is_safe_to_delete(&item.path).is_ok(),
-            "RegistryKey" | "RegistryValue" => {
-                let parts: Vec<&str> = item.path.splitn(2, '\\').collect();
-                if parts.len() >= 2 {
-                    crate::winutil::is_safe_registry_key(parts[0], parts[1]).is_ok()
-                } else {
-                    false
-                }
-            }
-            _ => false,
-        }
-    });
+    // Centralized Safety Gate Filter. Remnant policy also blocks personal and
+    // credential folders; never fall back to a generic delete gate here.
+    remnants.retain(|item| crate::winutil::is_safe_remnant_path(&item.path).is_ok());
 
+    remnants.sort_by(|a, b| b.score.cmp(&a.score));
     remnants
 }
 
@@ -1494,6 +1474,18 @@ mod tests {
         println!("Dynamic pip path: {:?}", pip_path);
         let go_path = get_single_dynamic_cache_path("go", "go env GOCACHE");
         println!("Dynamic go path: {:?}", go_path);
+    }
+
+    #[test]
+    fn test_distribution_name_from_dist_info() {
+        assert_eq!(
+            distribution_name_from_dist_info("scikit-learn-1.3.0.dist-info"),
+            "scikit-learn"
+        );
+        assert_eq!(
+            distribution_name_from_dist_info("requests-2.31.0.dist-info"),
+            "requests"
+        );
     }
 
     #[test]

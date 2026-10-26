@@ -55,10 +55,10 @@
   }
 
   function toggleSelectAllApps(checked: boolean) {
+    // Replace the selection instead of merging: select-all must never leave
+    // hidden rows selected from a previous filter.
     if (checked) {
-      filteredApps.forEach(app => {
-        selectedApps[app.id] = true;
-      });
+      selectedApps = Object.fromEntries(filteredApps.map(app => [app.id, true]));
     } else {
       selectedApps = {};
     }
@@ -70,9 +70,11 @@
 
   // Bulk Uninstall States
   let isBulkUninstalling = $state(false);
-  let bulkUninstallStep = $state<"idle" | "running" | "remnants_list" | "done">("idle");
+  let bulkUninstallStep = $state<"idle" | "running" | "remnants_list" | "done" | "error">("idle");
   let bulkUninstallLog = $state<string[]>([]);
-  let bulkAutoPurge = $state(true);
+  let bulkUninstallError = $state("");
+  // Auto-purge is destructive and opt-in. Users must review leftovers first.
+  let bulkAutoPurge = $state(false);
   let bulkRemnants = $state<RemnantItem[]>([]);
   let selectedBulkRemnants = $state<Record<string, boolean>>({});
   let bulkUninstallCurrent = $state(0);
@@ -157,6 +159,8 @@
     })
   );
 
+  let selectedVisibleAppsCount = $derived(filteredApps.filter(app => !!selectedApps[app.id]).length);
+
   // Helper to format file size
   function formatSize(bytes: number | null): string {
     if (bytes === null || bytes <= 0 || isNaN(bytes)) return "Unknown";
@@ -214,9 +218,10 @@
         installLocation: app.install_location,
       });
 
-      // Select all by default
+      // Only auto-select the strongest evidence. High/Medium/Low items remain
+      // visible but require an explicit user choice.
       remnants.forEach((item) => {
-        selectedRemnants[item.path] = true;
+        selectedRemnants[item.path] = item.confidence === "VeryHigh";
       });
     } catch (e) {
       console.error("Failed to scan remnants:", e);
@@ -224,6 +229,26 @@
     } finally {
       isScanningRemnants = false;
       uninstallStep = "remnants_list";
+    }
+  }
+
+  async function removeUninstallEntry(app: InstalledApp) {
+    const confirmed = confirm(
+      `Remove the uninstall entry for "${app.display_name}"?\n\n` +
+      `Registry key: ${app.registry_path}\n\n` +
+      `This only removes the registry record. Files are NOT deleted.`
+    );
+    if (!confirmed) return;
+
+    try {
+      await invoke("remove_uninstall_entry", {
+        hive: app.hive,
+        registryPath: app.registry_path,
+      });
+      toast.show(`Removed the uninstall entry for ${app.display_name}.`, "success");
+      await loadApps();
+    } catch (e: any) {
+      toast.show(`Failed to remove entry: ${e.toString()}`, "error");
     }
   }
 
@@ -270,9 +295,22 @@
     selectedRemnants = {};
     purgeResult = null;
     uninstallStep = "idle";
+    // The app may have been removed by the official uninstaller even if the
+    // user closes the leftover review without purging anything.
+    void loadApps();
   }
 
-  function exportApps(format: "csv" | "json") {
+  function escapeHtml(value: string): string {
+    return value.replace(/[&<>"']/g, (character) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    })[character] ?? character);
+  }
+
+  function exportApps(format: "csv" | "json" | "html") {
     if (filteredApps.length === 0) {
       toast.show("No application data to export!", "warning");
       return;
@@ -286,6 +324,33 @@
       content = JSON.stringify(filteredApps, null, 2);
       mimeType = "application/json";
       filename = `purgekit_apps_${new Date().toISOString().slice(0, 10)}.json`;
+    } else if (format === "html") {
+      const rows = filteredApps.map((app) => `
+        <tr>
+          <td>${escapeHtml(app.display_name)}</td>
+          <td>${escapeHtml(app.publisher || "Unknown")}</td>
+          <td>${escapeHtml(app.display_version || "—")}</td>
+          <td>${formatSize(app.estimated_size)}</td>
+          <td>${escapeHtml(app.is_uwp ? "STORE" : app.hive)}</td>
+          <td>${app.is_verified === true ? "Verified" : app.is_verified === false ? "Unverified" : "Unknown"}</td>
+          <td class="path">${escapeHtml(app.install_location || app.registry_path)}</td>
+        </tr>`).join("");
+
+      content = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>PurgeKit application report</title>
+<style>
+body{font:14px system-ui,Segoe UI,sans-serif;background:#0f1115;color:#e6e8eb;padding:24px}
+h1{font-size:20px;margin:0 0 4px}p{color:#9aa4b2;margin:0 0 20px}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:9px 10px;border-bottom:1px solid #2a2f3a}
+th{color:#9aa4b2;font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:#9aa4b2}
+</style></head><body>
+<h1>PurgeKit application report</h1>
+<p>${filteredApps.length} applications · generated ${new Date().toLocaleString()}</p>
+<table><thead><tr><th>Name</th><th>Publisher</th><th>Version</th><th>Size</th><th>Hive</th><th>Signature</th><th>Location</th></tr></thead>
+<tbody>${rows}</tbody></table></body></html>`;
+      mimeType = "text/html;charset=utf-8";
+      filename = `purgekit_apps_${new Date().toISOString().slice(0, 10)}.html`;
     } else {
       const headers = ["ID", "Name", "Version", "Publisher", "InstallLocation", "RegistryPath", "Hive", "IsStore", "IsVerified"];
       const rows = filteredApps.map((app) => [
@@ -324,11 +389,15 @@
   }
 
   async function startBulkUninstall() {
-    const selectedIds = Object.entries(selectedApps).filter(([_, val]) => val).map(([id, _]) => id);
+    const visibleIds = new Set(filteredApps.map((app) => app.id));
+    const selectedIds = Object.entries(selectedApps)
+      .filter(([id, val]) => val && visibleIds.has(id))
+      .map(([id]) => id);
     if (selectedIds.length === 0) return;
-    
+
     isBulkUninstalling = true;
     bulkUninstallStep = "running";
+    bulkUninstallError = "";
     bulkUninstallLog = [`Initializing bulk silent uninstallation for ${selectedIds.length} application(s)...`];
     bulkRemnants = [];
     selectedBulkRemnants = {};
@@ -342,7 +411,7 @@
       bulkRemnants = remainingRemnants;
       
       bulkRemnants.forEach((item) => {
-        selectedBulkRemnants[item.path] = true;
+        selectedBulkRemnants[item.path] = item.confidence === "VeryHigh";
       });
       
       if (bulkRemnants.length > 0) {
@@ -355,8 +424,11 @@
       }
     } catch (e: any) {
       console.error("Bulk silent uninstallation failed:", e);
+      bulkUninstallError = e.toString();
       toast.show(`Bulk uninstallation error: ${e.toString()}`, "error");
-      bulkUninstallStep = "done";
+      bulkUninstallStep = "error";
+      clearAppSelection();
+      await loadApps();
     }
   }
 
@@ -442,6 +514,12 @@
           >
             Export to JSON
           </button>
+          <button
+            onclick={() => exportApps("html")}
+            class="w-full text-left px-2.5 py-1.5 rounded-md hover:bg-elevated-bg text-xs text-text-secondary hover:text-text-primary transition-colors font-sans font-semibold cursor-pointer"
+          >
+            Export to HTML
+          </button>
         </div>
       </div>
     </div>
@@ -510,7 +588,7 @@
                   <input
                     type="checkbox"
                     aria-label="Select all applications"
-                    checked={selectedAppsCount === filteredApps.length && filteredApps.length > 0}
+                    checked={selectedVisibleAppsCount === filteredApps.length && filteredApps.length > 0}
                     onchange={(e) => toggleSelectAllApps(e.currentTarget.checked)}
                     class="rounded border-border-default text-accent focus:ring-accent bg-surface-bg cursor-pointer w-4 h-4"
                   />
@@ -594,14 +672,25 @@
                   <!-- Actions -->
                   <td class="py-4 px-5 text-right font-sans">
                     <div class="flex items-center justify-end gap-2">
-                      <button
-                        onclick={() => startUninstallFlow(app)}
-                        title="Uninstall and Deep Clean Remnants"
-                        class="px-2.5 py-1.5 rounded-lg bg-danger/10 hover:bg-danger text-danger hover:text-white transition-all border border-danger/20 flex items-center gap-1.5 text-xs font-semibold active:scale-95 cursor-pointer"
-                      >
-                        <Trash2 class="w-3.5 h-3.5" />
-                        Uninstall
-                      </button>
+                      {#if app.uninstall_string}
+                        <button
+                          onclick={() => startUninstallFlow(app)}
+                          title="Uninstall and Deep Clean Remnants"
+                          class="px-2.5 py-1.5 rounded-lg bg-danger/10 hover:bg-danger text-danger hover:text-white transition-all border border-danger/20 flex items-center gap-1.5 text-xs font-semibold active:scale-95 cursor-pointer"
+                        >
+                          <Trash2 class="w-3.5 h-3.5" />
+                          Uninstall
+                        </button>
+                      {:else}
+                        <button
+                          onclick={() => removeUninstallEntry(app)}
+                          title="Remove only the orphaned uninstall registry entry"
+                          class="px-2.5 py-1.5 rounded-lg bg-amber-950/30 hover:bg-amber-600 text-amber-300 hover:text-white transition-all border border-amber-800/40 flex items-center gap-1.5 text-xs font-semibold active:scale-95 cursor-pointer"
+                        >
+                          <Database class="w-3.5 h-3.5" />
+                          Remove Entry
+                        </button>
+                      {/if}
                     </div>
                   </td>
                 </tr>
@@ -627,7 +716,9 @@
           </div>
           <button
             onclick={closeRemnantsModal}
-            class="p-1.5 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-text-secondary hover:text-text-primary transition-colors"
+            disabled={isPurging || uninstallStep === "uninstalling" || uninstallStep === "scanning"}
+            class="p-1.5 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-text-secondary hover:text-text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            aria-label="Close remnants dialog"
           >
             <X class="w-4 h-4" />
           </button>
@@ -788,7 +879,7 @@
   {/if}
 
   <!-- Floating Bulk Action Bar -->
-  {#if selectedAppsCount >= 2 && !isBulkUninstalling}
+  {#if selectedVisibleAppsCount >= 2 && !isBulkUninstalling}
     <div class="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 w-full max-w-2xl px-4 animate-slide-up">
       <div class="backdrop-blur-md bg-sidebar-bg/95 border border-border-strong rounded-xl p-4 shadow-2xl flex items-center justify-between gap-4">
         <div class="flex items-center gap-3">
@@ -796,8 +887,13 @@
             <CheckSquare class="w-4.5 h-4.5" />
           </div>
           <div>
-            <h4 class="text-xs font-bold text-text-primary">{selectedAppsCount} apps selected</h4>
-            <p class="text-[10px] text-text-muted mt-0.5 font-sans">Ready for batch silent uninstallation</p>
+            <h4 class="text-xs font-bold text-text-primary">{selectedVisibleAppsCount} apps selected</h4>
+            <p class="text-[10px] text-text-muted mt-0.5 font-sans">
+              Ready for batch silent uninstallation
+              {#if selectedAppsCount > selectedVisibleAppsCount}
+                · {selectedAppsCount - selectedVisibleAppsCount} hidden ignored
+              {/if}
+            </p>
           </div>
         </div>
 
@@ -857,10 +953,11 @@
               {/if}
             </p>
           </div>
-          {#if bulkUninstallStep === "done"}
+          {#if bulkUninstallStep === "done" || bulkUninstallStep === "error"}
             <button
               onclick={closeBulkModal}
               class="p-1.5 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-text-secondary hover:text-text-primary transition-colors cursor-pointer"
+              aria-label="Close bulk uninstallation dialog"
             >
               <X class="w-4 h-4" />
             </button>
@@ -988,6 +1085,22 @@
               </div>
             </div>
 
+          {:else if bulkUninstallStep === "error"}
+            <div class="py-12 flex flex-col items-center justify-center text-center gap-4 animate-fade-in">
+              <div class="w-16 h-16 rounded-full bg-danger/10 border border-danger/20 flex items-center justify-center text-danger shadow-inner">
+                <X class="w-8 h-8" />
+              </div>
+              <div>
+                <h4 class="text-base font-bold text-text-primary">Bulk Uninstall Failed</h4>
+                <p class="text-xs text-text-muted mt-2 max-w-sm leading-relaxed break-all">
+                  {bulkUninstallError || "The operation could not be completed."}
+                </p>
+                <p class="text-[11px] text-text-muted mt-2">
+                  Some applications may have been processed before the error. The list was refreshed.
+                </p>
+              </div>
+            </div>
+
           {:else if bulkUninstallStep === "done"}
             <div class="py-12 flex flex-col items-center justify-center text-center gap-4 animate-fade-in">
               <div class="w-16 h-16 rounded-full bg-success/10 border border-success/20 flex items-center justify-center text-success shadow-inner">
@@ -1006,7 +1119,7 @@
         </div>
 
         <!-- Footer -->
-        {#if bulkUninstallStep === "remnants_list" || bulkUninstallStep === "done"}
+        {#if bulkUninstallStep === "remnants_list" || bulkUninstallStep === "done" || bulkUninstallStep === "error"}
           <footer class="p-6 border-t border-border-default flex justify-end items-center gap-3 bg-sidebar-bg">
             {#if bulkUninstallStep === "remnants_list"}
               <button

@@ -48,12 +48,15 @@ fn get_scan_locations(level: &str) -> Vec<ScanTarget> {
     let mut targets = Vec::new();
     let unsub = r"Microsoft\Windows\CurrentVersion\Uninstall";
 
-    // ═══ TIER 1: Primary Install Dirs (base_score: 80) ═══
+    // ═══ TIER 1: Primary Install Dirs (base_score: 70) ═══
+    // A name match here is not enough for auto-selection: a vendor folder can
+    // be shared by several applications. Strong evidence comes from the app's
+    // own InstallLocation scan below.
     if let Some(pf) = env::var_os("ProgramFiles").map(PathBuf::from) {
-        targets.push(dir_target(pf, 80));
+        targets.push(dir_target(pf, 70));
     }
     if let Some(pf86) = env::var_os("ProgramFiles(x86)").map(PathBuf::from) {
-        targets.push(dir_target(pf86, 80));
+        targets.push(dir_target(pf86, 70));
     }
 
     // ═══ TIER 2: User AppData & ProgramData (base_score: 60) ═══
@@ -75,17 +78,10 @@ fn get_scan_locations(level: &str) -> Vec<ScanTarget> {
 
     // ═══ TIER 3: User Profile & Public (base_score: 40) ═══
     if let Some(userprofile) = env::var_os("USERPROFILE").map(PathBuf::from) {
-        targets.push(dir_target(userprofile.clone(), 40));
+        // Personal folders (Desktop, Documents, Downloads, ...) are intentionally
+        // excluded. An app name can equal a user's folder name, and guessing in
+        // those locations has a direct data-loss risk.
         targets.push(dir_target(userprofile.join(".config"), 45));
-        targets.push(dir_target(userprofile.join("Documents"), 35));
-        targets.push(dir_target(userprofile.join("Saved Games"), 40));
-        targets.push(dir_target(userprofile.join("Desktop"), 60));
-    }
-    if let Some(public_dir) = env::var_os("PUBLIC").map(PathBuf::from) {
-        targets.push(dir_target(public_dir.clone(), 35));
-        targets.push(dir_target(public_dir.join("Documents"), 35));
-        targets.push(dir_target(public_dir.join("Downloads"), 35));
-        targets.push(dir_target(public_dir.join("Desktop"), 55));
     }
 
     // ═══ TIER 6: Registry SOFTWARE (base_score: 50) ═══
@@ -137,7 +133,9 @@ pub fn scan_app_remnants(
     // If install location is known and exists, scan it directly
     if let Some(loc) = install_location {
         let loc_path = Path::new(loc);
-        if loc_path.exists() {
+        // Refuse to treat a protected root (Program Files, ProgramData, a user
+        // profile, ...) as an "install location" even if the registry claims so.
+        if loc_path.exists() && crate::winutil::is_safe_remnant_path(loc).is_ok() {
             scan_directory_remnants_recursive(loc_path, &match_token, 80, &mut remnants);
         }
     }
@@ -198,8 +196,11 @@ pub fn scan_app_remnants(
     // Centralized Safety Gate Filter
     unique_remnants.retain(|item| {
         match item.item_type.as_str() {
-            "File" | "Directory" => crate::winutil::is_safe_to_delete(&item.path).is_ok(),
-            "ScheduledTask" => crate::winutil::is_safe_to_delete(&item.path).is_ok(),
+            "File" | "Directory" => crate::winutil::is_safe_remnant_path(&item.path).is_ok(),
+            // Task Scheduler XML lives under the protected SystemRoot tree, so the
+            // generic file gate would reject every scheduled task. Use the dedicated
+            // Tasks-folder boundary instead.
+            "ScheduledTask" => crate::startup_manager::is_task_file_path(&item.path),
             "RegistryKey" | "RegistryValue" => {
                 let parts: Vec<&str> = item.path.splitn(2, '\\').collect();
                 if parts.len() >= 2 {
@@ -264,6 +265,36 @@ fn is_remnant_match(name: &str, token: &str, strict: bool) -> bool {
     let words: Vec<&str> = name_lower.split(|c: char| c.is_whitespace() || c == '-' || c == '_' || c == '.').collect();
     if words.contains(&token_lower.as_str()) {
         return true;
+    }
+
+    false
+}
+
+fn is_forbidden_remnant_scan_dir(path: &Path) -> bool {
+    let Some(user_profile) = env::var_os("USERPROFILE").map(PathBuf::from) else {
+        return false;
+    };
+    let path_canon = crate::winutil::canonicalize_path_safety(&path.to_string_lossy())
+        .to_string_lossy()
+        .to_lowercase();
+    let user_profile_canon =
+        crate::winutil::canonicalize_path_safety(&user_profile.to_string_lossy())
+            .to_string_lossy()
+            .to_lowercase();
+
+    for folder in [
+        "documents",
+        "desktop",
+        "downloads",
+        "pictures",
+        "music",
+        "videos",
+        "saved games",
+    ] {
+        let protected = format!(r"{}\{}", user_profile_canon, folder);
+        if path_canon == protected || path_canon.starts_with(&format!(r"{}\", protected)) {
+            return true;
+        }
     }
 
     false
@@ -487,6 +518,10 @@ fn scan_directory_remnants_recursive_impl(
         return;
     }
 
+    if is_forbidden_remnant_scan_dir(parent_dir) {
+        return;
+    }
+
     let entries = match fs::read_dir(parent_dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -701,9 +736,34 @@ fn has_recent_activity(path: &str, threshold_seconds: u64) -> bool {
     false
 }
 
+fn normalize_registry_item_path(path: &str) -> Result<(String, String), String> {
+    let parts: Vec<&str> = path.splitn(2, '\\').collect();
+    if parts.len() < 2 {
+        return Err("Invalid registry path".to_string());
+    }
+
+    let hive = parts[0].to_uppercase();
+    if hive != "HKCU" && hive != "HKLM" {
+        return Err(format!("Unsupported hive: {}", hive));
+    }
+
+    let subpath = parts[1];
+    let normalized_subpath = if hive == "HKLM"
+        && subpath.to_uppercase().starts_with(r"WOW6432NODE\")
+    {
+        format!(r"SOFTWARE\Wow6432Node\{}", &subpath[12..])
+    } else {
+        subpath.to_string()
+    };
+
+    Ok((hive, normalized_subpath))
+}
+
 pub fn purge_remnant_item(item: &RemnantItem) -> Result<(), String> {
     match item.item_type.as_str() {
         "File" | "Directory" => {
+            crate::winutil::is_safe_remnant_path(&item.path)?;
+
             let path = Path::new(&item.path);
             if path.exists() {
                 let settings = crate::settings::load_settings();
@@ -718,6 +778,13 @@ pub fn purge_remnant_item(item: &RemnantItem) -> Result<(), String> {
             }
         }
         "ScheduledTask" => {
+            if !crate::startup_manager::is_task_file_path(&item.path) {
+                return Err(format!(
+                    "Scheduled task path is outside the Windows Tasks directory: {}",
+                    item.path
+                ));
+            }
+
             let path = Path::new(&item.path);
             let task_name = crate::startup_manager::get_task_name_from_path(path)
                 .unwrap_or_else(|| {
@@ -752,10 +819,17 @@ pub fn purge_remnant_item(item: &RemnantItem) -> Result<(), String> {
             }
         }
         "RegistryKey" | "RegistryValue" => {
+            let (hive_name, normalized_path) = normalize_registry_item_path(&item.path)?;
+            crate::winutil::is_safe_registry_key(&hive_name, &normalized_path)?;
+
             // Check if this key represents a Windows Service under SYSTEM\CurrentControlSet\Services
-            let path_upper = item.path.to_uppercase();
-            if path_upper.starts_with(r"HKLM\SYSTEM\CURRENTCONTROLSET\SERVICES\") {
-                let svc_subpath = &item.path[r"HKLM\SYSTEM\CurrentControlSet\Services\".len()..];
+            let services_prefix = r"SYSTEM\CurrentControlSet\Services\";
+            if item.item_type == "RegistryKey"
+                && normalized_path
+                    .to_uppercase()
+                    .starts_with(&services_prefix.to_uppercase())
+            {
+                let svc_subpath = &normalized_path[services_prefix.len()..];
                 if !svc_subpath.is_empty() && !svc_subpath.contains('\\') {
                     let service_name = svc_subpath;
                     if !crate::winutil::CRITICAL_WINDOWS_SERVICES.iter().any(|s| s.eq_ignore_ascii_case(service_name)) {
@@ -770,39 +844,41 @@ pub fn purge_remnant_item(item: &RemnantItem) -> Result<(), String> {
                             .args(["stop", service_name])
                             .output();
 
-                        let _ = Command::new("sc.exe")
+                        let delete = Command::new("sc.exe")
                             .creation_flags(CREATE_NO_WINDOW)
                             .env("PATH", &secure_path)
                             .args(["delete", service_name])
                             .output();
+
+                        match delete {
+                            Ok(output) if output.status.success() => {}
+                            // ERROR_SERVICE_DOES_NOT_EXIST: the SCM entry is already
+                            // gone, so removing the leftover registry key is safe.
+                            Ok(output) if output.status.code() == Some(1060) => {}
+                            Ok(output) => {
+                                let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                                return Err(format!(
+                                    "Failed to delete service '{}'{}",
+                                    service_name,
+                                    if detail.is_empty() { String::new() } else { format!(": {}", detail) }
+                                ));
+                            }
+                            Err(e) => {
+                                return Err(format!(
+                                    "Failed to execute sc.exe while deleting service '{}': {}",
+                                    service_name, e
+                                ));
+                            }
+                        }
                     }
                 }
             }
-
-            let (hive_name, normalized_path) = {
-                let parts: Vec<&str> = item.path.splitn(2, '\\').collect();
-                if parts.len() < 2 {
-                    return Err("Invalid registry path".to_string());
-                }
-                let hive = parts[0].to_uppercase();
-                let subpath = parts[1];
-                let norm_subpath = if hive == "HKLM" && subpath.to_uppercase().starts_with(r"WOW6432NODE\") {
-                    format!(r"SOFTWARE\Wow6432Node\{}", &subpath[12..])
-                } else {
-                    subpath.to_string()
-                };
-                (hive, norm_subpath)
-            };
 
             let root = match hive_name.as_str() {
                 "HKCU" => RegKey::predef(HKEY_CURRENT_USER),
                 "HKLM" => RegKey::predef(HKEY_LOCAL_MACHINE),
                 _ => return Err(format!("Unsupported hive: {}", hive_name)),
             };
-
-            if let Err(e) = crate::winutil::is_safe_registry_key(&hive_name, &normalized_path) {
-                return Err(e);
-            }
 
             let last_backslash = normalized_path.rfind('\\')
                 .ok_or_else(|| format!("Invalid registry path: {}", normalized_path))?;

@@ -5,11 +5,10 @@ use std::path::{Path, PathBuf};
 
 use winreg::enums::*;
 use winreg::RegKey;
-use rusqlite::Connection;
 use uuid::Uuid;
 use walkdir::WalkDir;
 
-use crate::db::{get_db_path, get_snapshots_dir};
+use crate::db::get_snapshots_dir;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SnapshotData {
@@ -67,8 +66,7 @@ pub fn create_snapshot(name: &str) -> Result<SnapshotRecord, String> {
     fs::write(&data_file_path, json_data).map_err(|e| e.to_string())?;
 
     // Save to DB
-    let db_path = get_db_path();
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = crate::db::open_connection()?;
     conn.execute(
         "INSERT INTO snapshots (id, name, created_at, data_file_path, reg_count, file_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         rusqlite::params![&id, name, &created_at, &data_file_path.to_string_lossy().to_string(), registry_keys.len() as i64, files.len() as i64],
@@ -85,8 +83,7 @@ pub fn create_snapshot(name: &str) -> Result<SnapshotRecord, String> {
 }
 
 pub fn list_snapshots() -> Result<Vec<SnapshotRecord>, String> {
-    let db_path = get_db_path();
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = crate::db::open_connection()?;
     
     let mut stmt = conn.prepare("SELECT id, name, created_at, data_file_path, reg_count, file_count FROM snapshots ORDER BY created_at DESC")
         .map_err(|e| e.to_string())?;
@@ -129,8 +126,7 @@ pub fn list_snapshots() -> Result<Vec<SnapshotRecord>, String> {
 }
 
 pub fn delete_snapshot_by_id(id: &str) -> Result<(), String> {
-    let db_path = get_db_path();
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = crate::db::open_connection()?;
     
     // Find file path to delete JSON
     let mut stmt = conn.prepare("SELECT data_file_path FROM snapshots WHERE id = ?1")
@@ -190,8 +186,7 @@ pub fn compare_snapshots_by_id(before_id: &str, after_id: &str) -> Result<Snapsh
 }
 
 fn load_snapshot_data(id: &str) -> Result<SnapshotData, String> {
-    let db_path = get_db_path();
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = crate::db::open_connection()?;
     
     let mut stmt = conn.prepare("SELECT data_file_path FROM snapshots WHERE id = ?1")
         .map_err(|e| e.to_string())?;

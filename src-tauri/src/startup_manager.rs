@@ -7,6 +7,43 @@ use winreg::RegKey;
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+const ALLOWED_RUN_SUBPATHS: &[&str] = &[
+    r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+    r"SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce",
+    r"SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Run",
+    r"SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\RunOnce",
+];
+
+fn parse_registry_startup_id(id: &str) -> Result<(&str, &str, &str), String> {
+    let mut parts = id.splitn(4, '|');
+    if parts.next() != Some("reg") {
+        return Err("Invalid registry startup ID".to_string());
+    }
+
+    let hive_name = parts
+        .next()
+        .ok_or_else(|| "Invalid registry startup ID".to_string())?;
+    let subpath = parts
+        .next()
+        .ok_or_else(|| "Invalid registry startup ID".to_string())?;
+    // splitn(4, ...) keeps any '|' in the value name intact.
+    let value_name = parts
+        .next()
+        .ok_or_else(|| "Invalid registry startup ID".to_string())?;
+
+    if !matches!(hive_name, "HKCU" | "HKLM") {
+        return Err("Invalid registry hive".to_string());
+    }
+    if !ALLOWED_RUN_SUBPATHS.contains(&subpath) {
+        return Err("Access Denied: startup registry path is not an allowed Run/RunOnce key.".to_string());
+    }
+    if value_name.trim().is_empty() {
+        return Err("Invalid startup value name".to_string());
+    }
+
+    Ok((hive_name, subpath, value_name))
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct StartupItem {
     pub id: String,
@@ -46,7 +83,7 @@ fn is_in_startup_dir(path_str: &str) -> bool {
 
         if path_norm_str.starts_with(&dir_norm_str) {
             let remain = &path_norm_str[dir_norm_str.len()..];
-            if remain.is_empty() || remain.starts_with('\\') || remain.starts_with('/') {
+            if !remain.is_empty() && (remain.starts_with('\\') || remain.starts_with('/')) {
                 return true;
             }
         }
@@ -103,11 +140,15 @@ fn is_in_tasks_dir(path_str: &str) -> bool {
 
     if path_norm_str.starts_with(&dir_norm_str) {
         let remain = &path_norm_str[dir_norm_str.len()..];
-        if remain.is_empty() || remain.starts_with('\\') || remain.starts_with('/') {
+        if !remain.is_empty() && (remain.starts_with('\\') || remain.starts_with('/')) {
             return true;
         }
     }
     false
+}
+
+pub(crate) fn is_task_file_path(path_str: &str) -> bool {
+    is_in_tasks_dir(path_str) && Path::new(path_str).is_file()
 }
 
 pub fn get_task_name_from_path(task_path: &Path) -> Option<String> {
@@ -345,19 +386,12 @@ pub fn list_startup_items() -> Result<Vec<StartupItem>, String> {
 }
 
 pub fn set_startup_item_status(id: String, enabled: bool) -> Result<(), String> {
-    let parts: Vec<&str> = id.split('|').collect();
-    if parts.len() < 2 {
-        return Err("Invalid startup ID".to_string());
-    }
+    let (item_type, rest) = id
+        .split_once('|')
+        .ok_or_else(|| "Invalid startup ID".to_string())?;
 
-    let item_type = parts[0];
     if item_type == "reg" {
-        if parts.len() < 4 {
-            return Err("Invalid registry startup ID".to_string());
-        }
-        let hive_name = parts[1];
-        let subpath = parts[2];
-        let value_name = parts[3];
+        let (hive_name, subpath, value_name) = parse_registry_startup_id(&id)?;
 
         if hive_name == "HKLM" && !crate::settings::check_is_admin() {
             return Err("Modifying system startup items (HKLM) requires Administrator privileges. Please restart the application as Administrator.".to_string());
@@ -382,7 +416,9 @@ pub fn set_startup_item_status(id: String, enabled: bool) -> Result<(), String> 
             parent_key.set_raw_value(value_name, &raw_val)
                 .map_err(|e| format!("Failed to write registry value: {}", e))?;
             
-            let _ = disabled_key.delete_value(value_name);
+            disabled_key
+                .delete_value(value_name)
+                .map_err(|e| format!("Failed to remove the enabled Run value: {}", e))?;
         } else {
             // Disable: Move from parent key to PurgeKit_Disabled subkey
             let parent_key = root.open_subkey_with_flags(subpath, KEY_READ | KEY_WRITE)
@@ -398,16 +434,21 @@ pub fn set_startup_item_status(id: String, enabled: bool) -> Result<(), String> 
             disabled_key.set_raw_value(value_name, &raw_val)
                 .map_err(|e| format!("Failed to save disabled registry value: {}", e))?;
             
-            let _ = parent_key.delete_value(value_name);
+            parent_key
+                .delete_value(value_name)
+                .map_err(|e| format!("Failed to remove the enabled Run value: {}", e))?;
         }
     } else if item_type == "file" {
-        let file_path_str = parts[1];
+        let file_path_str = rest;
         if !is_in_startup_dir(file_path_str) {
             return Err("Access Denied: Startup file must reside inside a Windows Startup folder.".to_string());
         }
         let path = Path::new(file_path_str);
         if !path.exists() {
             return Err("Startup file does not exist".to_string());
+        }
+        if !path.is_file() {
+            return Err("Startup path is not a file".to_string());
         }
 
         // For system folder (Common Startup), check admin rights
@@ -437,9 +478,9 @@ pub fn set_startup_item_status(id: String, enabled: bool) -> Result<(), String> 
             }
         }
     } else if item_type == "task" {
-        let file_path_str = parts[1];
-        if !is_in_tasks_dir(file_path_str) {
-            return Err("Access Denied: Scheduled task file must reside inside the Windows Tasks folder.".to_string());
+        let file_path_str = rest;
+        if !is_task_file_path(file_path_str) {
+            return Err("Access Denied: Scheduled task must be a file inside the Windows Tasks folder.".to_string());
         }
         if !crate::settings::check_is_admin() {
             return Err("Modifying scheduled tasks requires Administrator privileges. Please restart the application as Administrator.".to_string());
@@ -470,24 +511,12 @@ pub fn set_startup_item_status(id: String, enabled: bool) -> Result<(), String> 
 }
 
 pub fn delete_startup_item(id: String) -> Result<(), String> {
-    let parts: Vec<&str> = id.split('|').collect();
-    if parts.len() < 2 {
-        return Err("Invalid startup ID".to_string());
-    }
+    let (item_type, rest) = id
+        .split_once('|')
+        .ok_or_else(|| "Invalid startup ID".to_string())?;
 
-    let item_type = parts[0];
     if item_type == "reg" {
-        if parts.len() < 4 {
-            return Err("Invalid registry startup ID".to_string());
-        }
-        let hive_name = parts[1];
-        let subpath = parts[2];
-        let value_name = parts[3];
-
-        let full_reg_path = format!(r"{}\{}", subpath, value_name);
-        if let Err(e) = crate::winutil::is_safe_registry_key(hive_name, &full_reg_path) {
-            return Err(e);
-        }
+        let (hive_name, subpath, value_name) = parse_registry_startup_id(&id)?;
 
         if hive_name == "HKLM" && !crate::settings::check_is_admin() {
             return Err("Deleting system startup items (HKLM) requires Administrator privileges. Please restart the application as Administrator.".to_string());
@@ -497,17 +526,25 @@ pub fn delete_startup_item(id: String) -> Result<(), String> {
             .ok_or_else(|| "Invalid registry hive".to_string())?;
         let root = RegKey::predef(hive);
 
-        // Try to delete from active Run key
-        if let Ok(key) = root.open_subkey_with_flags(subpath, KEY_WRITE) {
-            let _ = key.delete_value(value_name);
-        }
-        // Try to delete from PurgeKit_Disabled subkey
         let disabled_subpath = format!(r"{}\PurgeKit_Disabled", subpath);
-        if let Ok(key) = root.open_subkey_with_flags(&disabled_subpath, KEY_WRITE) {
-            let _ = key.delete_value(value_name);
+        let mut found = false;
+        for key_path in [subpath, disabled_subpath.as_str()] {
+            if let Ok(key) = root.open_subkey_with_flags(key_path, KEY_WRITE) {
+                match key.delete_value(value_name) {
+                    Ok(_) => found = true,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => {
+                        return Err(format!("Failed to delete startup registry value: {}", e));
+                    }
+                }
+            }
+        }
+
+        if !found {
+            return Err("Startup registry value was not found or access was denied.".to_string());
         }
     } else if item_type == "file" {
-        let file_path_str = parts[1];
+        let file_path_str = rest;
         if !is_in_startup_dir(file_path_str) {
             return Err("Access Denied: Startup file must reside inside a Windows Startup folder.".to_string());
         }
@@ -519,20 +556,21 @@ pub fn delete_startup_item(id: String) -> Result<(), String> {
         if !path.exists() {
             return Ok(()); // Already deleted
         }
+        if !path.is_file() {
+            return Err("Startup path is not a file".to_string());
+        }
 
         let is_system = file_path_str.to_uppercase().contains("PROGRAMDATA");
         if is_system && !crate::settings::check_is_admin() {
             return Err("Deleting system startup items requires Administrator privileges. Please restart the application as Administrator.".to_string());
         }
 
-        if path.is_file() {
-            fs::remove_file(path)
-                .map_err(|e| format!("Failed to delete startup file: {}", e))?;
-        }
+        fs::remove_file(path)
+            .map_err(|e| format!("Failed to delete startup file: {}", e))?;
     } else if item_type == "task" {
-        let file_path_str = parts[1];
-        if !is_in_tasks_dir(file_path_str) {
-            return Err("Access Denied: Scheduled task file must reside inside the Windows Tasks folder.".to_string());
+        let file_path_str = rest;
+        if !is_task_file_path(file_path_str) {
+            return Err("Access Denied: Scheduled task must be a file inside the Windows Tasks folder.".to_string());
         }
         if !crate::settings::check_is_admin() {
             return Err("Deleting scheduled tasks requires Administrator privileges. Please restart the application as Administrator.".to_string());
@@ -566,6 +604,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_parse_registry_startup_id_allowlist() {
+        let ok = parse_registry_startup_id(
+            r"reg|HKCU|SOFTWARE\Microsoft\Windows\CurrentVersion\Run|MyApp",
+        )
+        .unwrap();
+        assert_eq!(ok.0, "HKCU");
+        assert_eq!(ok.2, "MyApp");
+
+        let with_pipe = parse_registry_startup_id(
+            r"reg|HKCU|SOFTWARE\Microsoft\Windows\CurrentVersion\Run|My|App",
+        )
+        .unwrap();
+        assert_eq!(with_pipe.2, "My|App");
+
+        assert!(parse_registry_startup_id(r"reg|HKCU|Environment|Path").is_err());
+        assert!(parse_registry_startup_id(r"reg|HKLM|SOFTWARE\Microsoft\Windows\CurrentVersion\Run|").is_err());
+    }
+
+    #[test]
+    fn test_startup_id_rejects_environment_path() {
+        let result = set_startup_item_status("reg|HKCU|Environment|Path".to_string(), false);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Access Denied"));
+    }
+
+    #[test]
     fn test_is_in_startup_dir() {
         let appdata = std::env::var("APPDATA").ok().map(PathBuf::from);
         if let Some(dir) = appdata {
@@ -575,6 +639,7 @@ mod tests {
             
             let sub_file = startup.join("nested").join("test.exe");
             assert!(is_in_startup_dir(&sub_file.to_string_lossy()));
+            assert!(!is_in_startup_dir(&startup.to_string_lossy()));
         }
         
         assert!(!is_in_startup_dir(r"C:\Windows\System32\cmd.exe"));
@@ -603,6 +668,7 @@ mod tests {
         
         let sub_file = tasks.join("Microsoft").join("Windows").join("WindowsUpdate");
         assert!(is_in_tasks_dir(&sub_file.to_string_lossy()));
+        assert!(!is_in_tasks_dir(&tasks.to_string_lossy()));
 
         assert!(!is_in_tasks_dir(r"C:\Windows\System32\cmd.exe"));
     }

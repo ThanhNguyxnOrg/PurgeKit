@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tauri::{AppHandle, Emitter};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -25,16 +25,26 @@ pub struct ProjectScanProgress {
 pub fn calculate_dir_size_and_count(path: &Path) -> (u64, u64) {
     let mut size_bytes = 0;
     let mut file_count = 0;
-    
-    for entry in walkdir::WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
-        if entry.file_type().is_file() {
-            if let Ok(metadata) = entry.metadata() {
-                size_bytes += metadata.len();
-                file_count += 1;
+
+    for entry in walkdir::WalkDir::new(path)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
+        if let Ok(metadata) = std::fs::symlink_metadata(entry.path()) {
+            if crate::winutil::is_reparse_point(&metadata) {
+                continue;
             }
         }
+
+        size_bytes += crate::winutil::allocated_size(entry.path());
+        file_count += 1;
     }
-    
+
     (size_bytes, file_count)
 }
 
@@ -116,9 +126,8 @@ where
             return Err(format!("Scanning blocked: Drive root '{}' cannot be swept directly as a project folder.", root));
         }
 
-        let path = PathBuf::from(root);
-        if path.exists() && path.is_dir() {
-            queue.push_back((path, 0));
+        if target.exists() && target.is_dir() {
+            queue.push_back((target, 0));
         }
     }
 
@@ -142,7 +151,17 @@ where
 
         for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
-            if !path.is_dir() {
+            let metadata = match std::fs::symlink_metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(_) => continue,
+            };
+
+            // Never descend through junctions, symlinks, or other reparse
+            // points: they can escape the selected workspace.
+            if metadata.file_type().is_symlink() || crate::winutil::is_reparse_point(&metadata) {
+                continue;
+            }
+            if !metadata.is_dir() {
                 continue;
             }
 

@@ -119,6 +119,10 @@
   }
 
   async function uninstallPackage(pkg: GlobalCliPackage) {
+    if (!confirm(`Uninstall global package "${pkg.name}" from ${pkg.manager}?`)) {
+      return;
+    }
+
     activePackage = pkg;
     uninstallStep = "uninstalling";
     uninstallStatusText = `Uninstalling global package: ${pkg.name}...`;
@@ -150,9 +154,10 @@
         binNames
       });
       
-      // Pre-select all found remnants for convenience
+      // Only pre-select the strongest evidence. Bin shims/config folders are
+      // left unchecked because they may be shared or user-owned.
       remnants.forEach(item => {
-        selectedRemnants[item.path] = true;
+        selectedRemnants[item.path] = item.confidence === "VeryHigh";
       });
       
       uninstallStep = "remnants_list";
@@ -242,6 +247,11 @@
     const detectedTools = tools.filter(t => t.detected && t.cache_size && t.cache_size > 0);
     if (detectedTools.length === 0) {
       toast.show("All caches are already clean!", "success");
+      return;
+    }
+
+    const totalSize = detectedTools.reduce((sum, tool) => sum + (tool.cache_size || 0), 0);
+    if (!confirm(`Clean caches for ${detectedTools.length} tools (${formatSize(totalSize)})?`)) {
       return;
     }
 

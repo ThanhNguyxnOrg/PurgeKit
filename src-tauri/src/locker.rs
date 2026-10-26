@@ -81,8 +81,10 @@ pub fn unlock_file_restart_manager(file_path: &str) -> Result<(), String> {
             return Err(format!("RmRegisterResources failed with code {}", res_reg));
         }
 
-        // Request shutdown of processes locking this resource
-        let res_shut = RmShutdown(session_handle, RmForceShutdown as u32, None);
+        // Ask applications to close gracefully. Never force-kill a process here:
+        // losing unsaved work is worse than leaving a locked file for a retry
+        // or a reboot-scheduled deletion.
+        let res_shut = RmShutdown(session_handle, 0, None);
         
         RmEndSession(session_handle);
 
@@ -99,11 +101,23 @@ pub fn schedule_boot_delete(file_path: &str) -> Result<(), String> {
     if p.is_dir() {
         // MoveFileExW with MOVEFILE_DELAY_UNTIL_REBOOT requires empty directories.
         // Schedule all directory contents bottom-up first.
-        for entry in walkdir::WalkDir::new(p).contents_first(true).into_iter().filter_map(|e| e.ok()) {
+        for entry in walkdir::WalkDir::new(p)
+            .follow_links(false)
+            .contents_first(true)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
             if entry.path() != p {
                 let wide: Vec<u16> = entry.path().to_string_lossy().encode_utf16().chain(Some(0)).collect();
-                unsafe {
-                    MoveFileExW(wide.as_ptr(), std::ptr::null(), MOVEFILE_DELAY_UNTIL_REBOOT);
+                let scheduled = unsafe {
+                    MoveFileExW(wide.as_ptr(), std::ptr::null(), MOVEFILE_DELAY_UNTIL_REBOOT)
+                };
+                if scheduled == 0 {
+                    return Err(format!(
+                        "MoveFileExW failed for '{}': {}",
+                        entry.path().to_string_lossy(),
+                        std::io::Error::last_os_error()
+                    ));
                 }
             }
         }

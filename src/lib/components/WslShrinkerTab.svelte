@@ -112,6 +112,8 @@
       await loadDistros();
     } catch (e: any) {
       console.error(e);
+      compactPhase = "Failed";
+      compactLog += `[Error] ${e.toString()}\n`;
       toast.show(`Compaction failed: ${e.toString()}`, "error");
     } finally {
       if (unlistenProgress) {

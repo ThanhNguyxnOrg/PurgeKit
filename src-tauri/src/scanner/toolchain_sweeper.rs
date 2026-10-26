@@ -72,12 +72,33 @@ fn is_in_toolchain_dir(manager: &str, path_str: &str) -> bool {
         let parent_norm_str = parent_norm.to_string_lossy().to_lowercase();
         if path_norm_str.starts_with(&parent_norm_str) {
             let remain = &path_norm_str[parent_norm_str.len()..];
-            if remain.is_empty() || remain.starts_with('\\') || remain.starts_with('/') {
+            if !remain.is_empty() && (remain.starts_with('\\') || remain.starts_with('/')) {
                 return true;
             }
         }
     }
     false
+}
+
+fn validate_toolchain_path(manager: &str, version: &str, path_str: &str) -> Result<(), String> {
+    if !is_in_toolchain_dir(manager, path_str) {
+        return Err("Access Denied: Toolchain directory path is invalid or outside allowed manager directories.".to_string());
+    }
+
+    let path = crate::winutil::canonicalize_path_safety(path_str);
+    let name_matches = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map_or(false, |name| name.eq_ignore_ascii_case(version));
+
+    if !name_matches {
+        return Err(format!(
+            "Access Denied: Toolchain path '{}' does not match version '{}'.",
+            path_str, version
+        ));
+    }
+
+    Ok(())
 }
 
 fn get_active_node_version() -> Option<String> {
@@ -240,9 +261,7 @@ pub fn uninstall_toolchain_version(manager: &str, version: &str, path: &str) -> 
         return Err(format!("Invalid toolchain version name: {}", version));
     }
 
-    if !is_in_toolchain_dir(manager, path) {
-        return Err("Access Denied: Toolchain directory path is invalid or outside allowed manager directories.".to_string());
-    }
+    validate_toolchain_path(manager, version, path)?;
 
     let secure_path = crate::winutil::get_secure_developer_path();
     let status = match manager {
@@ -308,11 +327,26 @@ mod tests {
     fn test_is_in_toolchain_dir() {
         let userprofile = std::env::var("USERPROFILE").ok().map(PathBuf::from);
         if let Some(up) = userprofile {
-            let rust_path = up.join(".rustup").join("toolchains").join("stable-x86_64-pc-windows-msvc");
+            let toolchains = up.join(".rustup").join("toolchains");
+            let rust_path = toolchains.join("stable-x86_64-pc-windows-msvc");
             assert!(is_in_toolchain_dir("rustup", &rust_path.to_string_lossy()));
-            
+            assert!(!is_in_toolchain_dir("rustup", &toolchains.to_string_lossy()));
+
             let sub_file = rust_path.join("bin").join("rustc.exe");
             assert!(is_in_toolchain_dir("rustup", &sub_file.to_string_lossy()));
+
+            assert!(validate_toolchain_path(
+                "rustup",
+                "stable-x86_64-pc-windows-msvc",
+                &rust_path.to_string_lossy()
+            )
+            .is_ok());
+            assert!(validate_toolchain_path(
+                "rustup",
+                "nightly-x86_64-pc-windows-msvc",
+                &rust_path.to_string_lossy()
+            )
+            .is_err());
         }
 
         assert!(!is_in_toolchain_dir("rustup", r"C:\Windows\System32\cmd.exe"));

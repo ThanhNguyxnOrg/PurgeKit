@@ -10,6 +10,13 @@
   import SettingsTab from "$lib/components/SettingsTab.svelte";
 
   let activeTab = $state("apps");
+  let visitedTabs = $state<Record<string, boolean>>({ apps: true });
+
+  $effect(() => {
+    if (!visitedTabs[activeTab]) {
+      visitedTabs = { ...visitedTabs, [activeTab]: true };
+    }
+  });
 </script>
 
 <div class="flex h-screen w-screen overflow-hidden bg-app-bg text-text-primary font-sans pl-16">
@@ -18,29 +25,45 @@
 
   <!-- Main Content Viewer -->
   <main class="flex-1 h-screen overflow-hidden flex flex-col bg-app-bg relative transition-all duration-300">
-    <div class="flex-1 flex flex-col h-full {activeTab === 'apps' ? '' : 'hidden'}">
-      <AppsTab />
-    </div>
-    <div class="flex-1 flex flex-col h-full {activeTab === 'devtools' ? '' : 'hidden'}">
-      <DevToolsTab />
-    </div>
-    <div class="flex-1 flex flex-col h-full {activeTab === 'projectsweeper' ? '' : 'hidden'}">
-      <ProjectSweeperTab />
-    </div>
-    <div class="flex-1 flex flex-col h-full {activeTab === 'wslshrinker' ? '' : 'hidden'}">
-      <WslShrinkerTab />
-    </div>
-    <div class="flex-1 flex flex-col h-full {activeTab === 'startup' ? '' : 'hidden'}">
-      <StartupTab />
-    </div>
-    <div class="flex-1 flex flex-col h-full {activeTab === 'snapshots' ? '' : 'hidden'}">
-      <SnapshotsTab />
-    </div>
-    <div class="flex-1 flex flex-col h-full {activeTab === 'pathcleaner' ? '' : 'hidden'}">
-      <PathCleanerTab />
-    </div>
-    <div class="flex-1 flex flex-col h-full {activeTab === 'settings' ? '' : 'hidden'}">
-      <SettingsTab />
-    </div>
+    {#if visitedTabs.apps}
+      <div class="flex-1 flex flex-col h-full {activeTab === 'apps' ? '' : 'hidden'}">
+        <AppsTab />
+      </div>
+    {/if}
+    {#if visitedTabs.devtools}
+      <div class="flex-1 flex flex-col h-full {activeTab === 'devtools' ? '' : 'hidden'}">
+        <DevToolsTab />
+      </div>
+    {/if}
+    {#if visitedTabs.projectsweeper}
+      <div class="flex-1 flex flex-col h-full {activeTab === 'projectsweeper' ? '' : 'hidden'}">
+        <ProjectSweeperTab />
+      </div>
+    {/if}
+    {#if visitedTabs.wslshrinker}
+      <div class="flex-1 flex flex-col h-full {activeTab === 'wslshrinker' ? '' : 'hidden'}">
+        <WslShrinkerTab />
+      </div>
+    {/if}
+    {#if visitedTabs.startup}
+      <div class="flex-1 flex flex-col h-full {activeTab === 'startup' ? '' : 'hidden'}">
+        <StartupTab />
+      </div>
+    {/if}
+    {#if visitedTabs.snapshots}
+      <div class="flex-1 flex flex-col h-full {activeTab === 'snapshots' ? '' : 'hidden'}">
+        <SnapshotsTab />
+      </div>
+    {/if}
+    {#if visitedTabs.pathcleaner}
+      <div class="flex-1 flex flex-col h-full {activeTab === 'pathcleaner' ? '' : 'hidden'}">
+        <PathCleanerTab />
+      </div>
+    {/if}
+    {#if visitedTabs.settings}
+      <div class="flex-1 flex flex-col h-full {activeTab === 'settings' ? '' : 'hidden'}">
+        <SettingsTab />
+      </div>
+    {/if}
   </main>
 </div>

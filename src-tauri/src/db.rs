@@ -29,9 +29,17 @@ pub fn get_snapshots_dir() -> PathBuf {
     snap_dir
 }
 
+pub fn open_connection() -> Result<Connection, String> {
+    let conn = Connection::open(get_db_path()).map_err(|e| e.to_string())?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(|e| e.to_string())?;
+    conn.pragma_update(None, "journal_mode", "WAL")
+        .map_err(|e| e.to_string())?;
+    Ok(conn)
+}
+
 pub fn init_db() -> Result<(), String> {
-    let db_path = get_db_path();
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = open_connection()?;
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS snapshots (

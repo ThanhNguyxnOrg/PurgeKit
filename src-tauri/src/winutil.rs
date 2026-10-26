@@ -133,6 +133,41 @@ pub fn get_secure_developer_path() -> String {
     parts.join(";")
 }
 
+/// On-disk size for a file. This accounts for NTFS compression and sparse
+/// files; metadata.len() returns the logical size instead.
+pub fn allocated_size(path: &Path) -> u64 {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::GetCompressedFileSizeW;
+
+        let wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let mut high: u32 = 0;
+        let low = unsafe { GetCompressedFileSizeW(wide.as_ptr(), &mut high) };
+
+        if low != u32::MAX {
+            return ((high as u64) << 32) | low as u64;
+        }
+    }
+
+    path.metadata().map(|metadata| metadata.len()).unwrap_or(0)
+}
+
+#[cfg(windows)]
+pub fn is_reparse_point(metadata: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    metadata.file_attributes() & 0x400 != 0 // FILE_ATTRIBUTE_REPARSE_POINT
+}
+
+#[cfg(not(windows))]
+pub fn is_reparse_point(_metadata: &std::fs::Metadata) -> bool {
+    false
+}
+
 /// Translate a raw OS error code into a stable Win32 error label.
 pub fn map_win32_error(err: &std::io::Error) -> &'static str {
     match err.raw_os_error() {
@@ -284,10 +319,54 @@ pub fn extract_executable_path(cmd: &str) -> String {
     trimmed.to_string()
 }
 
+fn is_drive_relative_path(path: &Path) -> bool {
+    if path.is_absolute() {
+        return false;
+    }
+
+    #[cfg(windows)]
+    {
+        let mut components = path.components();
+        if let Some(std::path::Component::Prefix(prefix)) = components.next() {
+            return matches!(prefix.kind(), std::path::Prefix::Disk(_));
+        }
+    }
+
+    false
+}
+
+fn is_device_path_or_unc_root(path: &Path) -> bool {
+    let raw = path.to_string_lossy();
+    if raw.starts_with(r"\\.\") {
+        return true;
+    }
+
+    #[cfg(windows)]
+    {
+        let mut components = path.components();
+        if let Some(std::path::Component::Prefix(prefix)) = components.next() {
+            if matches!(prefix.kind(), std::path::Prefix::UNC(_, _)) {
+                return !components.any(|component| {
+                    matches!(component, std::path::Component::Normal(_))
+                });
+            }
+        }
+    }
+
+    false
+}
+
 /// Canonicalize path with fallback to manual components traversal to prevent TOCTOU/Traversal bypasses.
 pub fn canonicalize_path_safety(path_str: &str) -> PathBuf {
     let expanded = expand_env_strings(path_str);
     let path = Path::new(&expanded);
+
+    // Do not resolve drive-relative paths (C:, C:foo) against the process CWD.
+    // On Windows those resolve to the current directory on that drive, which is
+    // not the path the caller specified and is unsafe for deletion boundaries.
+    if is_drive_relative_path(path) {
+        return PathBuf::from(expanded);
+    }
     if let Ok(canon) = std::fs::canonicalize(path) {
         let canon_str = canon.to_string_lossy().to_string();
         let stripped = if canon_str.starts_with(r"\\?\") {
@@ -329,6 +408,34 @@ pub fn canonicalize_path_safety(path_str: &str) -> PathBuf {
 /// Centralized safety gate to check if a file system path is safe to delete or quarantine.
 pub fn is_safe_to_delete(path_str: &str) -> Result<(), String> {
     let expanded = expand_env_strings(path_str);
+    let original_path = Path::new(&expanded);
+
+    if !original_path.is_absolute() {
+        return Err(format!(
+            "Deletion blocked: Path '{}' is not an absolute path.",
+            path_str
+        ));
+    }
+
+    if is_device_path_or_unc_root(original_path) {
+        return Err(format!(
+            "Deletion blocked: Path '{}' targets a device or a UNC share root.",
+            path_str
+        ));
+    }
+
+    if original_path.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::Normal(name) if name.to_string_lossy().contains(':')
+        )
+    }) {
+        return Err(format!(
+            "Deletion blocked: Path '{}' contains an alternate data stream or invalid colon.",
+            path_str
+        ));
+    }
+
     let target = canonicalize_path_safety(&expanded);
     
     // Case-insensitive comparisons for Windows
@@ -471,6 +578,69 @@ pub fn is_safe_to_delete(path_str: &str) -> Result<(), String> {
         && target_path.starts_with(Path::new(&user_profile))
     {
         return Err(format!("Deletion blocked: User registry hive file '{}' cannot be deleted.", path_str));
+    }
+
+    Ok(())
+}
+
+/// Stricter policy for app-remnant deletion. Remnants are inferred by name and
+/// must never be allowed to delete personal or credential folders just because
+/// the folder name happens to match an application name.
+pub fn is_safe_remnant_path(path_str: &str) -> Result<(), String> {
+    is_safe_to_delete(path_str)?;
+
+    let target = canonicalize_path_safety(&expand_env_strings(path_str));
+    let target_lower = target.to_string_lossy().to_string().to_lowercase();
+
+    let Some(user_profile) = std::env::var_os("USERPROFILE").map(PathBuf::from) else {
+        return Ok(());
+    };
+    let user_profile = canonicalize_path_safety(&user_profile.to_string_lossy());
+    let user_profile_lower = user_profile.to_string_lossy().to_string().to_lowercase();
+
+    if target_lower == user_profile_lower {
+        return Err(format!(
+            "Deletion blocked: '{}' is the user profile root.",
+            path_str
+        ));
+    }
+
+    let mut protected = vec![
+        format!(r"{}\documents", user_profile_lower),
+        format!(r"{}\desktop", user_profile_lower),
+        format!(r"{}\downloads", user_profile_lower),
+        format!(r"{}\pictures", user_profile_lower),
+        format!(r"{}\music", user_profile_lower),
+        format!(r"{}\videos", user_profile_lower),
+        format!(r"{}\saved games", user_profile_lower),
+        format!(r"{}\.ssh", user_profile_lower),
+        format!(r"{}\.aws", user_profile_lower),
+        format!(r"{}\.kube", user_profile_lower),
+        format!(r"{}\.gnupg", user_profile_lower),
+        format!(r"{}\.azure", user_profile_lower),
+        format!(r"{}\.password-store", user_profile_lower),
+    ];
+
+    if let Some(public_dir) = std::env::var_os("PUBLIC").map(PathBuf::from) {
+        let public_dir = canonicalize_path_safety(&public_dir.to_string_lossy())
+            .to_string_lossy()
+            .to_string()
+            .to_lowercase();
+        for name in ["documents", "desktop", "downloads"] {
+            protected.push(format!(r"{}\{}", public_dir, name));
+        }
+    }
+
+    protected.sort();
+    protected.dedup();
+
+    for folder in protected {
+        if target_lower == folder || target_lower.starts_with(&format!("{}\\", folder)) {
+            return Err(format!(
+                "Deletion blocked: '{}' is inside a protected personal/credential folder.",
+                path_str
+            ));
+        }
     }
 
     Ok(())
@@ -674,6 +844,36 @@ mod tests {
 
         // Registry hive files
         assert!(is_safe_to_delete(r"%USERPROFILE%\ntuser.dat").is_err());
+    }
+
+    #[test]
+    fn test_allocated_size_reads_file_size() {
+        let path = std::env::temp_dir().join("purgekit_allocated_size_test.txt");
+        std::fs::write(&path, b"hello").unwrap();
+        let allocated = allocated_size(&path);
+        assert!(allocated >= 5, "allocated size was {}", allocated);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_drive_relative_and_device_paths_rejected() {
+        assert!(is_safe_to_delete("D:").is_err());
+        assert!(is_safe_to_delete("D:foo").is_err());
+        assert!(is_safe_to_delete(r"D:\").is_err());
+        assert!(is_safe_to_delete(r"\\.\PhysicalDrive0").is_err());
+        assert!(is_safe_to_delete(r"\\server\share").is_err());
+        assert!(is_safe_to_delete(r"C:\temp\file.txt:ads").is_err());
+    }
+
+    #[test]
+    fn test_remnant_paths_block_personal_folders() {
+        let user_profile = std::env::var("USERPROFILE").unwrap();
+        let appdata = std::env::var("APPDATA").unwrap();
+
+        assert!(is_safe_remnant_path(&format!(r"{}\Documents\SomeApp", user_profile)).is_err());
+        assert!(is_safe_remnant_path(&format!(r"{}\Desktop\SomeApp", user_profile)).is_err());
+        assert!(is_safe_remnant_path(&format!(r"{}\.ssh\config", user_profile)).is_err());
+        assert!(is_safe_remnant_path(&format!(r"{}\SomeApp", appdata)).is_ok());
     }
 
     #[test]

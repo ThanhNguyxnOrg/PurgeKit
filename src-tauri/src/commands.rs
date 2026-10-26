@@ -271,9 +271,22 @@ pub async fn purge_remnants(app: AppHandle, items: Vec<RemnantItem>) -> Result<P
                 message: "Backing up registry keys before purge...".into(),
             });
             for item in &items {
-                if item.item_type == "RegistryKey" {
-                    // Try to backup. Ignore error so we still try to delete it
-                    let _ = crate::backup::backup_registry_key(&item.path);
+                let registry_path_to_backup = match item.item_type.as_str() {
+                    "RegistryKey" => Some(item.path.clone()),
+                    "RegistryValue" => item
+                        .path
+                        .rfind('\\')
+                        .map(|index| item.path[..index].to_string()),
+                    _ => None,
+                };
+
+                if let Some(path) = registry_path_to_backup {
+                    crate::backup::backup_registry_key(&path).map_err(|e| {
+                        format!(
+                            "Purge aborted before deleting anything: failed to back up registry path '{}': {}",
+                            path, e
+                        )
+                    })?;
                 }
             }
         }
@@ -358,6 +371,127 @@ pub async fn compare_snapshots(before_id: String, after_id: String) -> Result<Sn
     }).await.map_err(|e| e.to_string())?
 }
 
+fn resolve_uninstall_entry_path(
+    hive: &str,
+    registry_path: &str,
+) -> Result<(String, String), String> {
+    let root_hive = match hive {
+        "HKLM" | "HKLM_WOW" => "HKLM",
+        "HKCU" | "HKCU_WOW" | "VirtualStore" | "VirtualStore_WOW" => "HKCU",
+        _ => return Err(format!("Unsupported uninstall registry hive: {}", hive)),
+    };
+
+    let lower = registry_path.to_lowercase();
+    if !lower.contains(r"\currentversion\uninstall\") {
+        return Err("Refusing to remove a registry path outside the Uninstall key.".to_string());
+    }
+
+    let last_backslash = registry_path
+        .rfind('\\')
+        .ok_or_else(|| "Invalid uninstall registry path".to_string())?;
+    if last_backslash + 1 >= registry_path.len() {
+        return Err("Invalid uninstall registry key name".to_string());
+    }
+
+    crate::winutil::is_safe_registry_key(root_hive, registry_path)?;
+    Ok((root_hive.to_string(), registry_path.to_string()))
+}
+
+#[tauri::command]
+pub async fn remove_uninstall_entry(hive: String, registry_path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (root_hive, subpath) = resolve_uninstall_entry_path(&hive, &registry_path)?;
+        let full_path = format!(r"{}\{}", root_hive, subpath);
+
+        // Back up first; fail closed if the backup cannot be produced.
+        crate::backup::backup_registry_key(&full_path)?;
+
+        let last_backslash = subpath
+            .rfind('\\')
+            .ok_or_else(|| "Invalid uninstall registry path".to_string())?;
+        let parent_path = &subpath[..last_backslash];
+        let name = &subpath[last_backslash + 1..];
+
+        let root = match root_hive.as_str() {
+            "HKCU" => winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER),
+            "HKLM" => winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE),
+            _ => return Err("Unsupported registry hive".to_string()),
+        };
+
+        match root.open_subkey_with_flags(parent_path, winreg::enums::KEY_WRITE) {
+            Ok(parent) => match parent.delete_subkey_all(name) {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(format!("Failed to remove uninstall entry: {}", e)),
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(format!("Failed to open uninstall registry key: {}", e)),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct PendingRebootItem {
+    pub path: String,
+    pub source: String,
+}
+
+fn collect_pending_reboot_operations(
+    operations: &[String],
+    source: &str,
+    items: &mut Vec<PendingRebootItem>,
+) {
+    for pair in operations.chunks_exact(2) {
+        let source_path = pair[0].trim();
+        let destination = pair[1].trim();
+        // Empty destination means the queued operation is a deletion.
+        if source_path.is_empty() || !destination.is_empty() {
+            continue;
+        }
+
+        let path = source_path
+            .strip_prefix(r"\??\")
+            .unwrap_or(source_path)
+            .to_string();
+        if !items
+            .iter()
+            .any(|item| item.path.eq_ignore_ascii_case(&path))
+        {
+            items.push(PendingRebootItem {
+                path,
+                source: source.to_string(),
+            });
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn get_pending_reboot_items() -> Result<Vec<PendingRebootItem>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let session_manager = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
+            .open_subkey_with_flags(
+                r"SYSTEM\CurrentControlSet\Control\Session Manager",
+                winreg::enums::KEY_READ,
+            )
+            .map_err(|e| format!("Failed to open Session Manager key: {}", e))?;
+
+        let mut items = Vec::new();
+        for value_name in ["PendingFileRenameOperations", "PendingFileRenameOperations2"] {
+            let operations: Vec<String> = match session_manager.get_value(value_name) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            collect_pending_reboot_operations(&operations, value_name, &mut items);
+        }
+
+        Ok(items)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub async fn get_path_entries() -> Result<Vec<PathEntry>, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -416,22 +550,12 @@ pub async fn run_uninstall_command(uninstall_string: String) -> Result<(), Strin
         }).await.map_err(|e| e.to_string())?;
     }
     
-    if !is_safe_uninstall_string(&uninstall_string) {
-        return Err("Uninstall command contains invalid or unsafe characters (Command Injection Blocked)".to_string());
-    }
-    
     if let Err(e) = validate_uninstall_command_safety(&uninstall_string) {
         return Err(e);
     }
     
     tauri::async_runtime::spawn_blocking(move || {
-        let mut child = Command::new("cmd")
-            .env("PATH", &secure_path)
-            .args(&["/C", &uninstall_string])
-            .spawn()
-            .map_err(|e| format!("Failed to spawn uninstaller: {}", e))?;
-            
-        let status = child.wait().map_err(|e| format!("Uninstaller finished with error: {}", e))?;
+        let status = run_parsed_uninstall_command(&uninstall_string, &secure_path)?;
         if !status.success() {
             return Err(format!("Uninstaller exited with failure code: {:?}", status.code()));
         }
@@ -619,8 +743,7 @@ pub async fn stop_install_tracking(
         let json_data = serde_json::to_string(&snap_data).map_err(|e| e.to_string())?;
         std::fs::write(&data_file_path, json_data).map_err(|e| e.to_string())?;
 
-        let db_path = crate::db::get_db_path();
-        let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
+        let conn = crate::db::open_connection()?;
         
         let display_name = format!("[Tracked] {}", session.name);
         
@@ -650,9 +773,68 @@ pub async fn stop_install_tracking(
     }).await.map_err(|e| e.to_string())?
 }
 
-fn is_safe_uninstall_string(s: &str) -> bool {
-    let dangerous_chars = ['&', '|', '>', '<', ';', '`', '$', '\n', '\r'];
-    !s.chars().any(|c| dangerous_chars.contains(&c))
+fn is_shell_executable(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    lower.ends_with("cmd.exe")
+        || lower == "cmd"
+        || lower.ends_with("powershell.exe")
+        || lower == "powershell"
+        || lower.ends_with("pwsh.exe")
+        || lower == "pwsh"
+}
+
+fn parse_uninstall_command(cmd_str: &str) -> Result<(String, String), String> {
+    let expanded = crate::winutil::expand_env_strings(cmd_str);
+    let trimmed = expanded.trim();
+    if trimmed.is_empty() {
+        return Err("Uninstall command is empty".to_string());
+    }
+
+    let executable = crate::winutil::extract_executable_path(trimmed);
+    let executable = executable.trim().trim_matches('"').to_string();
+    if executable.is_empty() {
+        return Err("Uninstall command has no executable path".to_string());
+    }
+
+    if is_shell_executable(&executable) {
+        return Err(
+            "Execution blocked: shell-wrapped uninstall commands are not allowed. Use the application's real uninstaller executable."
+                .to_string(),
+        );
+    }
+
+    let rest = if trimmed.starts_with('"') {
+        let close_quote = trimmed[1..]
+            .find('"')
+            .map(|index| index + 2)
+            .ok_or_else(|| "Uninstall command has an unterminated quoted path".to_string())?;
+        trimmed[close_quote..].trim_start().to_string()
+    } else {
+        trimmed[executable.len()..].trim_start().to_string()
+    };
+
+    Ok((executable, rest))
+}
+
+fn run_parsed_uninstall_command(
+    cmd_str: &str,
+    secure_path: &str,
+) -> Result<std::process::ExitStatus, String> {
+    let (executable, arguments) = parse_uninstall_command(cmd_str)?;
+    let mut command = Command::new(&executable);
+    command
+        .creation_flags(CREATE_NO_WINDOW)
+        .env("PATH", secure_path);
+
+    if !arguments.is_empty() {
+        // raw_arg keeps the registry-provided argument string intact while
+        // avoiding cmd.exe and its metacharacter parsing entirely.
+        command.raw_arg(&arguments);
+    }
+
+    command
+        .status()
+        .map_err(|e| format!("Failed to run uninstaller: {}", e))
 }
 
 fn validate_uninstall_command_safety(cmd_str: &str) -> Result<(), String> {
@@ -789,8 +971,7 @@ pub struct QuarantineItem {
 #[tauri::command]
 pub async fn list_quarantine_items() -> Result<Vec<QuarantineItem>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let db_path = crate::db::get_db_path();
-        let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
+        let conn = crate::db::open_connection()?;
         let mut stmt = conn.prepare("SELECT id, name, original_path, quarantine_path, created_at FROM quarantine ORDER BY created_at DESC")
             .map_err(|e| e.to_string())?;
         
@@ -817,8 +998,7 @@ pub async fn list_quarantine_items() -> Result<Vec<QuarantineItem>, String> {
 #[tauri::command]
 pub async fn restore_quarantine_item(id: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let db_path = crate::db::get_db_path();
-        let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
+        let conn = crate::db::open_connection()?;
         
         // Find quarantine item
         let item: QuarantineItem = conn.query_row(
@@ -891,8 +1071,7 @@ pub async fn restore_quarantine_item(id: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn delete_quarantine_item(id: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let db_path = crate::db::get_db_path();
-        let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
+        let conn = crate::db::open_connection()?;
         
         let item: QuarantineItem = conn.query_row(
             "SELECT id, name, original_path, quarantine_path, created_at FROM quarantine WHERE id = ?1",
@@ -1077,16 +1256,10 @@ pub async fn run_bulk_silent_uninstall(
                     false
                 }
             } else if let Some(silent_cmd) = get_silent_uninstall_command(target_app) {
-                if is_safe_uninstall_string(&silent_cmd) && validate_uninstall_command_safety(&silent_cmd).is_ok() {
-                    let status = Command::new("cmd")
-                        .creation_flags(CREATE_NO_WINDOW)
-                        .env("PATH", &secure_path)
-                        .args(&["/C", &silent_cmd])
-                        .status();
-                    status.map(|s| s.success()).unwrap_or(false)
-                } else {
-                    false
-                }
+                validate_uninstall_command_safety(&silent_cmd).is_ok()
+                    && run_parsed_uninstall_command(&silent_cmd, &secure_path)
+                        .map(|status| status.success())
+                        .unwrap_or(false)
             } else {
                 false
             };
@@ -1314,6 +1487,58 @@ mod tests {
             is_uwp,
             is_verified: None,
         }
+    }
+
+    #[test]
+    fn test_collect_pending_reboot_operations() {
+        let operations = vec![
+            r"\??\C:\Temp\delete-me.txt".to_string(),
+            String::new(),
+            r"\??\C:\Temp\move-me.txt".to_string(),
+            r"\??\C:\Temp\moved.txt".to_string(),
+        ];
+        let mut items = Vec::new();
+        collect_pending_reboot_operations(&operations, "PendingFileRenameOperations", &mut items);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].path, r"C:\Temp\delete-me.txt");
+    }
+
+    #[test]
+    fn test_resolve_uninstall_entry_path() {
+        assert!(resolve_uninstall_entry_path(
+            "HKLM",
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\SomeApp"
+        )
+        .is_ok());
+        assert!(resolve_uninstall_entry_path(
+            "HKLM_WOW",
+            r"SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\SomeApp"
+        )
+        .is_ok());
+        assert!(resolve_uninstall_entry_path("HKCU", r"Software\SomeApp").is_err());
+        assert!(resolve_uninstall_entry_path(
+            "HKCU",
+            r"Software\Microsoft\Windows\CurrentVersion\Uninstall"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_parse_uninstall_command() {
+        let (exe, args) = parse_uninstall_command(r#""C:\Program Files\App\uninst.exe" /S"#).unwrap();
+        assert_eq!(exe, r"C:\Program Files\App\uninst.exe");
+        assert_eq!(args, "/S");
+
+        let (exe, args) = parse_uninstall_command(r#"MsiExec.exe /I{1234-5678}"#).unwrap();
+        assert_eq!(exe, "MsiExec.exe");
+        assert_eq!(args, "/I{1234-5678}");
+
+        let (exe, args) = parse_uninstall_command(r#"C:\Program Files\App\uninstall.exe"#).unwrap();
+        assert_eq!(exe, r"C:\Program Files\App\uninstall.exe");
+        assert!(args.is_empty());
+
+        assert!(parse_uninstall_command("cmd.exe /c calc").is_err());
+        assert!(parse_uninstall_command("powershell -Command Remove-Item C:\\").is_err());
     }
 
     #[test]

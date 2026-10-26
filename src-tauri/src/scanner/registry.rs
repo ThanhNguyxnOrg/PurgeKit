@@ -331,11 +331,9 @@ fn scan_uninstall_key(
             continue;
         }
 
-        // Also check if UninstallString is empty, usually we cannot uninstall without it (though some store apps might use different mechanism)
-        if uninstall_string.is_none() {
-            // Check if it's UWP, if not skip
-            continue;
-        }
+        // Entries without UninstallString are still useful: they may be
+        // orphaned registrations or components that can be removed with the
+        // "Remove Entry" action.
 
         // Verify signature of the uninstaller or display icon
         let mut is_verified = None;

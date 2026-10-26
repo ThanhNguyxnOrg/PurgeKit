@@ -60,9 +60,21 @@ pub fn save_settings(settings: &AppSettings) -> Result<(), String> {
     let path = get_settings_path();
     let content = serde_json::to_string_pretty(settings)
         .map_err(|e| format!("Failed to serialize settings: {}", e))?;
-    
-    fs::write(path, content)
-        .map_err(|e| format!("Failed to write settings file: {}", e))
+
+    // Write a sibling temp file first so a crash cannot leave truncated JSON
+    // that silently falls back to defaults on the next launch.
+    let temp_path = path.with_extension("json.tmp");
+    fs::write(&temp_path, content)
+        .map_err(|e| format!("Failed to write settings temp file: {}", e))?;
+
+    if fs::rename(&temp_path, &path).is_err() {
+        // Windows does not replace an existing file with rename.
+        let _ = fs::remove_file(&path);
+        fs::rename(&temp_path, &path)
+            .map_err(|e| format!("Failed to replace settings file: {}", e))?;
+    }
+
+    Ok(())
 }
 
 pub fn check_is_admin() -> bool {

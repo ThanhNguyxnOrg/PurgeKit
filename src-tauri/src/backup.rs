@@ -1,8 +1,21 @@
 use std::process::Command;
 use std::os::windows::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::fs;
 use chrono::Local;
+
+#[cfg(windows)]
+use std::os::windows::fs::MetadataExt;
+
+#[cfg(windows)]
+fn is_reparse_point(metadata: &std::fs::Metadata) -> bool {
+    metadata.file_attributes() & 0x400 != 0 // FILE_ATTRIBUTE_REPARSE_POINT
+}
+
+#[cfg(not(windows))]
+fn is_reparse_point(_metadata: &std::fs::Metadata) -> bool {
+    false
+}
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -71,18 +84,41 @@ pub fn copy_dir_all(src: impl AsRef<std::path::Path>, dst: impl AsRef<std::path:
     fs::create_dir_all(&dst)?;
     for entry in fs::read_dir(src)? {
         let entry = entry?;
-        let metadata = entry.metadata()?;
+        let metadata = fs::symlink_metadata(entry.path())?;
         let ty = metadata.file_type();
-        if ty.is_symlink() {
-            // Skip symlinks and junction points to prevent TOCTOU and directory traversal out of range.
+
+        // Junctions and other reparse points are not regular directories. Skip
+        // them so a copy can never escape the selected source tree.
+        if ty.is_symlink() || is_reparse_point(&metadata) {
             continue;
         }
+
         if ty.is_dir() {
             copy_dir_all(entry.path(), dst.as_ref().join(entry.file_name()))?;
         } else {
             fs::copy(entry.path(), dst.as_ref().join(entry.file_name()))?;
         }
     }
+    Ok(())
+}
+
+fn restore_quarantined_item(src_path: &Path, dest_path: &Path) -> Result<(), String> {
+    if let Some(parent) = src_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+
+    if fs::rename(dest_path, src_path).is_ok() {
+        return Ok(());
+    }
+
+    if dest_path.is_dir() {
+        copy_dir_all(dest_path, src_path).map_err(|e| e.to_string())?;
+        fs::remove_dir_all(dest_path).map_err(|e| e.to_string())?;
+    } else {
+        fs::copy(dest_path, src_path).map_err(|e| e.to_string())?;
+        fs::remove_file(dest_path).map_err(|e| e.to_string())?;
+    }
+
     Ok(())
 }
 
@@ -132,24 +168,42 @@ pub fn quarantine_file_or_directory(path_str: &str) -> Result<PathBuf, String> {
         }
     };
 
-    if moved {
-        let db_path = crate::db::get_db_path();
-        if let Ok(conn) = rusqlite::Connection::open(db_path) {
-            let _ = conn.execute(
-                "INSERT INTO quarantine (id, name, original_path, quarantine_path, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![
-                    file_uuid,
-                    src_path.file_name().and_then(|n| n.to_str()).unwrap_or("remnant"),
-                    path_str,
-                    dest_path.to_string_lossy().to_string(),
-                    timestamp
-                ]
-            );
-        }
-        Ok(dest_path)
-    } else {
-        Err("Failed to move item to quarantine".to_string())
+    if !moved {
+        return Err("Failed to move item to quarantine".to_string());
     }
+
+    let insert_result = match crate::db::open_connection() {
+        Ok(conn) => conn.execute(
+            "INSERT INTO quarantine (id, name, original_path, quarantine_path, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                file_uuid,
+                src_path.file_name().and_then(|n| n.to_str()).unwrap_or("remnant"),
+                path_str,
+                dest_path.to_string_lossy().to_string(),
+                timestamp
+            ],
+        ).map_err(|e| e.to_string()),
+        Err(e) => Err(e),
+    };
+
+    if let Err(e) = insert_result {
+        // Restore the item instead of leaving an untracked moving file behind.
+        let restore_result = restore_quarantined_item(src_path, &dest_path);
+        return match restore_result {
+            Ok(()) => Err(format!(
+                "Quarantine record could not be written ({}); the item was restored to its original location.",
+                e
+            )),
+            Err(restore_error) => Err(format!(
+                "Quarantine record could not be written ({}), and restoring the item failed ({}). It remains at {}.",
+                e,
+                restore_error,
+                dest_path.to_string_lossy()
+            )),
+        };
+    }
+
+    Ok(dest_path)
 }
 
 #[cfg(test)]

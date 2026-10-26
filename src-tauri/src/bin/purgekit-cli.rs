@@ -51,6 +51,11 @@ fn main() {
 
     let cli = Cli::parse();
 
+    if let Err(e) = purgekit_lib::db::init_db() {
+        eprintln!("ERROR: Failed to initialize quarantine database: {}", e);
+        std::process::exit(1);
+    }
+
     match cli.command {
         Commands::Clean {
             app_name,
