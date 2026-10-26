@@ -578,6 +578,29 @@ fn force_remove_app_sync(
                         }
                     }
                 }
+
+                // Start Menu shortcuts are safe to treat as app-owned only when
+                // their target resolves inside the known install location.
+                for shortcut in scanner::shortcuts::find_app_shortcuts(app_name, Some(location)) {
+                    let item = RemnantItem {
+                        path: shortcut.clone(),
+                        item_type: "File".to_string(),
+                        size: 0,
+                        confidence: "VeryHigh".to_string(),
+                        score: 100,
+                    };
+                    match scanner::remnants::purge_remnant_item(&item) {
+                        Ok(()) => {
+                            success += 1;
+                            log_lines.push(format!("OK\tshortcut\t{}", shortcut));
+                        }
+                        Err(e) => {
+                            fail += 1;
+                            errors.push(format!("{}: {}", shortcut, e));
+                            log_lines.push(format!("FAIL\tshortcut\t{}\t{}", shortcut, e));
+                        }
+                    }
+                }
             }
         }
     }
