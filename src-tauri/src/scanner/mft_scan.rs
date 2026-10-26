@@ -127,13 +127,17 @@ where
             continue;
         }
 
-        let entry = match MftEntry::from_buffer(buffer.clone(), record_number) {
+        let entry = match MftEntry::from_buffer(buffer, record_number) {
             Ok(entry) => entry,
             Err(_) => {
+                buffer = vec![0u8; record_size];
                 errors += 1;
                 continue;
             }
         };
+        // from_buffer consumes the record; allocate the next read buffer only
+        // after the parsed entry no longer needs it.
+        buffer = vec![0u8; record_size];
         if !entry.is_allocated() {
             continue;
         }
