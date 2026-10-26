@@ -1475,6 +1475,27 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "manual smoke test scans the host machine"]
+    fn scan_global_cli_packages_smoke() {
+        let started = std::time::Instant::now();
+        let packages = scan_global_cli_packages();
+        println!(
+            "{} global packages in {:?}",
+            packages.len(),
+            started.elapsed()
+        );
+        for package in packages {
+            println!(
+                "  [{}] {} {} ({} KB)",
+                package.manager,
+                package.name,
+                package.version,
+                package.size_bytes / 1024
+            );
+        }
+    }
+
+    #[test]
     fn go_binary_name_ignores_backups_and_non_executables() {
         assert_eq!(go_binary_name("gopls.exe"), Some("gopls".to_string()));
         assert_eq!(go_binary_name("staticcheck.EXE"), Some("staticcheck".to_string()));
