@@ -196,6 +196,11 @@ pub fn file_identity(path: &Path) -> Option<(u32, u64)> {
             if ok == 0 {
                 return None;
             }
+            // Some network/FAT volumes report no file index; treating 0 as an
+            // identity would collapse unrelated files of equal size.
+            if info.nFileIndexHigh == 0 && info.nFileIndexLow == 0 {
+                return None;
+            }
 
             return Some((
                 info.dwVolumeSerialNumber,
