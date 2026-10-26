@@ -18,6 +18,9 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(tracker::ActiveTracking(std::sync::Arc::new(std::sync::Mutex::new(None))))
+        .manage(scanner::DiskScanState(std::sync::Arc::new(
+            std::sync::atomic::AtomicBool::new(false),
+        )))
         .invoke_handler(tauri::generate_handler![
             commands::get_installed_apps,
             commands::get_dev_tools,
@@ -31,6 +34,8 @@ pub fn run() {
             commands::delete_snapshot,
             commands::compare_snapshots,
             commands::get_pending_reboot_items,
+            commands::scan_disk_space,
+            commands::cancel_disk_scan,
             commands::get_path_entries,
             commands::save_path_entries,
             commands::run_uninstall_command,

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Monitor, Terminal, Layers, FileCode, Settings, Zap, FolderSearch, Cpu } from "@lucide/svelte";
+  import { Monitor, Terminal, Layers, FileCode, Settings, Zap, FolderSearch, Cpu, HardDrive } from "@lucide/svelte";
 
   let { activeTab = $bindable() } = $props();
 
@@ -7,6 +7,7 @@
     { id: "apps", label: "Apps Manager", icon: Monitor },
     { id: "devtools", label: "Dev Tools", icon: Terminal },
     { id: "projectsweeper", label: "Project Sweeper", icon: FolderSearch },
+    { id: "diskspace", label: "Disk Space", icon: HardDrive },
     { id: "wslshrinker", label: "WSL Disk Shrinker", icon: Cpu },
     { id: "startup", label: "Startup Manager", icon: Zap },
     { id: "snapshots", label: "System Snapshots", icon: Layers },

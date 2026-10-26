@@ -5,6 +5,7 @@ use serde::Serialize;
 use std::process::Command;
 use std::os::windows::process::CommandExt;
 use std::fs;
+use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter};
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -519,6 +520,38 @@ fn collect_pending_reboot_operations(
             });
         }
     }
+}
+
+#[tauri::command]
+pub async fn scan_disk_space(
+    app: AppHandle,
+    state: tauri::State<'_, scanner::DiskScanState>,
+    path: String,
+    max_depth: Option<u32>,
+    max_children: Option<usize>,
+) -> Result<scanner::DiskScanResult, String> {
+    state.0.store(false, Ordering::Relaxed);
+    let cancel = state.0.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let app_handle = app.clone();
+        scanner::disk_scan::scan_disk_tree(
+            &path,
+            max_depth.unwrap_or(4),
+            max_children.unwrap_or(40),
+            &cancel,
+            move |progress| {
+                let _ = app_handle.emit("disk-scan-progress", progress);
+            },
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn cancel_disk_scan(state: tauri::State<'_, scanner::DiskScanState>) {
+    state.0.store(true, Ordering::Relaxed);
 }
 
 #[tauri::command]

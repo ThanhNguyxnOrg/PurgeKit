@@ -3,6 +3,7 @@
   import AppsTab from "$lib/components/AppsTab.svelte";
   import DevToolsTab from "$lib/components/DevToolsTab.svelte";
   import ProjectSweeperTab from "$lib/components/ProjectSweeperTab.svelte";
+  import DiskSpaceTab from "$lib/components/DiskSpaceTab.svelte";
   import WslShrinkerTab from "$lib/components/WslShrinkerTab.svelte";
   import StartupTab from "$lib/components/StartupTab.svelte";
   import SnapshotsTab from "$lib/components/SnapshotsTab.svelte";
@@ -38,6 +39,11 @@
     {#if visitedTabs.projectsweeper}
       <div class="flex-1 flex flex-col h-full {activeTab === 'projectsweeper' ? '' : 'hidden'}">
         <ProjectSweeperTab />
+      </div>
+    {/if}
+    {#if visitedTabs.diskspace}
+      <div class="flex-1 flex flex-col h-full {activeTab === 'diskspace' ? '' : 'hidden'}">
+        <DiskSpaceTab />
       </div>
     {/if}
     {#if visitedTabs.wslshrinker}
