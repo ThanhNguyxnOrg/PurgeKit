@@ -756,6 +756,8 @@ pub async fn search_disk_files(
     extension: Option<String>,
     prefix: Option<String>,
     filter_mode: Option<String>,
+    include: Option<String>,
+    exclude: Option<String>,
     limit: Option<usize>,
     sort: Option<String>,
 ) -> Result<scanner::disk_scan::DiskFileSearchResult, String> {
@@ -782,6 +784,8 @@ pub async fn search_disk_files(
             extension.as_deref(),
             prefix.as_deref(),
             filter_mode.as_deref(),
+            include.as_deref(),
+            exclude.as_deref(),
             limit,
             &sort,
         )
@@ -798,6 +802,8 @@ pub async fn export_disk_files_csv(
     extension: Option<String>,
     prefix: Option<String>,
     filter_mode: Option<String>,
+    include: Option<String>,
+    exclude: Option<String>,
     sort: Option<String>,
     limit: Option<usize>,
 ) -> Result<scanner::disk_scan::DiskCsvExport, String> {
@@ -824,6 +830,8 @@ pub async fn export_disk_files_csv(
             extension.as_deref(),
             prefix.as_deref(),
             filter_mode.as_deref(),
+            include.as_deref(),
+            exclude.as_deref(),
             &sort,
             limit,
         )

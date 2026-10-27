@@ -157,17 +157,31 @@ fn cached_matches<'a>(
     extension: Option<&str>,
     prefix: Option<&str>,
     filter_mode: Option<&str>,
+    include: Option<&str>,
+    exclude: Option<&str>,
 ) -> Vec<&'a CachedDiskFile> {
     let query = query.trim();
     let extension = extension
         .map(|value| value.trim().trim_start_matches('.').to_lowercase())
         .filter(|value| !value.is_empty());
     let prefix = prefix.map(str::trim).filter(|value| !value.is_empty());
+    let include = include.map(str::trim).filter(|value| !value.is_empty());
+    let exclude = exclude.map(str::trim).filter(|value| !value.is_empty());
 
     let mut matches = Vec::new();
     for file in &index.files {
         if let Some(prefix) = prefix {
             if !is_under_prefix(&file.path, prefix) {
+                continue;
+            }
+        }
+        if let Some(include) = include {
+            if !contains_ascii_case_insensitive(&file.path, include) {
+                continue;
+            }
+        }
+        if let Some(exclude) = exclude {
+            if contains_ascii_case_insensitive(&file.path, exclude) {
                 continue;
             }
         }
@@ -237,10 +251,12 @@ pub fn search_cached_files(
     extension: Option<&str>,
     prefix: Option<&str>,
     filter_mode: Option<&str>,
+    include: Option<&str>,
+    exclude: Option<&str>,
     limit: usize,
     sort: &str,
 ) -> DiskFileSearchResult {
-    let mut matches = cached_matches(index, query, extension, prefix, filter_mode);
+    let mut matches = cached_matches(index, query, extension, prefix, filter_mode, include, exclude);
     let total_matches = matches.len();
     sort_cached_matches(&mut matches, sort);
     matches.truncate(limit.clamp(1, 2_000));
@@ -285,10 +301,12 @@ pub fn export_cached_files_csv(
     extension: Option<&str>,
     prefix: Option<&str>,
     filter_mode: Option<&str>,
+    include: Option<&str>,
+    exclude: Option<&str>,
     sort: &str,
     limit: usize,
 ) -> DiskCsvExport {
-    let mut matches = cached_matches(index, query, extension, prefix, filter_mode);
+    let mut matches = cached_matches(index, query, extension, prefix, filter_mode, include, exclude);
     let total = matches.len();
     sort_cached_matches(&mut matches, sort);
     let limit = limit.clamp(1, 100_000);
@@ -952,10 +970,10 @@ mod tests {
             scan_disk_tree(&root.to_string_lossy(), 3, 20, false, false, &cancel, |_| {}).unwrap();
         let index = result.file_index.as_ref().unwrap();
 
-        let by_name = search_cached_files(index, "Alpha", None, None, Some("name"), 10, "name");
+        let by_name = search_cached_files(index, "Alpha", None, None, Some("name"), None, None, 10, "name");
         assert_eq!(by_name.total_matches, 0);
 
-        let by_path = search_cached_files(index, "Alpha", None, None, Some("path"), 10, "name");
+        let by_path = search_cached_files(index, "Alpha", None, None, Some("path"), None, None, 10, "name");
         assert_eq!(by_path.total_matches, 2);
 
         let _ = fs::remove_dir_all(&root);
@@ -1079,7 +1097,7 @@ mod tests {
                 .unwrap_or_default()
         };
 
-        let reports = search_cached_files(index, "REPORT", Some(".txt"), None, None, 10, "name");
+        let reports = search_cached_files(index, "REPORT", Some(".txt"), None, None, None, None, 10, "name");
         assert_eq!(reports.total_matches, 3);
         assert!(reports.files.iter().all(|file| file.extension == "txt"));
 
@@ -1088,6 +1106,8 @@ mod tests {
             "report",
             Some("txt"),
             Some(&root.join("Alpha").to_string_lossy()),
+            None,
+            None,
             None,
             10,
             "size",
@@ -1102,34 +1122,47 @@ mod tests {
             None,
             Some(&root.join("Alpha").to_string_lossy()),
             None,
+            None,
+            None,
             10,
             "size",
         );
         assert_eq!(all_in_alpha.total_matches, 2);
 
-        let by_date = search_cached_files(index, "", Some("txt"), None, None, 10, "modified");
+        let by_date = search_cached_files(index, "", Some("txt"), None, None, None, None, 10, "modified");
         assert_eq!(
             by_date.files.iter().map(parent_name).collect::<Vec<_>>(),
             vec!["Beta", "Alphabet", "Alpha"]
         );
 
-        let by_size = search_cached_files(index, "", Some("txt"), None, None, 10, "size");
+        let by_size = search_cached_files(index, "", Some("txt"), None, None, None, None, 10, "size");
         assert_eq!(
             by_size.files.iter().map(parent_name).collect::<Vec<_>>(),
             vec!["Alpha", "Alphabet", "Beta"]
         );
 
-        let by_name = search_cached_files(index, "", None, None, None, 10, "name");
+        let by_name = search_cached_files(index, "", None, None, None, None, None, 10, "name");
         assert_eq!(by_name.files[0].name, "photo.PNG");
 
-        let limited = search_cached_files(index, "", None, None, None, 2, "size");
+        let included = search_cached_files(index, "", None, None, None, Some("alpha\\"), None, 10, "name");
+        assert_eq!(included.total_matches, 2);
+        assert!(included.files.iter().all(|file| file.path.contains("\\Alpha\\")));
+
+        let excluded = search_cached_files(index, "", None, None, None, None, Some("alphabet"), 10, "name");
+        assert_eq!(excluded.total_matches, 3);
+
+        let combined = search_cached_files(index, "report", None, None, None, Some("report"), Some("alphabet"), 10, "name");
+        assert_eq!(combined.total_matches, 2);
+        assert!(combined.files.iter().all(|file| file.name == "Report.TXT"));
+
+        let limited = search_cached_files(index, "", None, None, None, None, None, 2, "size");
         assert_eq!(limited.total_matches, 4);
         assert_eq!(limited.files.len(), 2);
 
-        let clamped = search_cached_files(index, "", None, None, None, 0, "size");
+        let clamped = search_cached_files(index, "", None, None, None, None, None, 0, "size");
         assert_eq!(clamped.files.len(), 1);
 
-        let missing = search_cached_files(index, "does-not-exist", None, None, None, 10, "size");
+        let missing = search_cached_files(index, "does-not-exist", None, None, None, None, None, 10, "size");
         assert_eq!(missing.total_matches, 0);
         assert!(missing.files.is_empty());
 
@@ -1149,7 +1182,7 @@ mod tests {
             scan_disk_tree(&root.to_string_lossy(), 2, 20, false, false, &cancel, |_| {}).unwrap();
         let index = result.file_index.as_ref().unwrap();
 
-        let exported = export_cached_files_csv(index, "", None, None, Some("name"), "name", 10);
+        let exported = export_cached_files_csv(index, "", None, None, Some("name"), None, None, "name", 10);
         assert_eq!(exported.total, 2);
         assert_eq!(exported.exported, 2);
         assert!(!exported.truncated);
@@ -1157,9 +1190,18 @@ mod tests {
         assert!(exported.csv.contains("alpha.txt"));
         assert!(exported.csv.contains("\"beta,quoted.txt\""));
 
-        let limited = export_cached_files_csv(index, "", None, None, Some("name"), "name", 1);
+        let limited = export_cached_files_csv(index, "", None, None, Some("name"), None, None, "name", 1);
         assert_eq!(limited.exported, 1);
         assert!(limited.truncated);
+
+        let included = export_cached_files_csv(index, "", None, None, Some("name"), Some("beta"), None, "name", 10);
+        assert_eq!(included.total, 1);
+        assert!(included.csv.contains("beta,quoted.txt"));
+        assert!(!included.csv.contains("alpha.txt"));
+
+        let excluded = export_cached_files_csv(index, "", None, None, Some("name"), None, Some("alpha"), "name", 10);
+        assert_eq!(excluded.total, 1);
+        assert!(excluded.csv.contains("beta,quoted.txt"));
 
         let _ = fs::remove_dir_all(&root);
     }
@@ -1238,13 +1280,13 @@ mod tests {
         assert!(index.complete);
         assert!(index.files.iter().all(|file| file.modified_epoch_ms.is_some()));
 
-        let search = search_cached_files(index, "setup", None, None, None, 10, "size");
+        let search = search_cached_files(index, "setup", None, None, None, None, None, 10, "size");
         assert_eq!(search.total_matches, 1);
         assert_eq!(search.files[0].name, "Big_Setup.EXE");
         assert_eq!(search.files[0].extension, "exe");
         assert!(search.files[0].modified_epoch_ms.is_some());
 
-        let by_extension = search_cached_files(index, "", Some(".TXT"), None, None, 10, "size");
+        let by_extension = search_cached_files(index, "", Some(".TXT"), None, None, None, None, 10, "size");
         assert_eq!(by_extension.total_matches, 1);
         assert_eq!(by_extension.files[0].name, "notes.txt");
 
@@ -1254,17 +1296,19 @@ mod tests {
             None,
             Some(&root.join("nested").to_string_lossy()),
             None,
+            None,
+            None,
             10,
             "size",
         );
         assert_eq!(scoped.total_matches, 2);
 
-        let sorted = search_cached_files(index, "", None, None, None, 2, "size");
+        let sorted = search_cached_files(index, "", None, None, None, None, None, 2, "size");
         assert_eq!(sorted.total_matches, 3);
         assert_eq!(sorted.files.len(), 2);
         assert_eq!(sorted.files[0].name, "Big_Setup.EXE");
 
-        let by_name = search_cached_files(index, "", None, None, None, 10, "name");
+        let by_name = search_cached_files(index, "", None, None, None, None, None, 10, "name");
         assert_eq!(by_name.files[0].name, "backup.bin");
         assert_eq!(by_name.files[1].name, "Big_Setup.EXE");
 

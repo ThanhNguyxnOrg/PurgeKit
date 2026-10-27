@@ -122,6 +122,8 @@
   let fileSort = $state<"size" | "modified" | "name">("size");
   let fileScope = $state<"all" | "folder">("all");
   let fileFilterMode = $state<"name" | "path">("name");
+  let fileInclude = $state("");
+  let fileExclude = $state("");
   let fileLimit = $state(500);
   let searchResult = $state<DiskFileSearchResult | null>(null);
   let isSearching = $state(false);
@@ -161,9 +163,17 @@
     result
       ? result.top_files.filter((file) => {
           const query = fileQuery.trim().toLowerCase();
-          const haystack = fileFilterMode === "path" ? file.path : file.name;
+          const path = file.path.toLowerCase();
+          const include = fileInclude.trim().toLowerCase();
+          const exclude = fileExclude.trim().toLowerCase();
+          const haystack = fileFilterMode === "path" ? path : file.name.toLowerCase();
+          if (fileExtensionFilter && file.extension.toLowerCase() !== fileExtensionFilter.toLowerCase()) {
+            return false;
+          }
+          if (include && !path.includes(include)) return false;
+          if (exclude && path.includes(exclude)) return false;
           return !query ||
-            haystack.toLowerCase().includes(query) ||
+            haystack.includes(query) ||
             file.extension.toLowerCase().includes(query);
         })
       : []
@@ -206,6 +216,8 @@
   let isSearchActive = $derived(
     fileQuery.trim().length > 0 ||
       fileExtensionFilter !== null ||
+      fileInclude.trim().length > 0 ||
+      fileExclude.trim().length > 0 ||
       (fileScope === "folder" && focusNode !== null)
   );
 
@@ -296,6 +308,8 @@
           duplicateMode,
           fileSort,
           fileFilterMode,
+          fileInclude,
+          fileExclude,
           fileLimit,
           fileScope,
         })
@@ -318,6 +332,8 @@
       if (prefs.fileFilterMode === "name" || prefs.fileFilterMode === "path") {
         fileFilterMode = prefs.fileFilterMode;
       }
+      if (typeof prefs.fileInclude === "string") fileInclude = prefs.fileInclude;
+      if (typeof prefs.fileExclude === "string") fileExclude = prefs.fileExclude;
       if (prefs.fileScope === "all" || prefs.fileScope === "folder") {
         fileScope = prefs.fileScope;
       }
@@ -372,6 +388,8 @@
         extension: fileExtensionFilter,
         prefix: fileScope === "folder" ? focusNode?.path ?? null : null,
         filterMode: fileFilterMode,
+        include: fileInclude.trim() || null,
+        exclude: fileExclude.trim() || null,
         sort: fileSort,
         limit: fileLimit,
       });
@@ -413,6 +431,17 @@
     if (isSearchActive) {
       scheduleFileSearch();
     }
+  }
+
+  function updatePathFilters() {
+    saveDiskPreferences();
+    scheduleFileSearch();
+  }
+
+  function clearPathFilters() {
+    fileInclude = "";
+    fileExclude = "";
+    updatePathFilters();
   }
 
   async function scanDisk() {
@@ -788,6 +817,8 @@
         extension: fileExtensionFilter,
         prefix: fileScope === "folder" ? focusNode?.path ?? null : null,
         filterMode: fileFilterMode,
+        include: fileInclude.trim() || null,
+        exclude: fileExclude.trim() || null,
         sort: fileSort,
         limit: 100000,
       });
@@ -975,8 +1006,7 @@
   });
 
   $effect(() => {
-    if (activeView === "files" && fileScope === "folder") {
-      focusNode;
+    if (activeView === "files" && result && isSearchActive) {
       scheduleFileSearch();
     }
   });
@@ -1399,6 +1429,62 @@
               Top {displayFiles.length} files · search covers all scanned files
             {/if}
           </span>
+        </div>
+
+        <div class="flex flex-col lg:flex-row lg:items-center gap-2">
+          <span class="text-[11px] font-mono uppercase tracking-wider text-text-muted shrink-0">Path filters</span>
+          <label class="relative flex-1 min-w-0">
+            <span class="absolute left-3 top-1/2 -translate-y-1/2 font-mono text-xs font-bold text-success" aria-hidden="true">+</span>
+            <input
+              value={fileInclude}
+              oninput={(event) => { fileInclude = event.currentTarget.value; updatePathFilters(); }}
+              placeholder="Include paths containing…"
+              aria-label="Include only file paths containing"
+              class="w-full pl-8 pr-8 py-2 rounded-lg bg-surface-bg border border-border-default focus:border-success/50 focus:ring-1 focus:ring-success/30 outline-none text-xs text-text-primary placeholder:text-text-muted"
+            />
+            {#if fileInclude}
+              <button
+                type="button"
+                onclick={() => { fileInclude = ""; updatePathFilters(); }}
+                class="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-text-muted hover:text-text-primary transition-colors"
+                title="Clear include filter"
+                aria-label="Clear include filter"
+              >
+                <X class="w-3 h-3" aria-hidden="true" />
+              </button>
+            {/if}
+          </label>
+          <label class="relative flex-1 min-w-0">
+            <span class="absolute left-3 top-1/2 -translate-y-1/2 font-mono text-xs font-bold text-danger" aria-hidden="true">−</span>
+            <input
+              value={fileExclude}
+              oninput={(event) => { fileExclude = event.currentTarget.value; updatePathFilters(); }}
+              placeholder="Exclude paths containing…"
+              aria-label="Exclude file paths containing"
+              class="w-full pl-8 pr-8 py-2 rounded-lg bg-surface-bg border border-border-default focus:border-danger/50 focus:ring-1 focus:ring-danger/30 outline-none text-xs text-text-primary placeholder:text-text-muted"
+            />
+            {#if fileExclude}
+              <button
+                type="button"
+                onclick={() => { fileExclude = ""; updatePathFilters(); }}
+                class="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-text-muted hover:text-text-primary transition-colors"
+                title="Clear exclude filter"
+                aria-label="Clear exclude filter"
+              >
+                <X class="w-3 h-3" aria-hidden="true" />
+              </button>
+            {/if}
+          </label>
+          {#if fileInclude || fileExclude}
+            <button
+              type="button"
+              onclick={clearPathFilters}
+              class="px-3 py-2 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-[11px] font-semibold text-text-secondary hover:text-text-primary transition-colors shrink-0"
+            >
+              Clear filters
+            </button>
+          {/if}
+          <span class="text-[10px] font-mono text-text-muted shrink-0">case-insensitive substring · full path</span>
         </div>
 
         <div class="border border-border-default rounded-lg overflow-hidden">
