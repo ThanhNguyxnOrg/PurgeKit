@@ -1163,6 +1163,9 @@
               Searching…
             {:else if isSearchActive && searchResult}
               {searchResult.total_matches.toLocaleString()} matches · {searchResult.indexed_files.toLocaleString()} indexed{searchResult.index_complete ? "" : " (capped)"}
+              {#if searchResult.total_matches > searchResult.files.length}
+                · top {searchResult.files.length} by size
+              {/if}
             {:else}
               Top {displayFiles.length} by size · search covers all scanned files
             {/if}
