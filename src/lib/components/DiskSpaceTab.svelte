@@ -250,6 +250,12 @@
     return Math.max(node.allocated_bytes, node.size_bytes);
   }
 
+  function percentOfFocusedNode(node: DiskTreeNode): string {
+    const base = nodeWeight(focusNode ?? result?.root ?? node);
+    if (base <= 0) return "0.0";
+    return ((nodeWeight(node) / base) * 100).toFixed(1);
+  }
+
   function isDriveRoot(value: string): boolean {
     return /^[a-zA-Z]:[\\/]*$/.test(value.trim());
   }
@@ -1117,7 +1123,7 @@
               <span class="block text-[11px] font-semibold text-text-primary break-all">{tooltip.node.name}</span>
               <span class="block text-[10px] font-mono text-text-muted mt-0.5 break-all">{tooltip.node.path}</span>
               <span class="block text-[10px] font-mono text-data-cyan mt-1">
-                {formatBytes(nodeWeight(tooltip.node))} · {tooltip.node.file_count.toLocaleString()} files
+                {formatBytes(nodeWeight(tooltip.node))} · {percentOfFocusedNode(tooltip.node)}% · {tooltip.node.file_count.toLocaleString()} files
                 {#if tooltip.node.is_dir}· click to zoom{:else}· click to select{/if}
               </span>
               {#if !tooltip.node.is_dir && tooltip.node.modified_epoch_ms}
