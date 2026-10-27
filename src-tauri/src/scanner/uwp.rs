@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::process::Command;
 use std::os::windows::process::CommandExt;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use super::registry::InstalledApp;
 use base64::{Engine as _, engine::general_purpose};
 
@@ -212,18 +212,156 @@ fn clean_uwp_display_name(name: &str) -> String {
     final_name
 }
 
-fn get_uwp_icon_base64(install_location: &str) -> Option<String> {
-    let path = Path::new(install_location);
-    if !path.exists() {
+fn manifest_logo_candidates(install_location: &Path) -> Vec<String> {
+    let Ok(content) = fs::read_to_string(install_location.join("AppxManifest.xml")) else {
+        return Vec::new();
+    };
+
+    let mut candidates: Vec<String> = Vec::new();
+    let mut push = |value: &str| {
+        let value = value.trim();
+        if !value.is_empty()
+            && !candidates
+                .iter()
+                .any(|existing| existing.eq_ignore_ascii_case(value))
+        {
+            candidates.push(value.to_string());
+        }
+    };
+
+    for attribute in ["Square44x44Logo", "Square150x150Logo", "Logo"] {
+        let needle = format!("{}=\"", attribute);
+        let mut rest = content.as_str();
+        while let Some(index) = rest.find(&needle) {
+            let after = &rest[index + needle.len()..];
+            let Some(end) = after.find('"') else {
+                break;
+            };
+            push(&after[..end]);
+            rest = &after[end + 1..];
+        }
+    }
+
+    if let Some(start) = content.find("<Logo>") {
+        let after = &content[start + "<Logo>".len()..];
+        if let Some(end) = after.find("</Logo>") {
+            push(&after[..end]);
+        }
+    }
+
+    candidates
+}
+
+fn icon_score(name: &str) -> u32 {
+    if name.contains("contrast-") {
+        return 0;
+    }
+    let score: u32 = if name.contains("targetsize-256") {
+        100
+    } else if name.contains("targetsize-48") {
+        90
+    } else if name.contains("targetsize-44") {
+        80
+    } else if name.contains("scale-200") {
+        70
+    } else if name.contains("scale-150") {
+        60
+    } else if name.contains("scale-125") {
+        50
+    } else if name.contains("scale-100") {
+        40
+    } else {
+        10
+    };
+    if name.contains("altform") {
+        score.saturating_sub(15)
+    } else {
+        score
+    }
+}
+
+fn resolve_manifest_asset(install_location: &Path, raw: &str) -> Option<PathBuf> {
+    let raw = raw.trim();
+    if raw.is_empty() || raw.to_ascii_lowercase().starts_with("ms-resource:") {
         return None;
     }
-    
-    // We walk up to depth 3 recursively to find png assets
+
+    let relative = raw.replace('/', "\\");
+    let relative = relative.trim_start_matches('\\');
+    let base = crate::winutil::canonicalize_path_safety(&install_location.to_string_lossy());
+    let candidate = crate::winutil::canonicalize_path_safety(
+        &install_location.join(relative).to_string_lossy(),
+    );
+    if !candidate.starts_with(&base) {
+        return None;
+    }
+    if candidate.is_file()
+        && candidate
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("png"))
+    {
+        return Some(candidate);
+    }
+
+    // Manifests usually name an unqualified asset while the package ships
+    // scale/targetsize variants of it.
+    let parent = candidate.parent()?;
+    let stem = candidate.file_stem()?.to_string_lossy().to_ascii_lowercase();
+    if stem.is_empty() {
+        return None;
+    }
+
+    let mut best: Option<(u32, PathBuf)> = None;
+    for entry in fs::read_dir(parent).ok()?.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+        if !name.ends_with(".png") || !name.starts_with(&stem) {
+            continue;
+        }
+        let remainder = &name[stem.len()..];
+        if !remainder.is_empty() && !remainder.starts_with('.') && !remainder.starts_with('_') {
+            continue;
+        }
+        let score = icon_score(&name);
+        if score == 0 {
+            continue;
+        }
+        if best.as_ref().map_or(true, |(best_score, _)| score > *best_score) {
+            best = Some((score, path));
+        }
+    }
+
+    best.map(|(_, path)| path)
+}
+
+fn get_uwp_icon_base64(install_location: &str) -> Option<String> {
+    let path = Path::new(install_location);
+    if !path.is_dir() {
+        return None;
+    }
+
+    for logo in manifest_logo_candidates(path) {
+        let Some(asset) = resolve_manifest_asset(path, &logo) else {
+            continue;
+        };
+        if let Ok(bytes) = fs::read(asset) {
+            if !bytes.is_empty() {
+                return Some(general_purpose::STANDARD.encode(&bytes));
+            }
+        }
+    }
+
+    // Manifest paths can be resource references; fall back to a bounded walk
+    // so a huge package cannot stall the whole inventory.
     let mut candidates = Vec::new();
     for entry in walkdir::WalkDir::new(path)
         .max_depth(3)
         .into_iter()
-        .filter_map(|e| e.ok())
+        .filter_map(|entry| entry.ok())
+        .take(4000)
     {
         let p = entry.path();
         if p.is_file() && p.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("png")) {
@@ -272,6 +410,50 @@ fn get_uwp_icon_base64(install_location: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolves_manifest_icon_variants() {
+        let root = std::env::temp_dir().join("purgekit_uwp_icon_manifest_test");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("Assets")).unwrap();
+        fs::write(
+            root.join("AppxManifest.xml"),
+            r#"<Package><Properties><Logo>Assets\StoreLogo.png</Logo></Properties><Applications><Application><uap:VisualElements Square44x44Logo="Assets\Square44x44Logo.png" /></Application></Applications></Package>"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("Assets").join("Square44x44Logo.scale-100.png"),
+            [1u8, 2, 3],
+        )
+        .unwrap();
+        fs::write(root.join("Assets").join("StoreLogo.png"), [4u8, 5, 6]).unwrap();
+
+        let encoded = get_uwp_icon_base64(root.to_str().unwrap()).expect("manifest icon");
+        let decoded = general_purpose::STANDARD.decode(encoded).unwrap();
+        assert_eq!(decoded, vec![1, 2, 3]);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rejects_manifest_assets_outside_the_package() {
+        let base = std::env::temp_dir();
+        let root = base.join("purgekit_uwp_icon_traversal_test");
+        let outside = base.join("purgekit_uwp_icon_traversal_outside.png");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(&outside, [9u8, 9, 9]).unwrap();
+        fs::write(
+            root.join("AppxManifest.xml"),
+            r#"<Package><Properties><Logo>..\purgekit_uwp_icon_traversal_outside.png</Logo></Properties></Package>"#,
+        )
+        .unwrap();
+
+        assert!(get_uwp_icon_base64(root.to_str().unwrap()).is_none());
+
+        let _ = fs::remove_file(&outside);
+        let _ = fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn test_scan_uwp_apps() {
