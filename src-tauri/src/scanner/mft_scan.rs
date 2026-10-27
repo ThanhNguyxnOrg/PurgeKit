@@ -9,7 +9,7 @@ use mft::MftEntry;
 use ntfs::{Ntfs, NtfsReadSeek};
 
 use super::disk_scan::{
-    finalize_scan, DiskScanProgress, DiskScanResult, FlatNode,
+    attribute_letters, finalize_scan, DiskScanProgress, DiskScanResult, FlatNode,
 };
 
 #[derive(Debug)]
@@ -20,6 +20,7 @@ struct MftRecord {
     size_bytes: u64,
     allocated_bytes: u64,
     modified_epoch_ms: Option<u64>,
+    attributes: String,
 }
 
 fn drive_letter(root: &str) -> Option<char> {
@@ -73,6 +74,7 @@ pub fn scan_ntfs_mft<F>(
     max_depth: u32,
     max_children: usize,
     find_duplicates: bool,
+    duplicate_include_date: bool,
     cancel: &AtomicBool,
     mut on_progress: F,
 ) -> Result<DiskScanResult, String>
@@ -147,14 +149,22 @@ where
         let Some(name_attr) = entry.find_best_name_attribute() else {
             continue;
         };
-        let modified_epoch_ms = entry
+        let standard_info = entry
             .iter_attributes_matching(Some(vec![MftAttributeType::StandardInformation]))
             .filter_map(Result::ok)
-            .find_map(|attribute| attribute.data.into_standard_info())
+            .find_map(|attribute| attribute.data.into_standard_info());
+        let modified_epoch_ms = standard_info
+            .as_ref()
             .map(|info| info.modified)
             .unwrap_or(name_attr.modified)
             .as_millisecond();
         let modified_epoch_ms = u64::try_from(modified_epoch_ms).ok();
+        let attributes = attribute_letters(
+            standard_info
+                .as_ref()
+                .map(|info| info.file_flags.bits())
+                .unwrap_or_else(|| name_attr.flags.bits()),
+        );
         let name = name_attr.name;
         if name.is_empty() || name == "." || name == ".." {
             continue;
@@ -176,6 +186,7 @@ where
                 name_attr.logical_size
             },
             modified_epoch_ms,
+            attributes,
         };
 
         if is_dir {
@@ -238,6 +249,7 @@ where
         size_bytes: 0,
         allocated_bytes: 0,
         modified_epoch_ms: root_record.modified_epoch_ms,
+        attributes: root_record.attributes.clone(),
         file_count: 0,
         extension: String::new(),
     }];
@@ -274,6 +286,7 @@ where
                 size_bytes: record.size_bytes,
                 allocated_bytes: record.allocated_bytes,
                 modified_epoch_ms: record.modified_epoch_ms,
+                attributes: record.attributes.clone(),
                 file_count: if record.is_dir { 0 } else { 1 },
                 extension: if record.is_dir {
                     String::new()
@@ -305,6 +318,7 @@ where
         max_depth,
         max_children,
         find_duplicates,
+        duplicate_include_date,
         false,
         errors,
         started,

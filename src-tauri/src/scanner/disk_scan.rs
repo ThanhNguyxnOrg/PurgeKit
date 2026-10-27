@@ -26,6 +26,7 @@ pub struct DiskTreeNode {
     pub size_bytes: u64,
     pub allocated_bytes: u64,
     pub modified_epoch_ms: Option<u64>,
+    pub attributes: String,
     pub file_count: u64,
     pub children: Vec<DiskTreeNode>,
 }
@@ -38,6 +39,7 @@ pub struct DiskFile {
     pub size_bytes: u64,
     pub allocated_bytes: u64,
     pub modified_epoch_ms: Option<u64>,
+    pub attributes: String,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -72,6 +74,7 @@ pub struct DiskScanResult {
     pub errors: u64,
     pub truncated: bool,
     pub engine: String,
+    pub duplicate_mode: String,
     #[serde(skip)]
     pub file_index: Option<DiskFileIndex>,
 }
@@ -84,6 +87,7 @@ pub struct CachedDiskFile {
     pub size_bytes: u64,
     pub allocated_bytes: u64,
     pub modified_epoch_ms: Option<u64>,
+    pub attributes: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -124,7 +128,8 @@ fn compare_paths_case_insensitive(left: &str, right: &str) -> std::cmp::Ordering
         .cmp(right.bytes().map(|byte| byte.to_ascii_lowercase()))
 }
 
-fn is_under_prefix(path: &str, prefix: &str) -> bool {    let prefix = prefix.trim_end_matches(['\\', '/']);
+fn is_under_prefix(path: &str, prefix: &str) -> bool {
+    let prefix = prefix.trim_end_matches(['\\', '/']);
     if prefix.is_empty() {
         return true;
     }
@@ -151,6 +156,7 @@ pub fn search_cached_files(
     query: &str,
     extension: Option<&str>,
     prefix: Option<&str>,
+    filter_mode: Option<&str>,
     limit: usize,
     sort: &str,
 ) -> DiskFileSearchResult {
@@ -174,8 +180,18 @@ pub fn search_cached_files(
                 continue;
             }
         }
-        if !query.is_empty() && !contains_ascii_case_insensitive(&file.path, query) {
-            continue;
+        if !query.is_empty() {
+            let haystack = if filter_mode == Some("path") {
+                file.path.as_str()
+            } else {
+                Path::new(&file.path)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(&file.path)
+            };
+            if !contains_ascii_case_insensitive(haystack, query) {
+                continue;
+            }
         }
         matches.push(file);
     }
@@ -213,6 +229,7 @@ pub fn search_cached_files(
             size_bytes: file.size_bytes,
             allocated_bytes: file.allocated_bytes,
             modified_epoch_ms: file.modified_epoch_ms,
+            attributes: file.attributes.clone(),
         })
         .collect();
 
@@ -233,6 +250,7 @@ pub(crate) struct FlatNode {
     pub(crate) size_bytes: u64,
     pub(crate) allocated_bytes: u64,
     pub(crate) modified_epoch_ms: Option<u64>,
+    pub(crate) attributes: String,
     pub(crate) file_count: u64,
     pub(crate) extension: String,
 }
@@ -258,6 +276,40 @@ fn modified_millis(metadata: &fs::Metadata) -> Option<u64> {
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
         .map(|duration| duration.as_millis() as u64)
+}
+
+pub(crate) fn attribute_letters(flags: u32) -> String {
+    const FLAGS: &[(u32, char)] = &[
+        (0x0001, 'R'),
+        (0x0002, 'H'),
+        (0x0004, 'S'),
+        (0x0010, 'D'),
+        (0x0020, 'A'),
+        (0x0100, 'T'),
+        (0x0200, 'P'),
+        (0x0800, 'C'),
+        (0x1000, 'O'),
+        (0x4000, 'E'),
+        (0x8000, 'I'),
+        (0x2000, 'N'),
+    ];
+
+    FLAGS
+        .iter()
+        .filter(|(bit, _)| flags & bit != 0)
+        .map(|(_, letter)| *letter)
+        .collect()
+}
+
+#[cfg(windows)]
+fn metadata_attributes(metadata: &fs::Metadata) -> String {
+    use std::os::windows::fs::MetadataExt;
+    attribute_letters(metadata.file_attributes())
+}
+
+#[cfg(not(windows))]
+fn metadata_attributes(_metadata: &fs::Metadata) -> String {
+    String::new()
 }
 
 fn build_tree_node(
@@ -308,6 +360,7 @@ fn build_tree_node(
         size_bytes: node.size_bytes,
         allocated_bytes: node.allocated_bytes,
         modified_epoch_ms: node.modified_epoch_ms,
+        attributes: node.attributes.clone(),
         file_count: node.file_count,
         children: child_nodes,
     }
@@ -318,6 +371,7 @@ pub fn scan_disk_tree<F>(
     max_depth: u32,
     max_children: usize,
     find_duplicates: bool,
+    duplicate_include_date: bool,
     cancel: &AtomicBool,
     mut on_progress: F,
 ) -> Result<DiskScanResult, String>
@@ -361,6 +415,7 @@ where
         size_bytes: 0,
         allocated_bytes: 0,
         modified_epoch_ms: modified_millis(&root_metadata),
+        attributes: metadata_attributes(&root_metadata),
         file_count: 0,
         extension: String::new(),
     }];
@@ -443,6 +498,7 @@ where
             size_bytes,
             allocated_bytes,
             modified_epoch_ms: modified_millis(&metadata),
+            attributes: metadata_attributes(&metadata),
             file_count: if is_dir { 0 } else { 1 },
             extension: extension.clone(),
         });
@@ -471,6 +527,7 @@ where
         max_depth,
         max_children,
         find_duplicates,
+        duplicate_include_date,
         true,
         errors,
         started,
@@ -508,6 +565,7 @@ pub(crate) fn finalize_scan(
     max_depth: u32,
     max_children: usize,
     find_duplicates: bool,
+    duplicate_include_date: bool,
     dedupe_hardlinks: bool,
     errors: u64,
     started: Instant,
@@ -580,6 +638,7 @@ pub(crate) fn finalize_scan(
                 size_bytes: node.size_bytes,
                 allocated_bytes: node.allocated_bytes,
                 modified_epoch_ms: node.modified_epoch_ms,
+                attributes: node.attributes.clone(),
             });
         } else {
             index_complete = false;
@@ -619,6 +678,7 @@ pub(crate) fn finalize_scan(
                 size_bytes: node.size_bytes,
                 allocated_bytes: node.allocated_bytes,
                 modified_epoch_ms: node.modified_epoch_ms,
+                attributes: node.attributes.clone(),
             }
         })
         .collect();
@@ -635,13 +695,18 @@ pub(crate) fn finalize_scan(
     file_types.truncate(20);
 
     let duplicate_groups = if find_duplicates {
-        let mut grouped: HashMap<(u64, String), Vec<usize>> = HashMap::new();
+        let mut grouped: HashMap<(u64, String, Option<u64>), Vec<usize>> = HashMap::new();
         for (index, node) in nodes.iter().enumerate().skip(1) {
             if node.is_dir || node.size_bytes == 0 {
                 continue;
             }
+            let modified = if duplicate_include_date {
+                Some(node.modified_epoch_ms.unwrap_or(0))
+            } else {
+                None
+            };
             grouped
-                .entry((node.size_bytes, node.name.to_lowercase()))
+                .entry((node.size_bytes, node.name.to_lowercase(), modified))
                 .or_default()
                 .push(index);
         }
@@ -649,7 +714,7 @@ pub(crate) fn finalize_scan(
         let mut groups: Vec<DuplicateGroup> = grouped
             .into_iter()
             .filter(|(_, indices)| indices.len() > 1)
-            .map(|((size_bytes, name), mut indices)| {
+            .map(|((size_bytes, name, _), mut indices)| {
                 indices.sort_by_key(|index| Reverse(nodes[*index].allocated_bytes));
                 let file_count = indices.len();
                 let files = indices
@@ -664,6 +729,7 @@ pub(crate) fn finalize_scan(
                             size_bytes: node.size_bytes,
                             allocated_bytes: node.allocated_bytes,
                             modified_epoch_ms: node.modified_epoch_ms,
+                            attributes: node.attributes.clone(),
                         }
                     })
                     .collect();
@@ -709,6 +775,13 @@ pub(crate) fn finalize_scan(
         errors,
         truncated: budget.truncated,
         engine: engine.to_string(),
+        duplicate_mode: if !find_duplicates {
+            "off".to_string()
+        } else if duplicate_include_date {
+            "name_size_date".to_string()
+        } else {
+            "name_size".to_string()
+        },
         file_index: Some(DiskFileIndex {
             root_path,
             files: indexed_files,
@@ -722,6 +795,70 @@ mod tests {
     use super::*;
     use std::fs;
     use std::sync::atomic::AtomicBool;
+
+    #[test]
+    fn attribute_letters_cover_common_windows_flags() {
+        assert_eq!(attribute_letters(0), "");
+        assert_eq!(attribute_letters(0x1 | 0x2 | 0x800), "RHC");
+        assert!(attribute_letters(0x10).contains('D'));
+        assert_eq!(attribute_letters(0x80), "");
+    }
+
+    #[test]
+    fn groups_duplicates_by_date_only_when_requested() {
+        let root = std::env::temp_dir().join("purgekit_disk_duplicate_date_test");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("a")).unwrap();
+        fs::create_dir_all(root.join("b")).unwrap();
+        let left = root.join("a\\same.txt");
+        let right = root.join("b\\same.txt");
+        fs::write(&left, vec![5u8; 64]).unwrap();
+        fs::write(&right, vec![5u8; 64]).unwrap();
+        let set_time = |path: &std::path::Path, seconds: u64| {
+            fs::File::options()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds))
+                .unwrap();
+        };
+        set_time(&left, 1_000);
+        set_time(&right, 2_000);
+
+        let cancel = AtomicBool::new(false);
+        let by_name_size =
+            scan_disk_tree(&root.to_string_lossy(), 3, 20, true, false, &cancel, |_| {}).unwrap();
+        assert_eq!(by_name_size.duplicate_groups.len(), 1);
+
+        let by_date =
+            scan_disk_tree(&root.to_string_lossy(), 3, 20, true, true, &cancel, |_| {}).unwrap();
+        assert!(by_date.duplicate_groups.is_empty());
+        assert_eq!(by_date.duplicate_mode, "name_size_date");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn name_filter_ignores_folder_names_unless_path_mode_is_selected() {
+        let root = std::env::temp_dir().join("purgekit_disk_name_filter_test");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("Alpha")).unwrap();
+        fs::write(root.join("Alpha\\Report.TXT"), b"report").unwrap();
+        fs::write(root.join("Alpha\\photo.PNG"), b"photo").unwrap();
+
+        let cancel = AtomicBool::new(false);
+        let result =
+            scan_disk_tree(&root.to_string_lossy(), 3, 20, false, false, &cancel, |_| {}).unwrap();
+        let index = result.file_index.as_ref().unwrap();
+
+        let by_name = search_cached_files(index, "Alpha", None, None, Some("name"), 10, "name");
+        assert_eq!(by_name.total_matches, 0);
+
+        let by_path = search_cached_files(index, "Alpha", None, None, Some("path"), 10, "name");
+        assert_eq!(by_path.total_matches, 2);
+
+        let _ = fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn scans_tree_and_aggregates_sizes() {
@@ -738,8 +875,7 @@ mod tests {
             &root.to_string_lossy(),
             3,
             20,
-            false,
-            &cancel,
+            false, false, &cancel,
             |_progress| {},
         )
         .unwrap();
@@ -761,7 +897,7 @@ mod tests {
         let root = std::env::var("PURGEKIT_DISK_SMOKE")
             .unwrap_or_else(|_| r"D:\Code\PurgeKit\src-tauri\src".to_string());
         let cancel = AtomicBool::new(false);
-        let result = scan_disk_tree(&root, 4, 40, true, &cancel, |_| {}).unwrap();
+        let result = scan_disk_tree(&root, 4, 40, true, false, &cancel, |_| {}).unwrap();
         println!(
             "disk smoke: {} files, {} dirs, {} logical, {} allocated, {} ms, truncated={}",
             result.total_files,
@@ -789,7 +925,7 @@ mod tests {
         fs::write(root.join("b\\copy.txt"), b"0123456789").unwrap();
 
         let cancel = AtomicBool::new(false);
-        let result = scan_disk_tree(&root.to_string_lossy(), 3, 20, true, &cancel, |_| {}).unwrap();
+        let result = scan_disk_tree(&root.to_string_lossy(), 3, 20, true, false, &cancel, |_| {}).unwrap();
         assert_eq!(result.duplicate_groups.len(), 1);
         assert_eq!(result.duplicate_groups[0].file_count, 2);
 
@@ -831,7 +967,7 @@ mod tests {
         set_modified(root.join("Alpha\\photo.PNG"), 500);
 
         let cancel = AtomicBool::new(false);
-        let result = scan_disk_tree(&root.to_string_lossy(), 3, 20, false, &cancel, |_| {}).unwrap();
+        let result = scan_disk_tree(&root.to_string_lossy(), 3, 20, false, false, &cancel, |_| {}).unwrap();
         let index = result.file_index.as_ref().unwrap();
 
         let parent_name = |file: &DiskFile| {
@@ -842,7 +978,7 @@ mod tests {
                 .unwrap_or_default()
         };
 
-        let reports = search_cached_files(index, "REPORT", Some(".txt"), None, 10, "name");
+        let reports = search_cached_files(index, "REPORT", Some(".txt"), None, None, 10, "name");
         assert_eq!(reports.total_matches, 3);
         assert!(reports.files.iter().all(|file| file.extension == "txt"));
 
@@ -851,6 +987,7 @@ mod tests {
             "report",
             Some("txt"),
             Some(&root.join("Alpha").to_string_lossy()),
+            None,
             10,
             "size",
         );
@@ -863,34 +1000,35 @@ mod tests {
             "",
             None,
             Some(&root.join("Alpha").to_string_lossy()),
+            None,
             10,
             "size",
         );
         assert_eq!(all_in_alpha.total_matches, 2);
 
-        let by_date = search_cached_files(index, "", Some("txt"), None, 10, "modified");
+        let by_date = search_cached_files(index, "", Some("txt"), None, None, 10, "modified");
         assert_eq!(
             by_date.files.iter().map(parent_name).collect::<Vec<_>>(),
             vec!["Beta", "Alphabet", "Alpha"]
         );
 
-        let by_size = search_cached_files(index, "", Some("txt"), None, 10, "size");
+        let by_size = search_cached_files(index, "", Some("txt"), None, None, 10, "size");
         assert_eq!(
             by_size.files.iter().map(parent_name).collect::<Vec<_>>(),
             vec!["Alpha", "Alphabet", "Beta"]
         );
 
-        let by_name = search_cached_files(index, "", None, None, 10, "name");
+        let by_name = search_cached_files(index, "", None, None, None, 10, "name");
         assert_eq!(by_name.files[0].name, "photo.PNG");
 
-        let limited = search_cached_files(index, "", None, None, 2, "size");
+        let limited = search_cached_files(index, "", None, None, None, 2, "size");
         assert_eq!(limited.total_matches, 4);
         assert_eq!(limited.files.len(), 2);
 
-        let clamped = search_cached_files(index, "", None, None, 0, "size");
+        let clamped = search_cached_files(index, "", None, None, None, 0, "size");
         assert_eq!(clamped.files.len(), 1);
 
-        let missing = search_cached_files(index, "does-not-exist", None, None, 10, "size");
+        let missing = search_cached_files(index, "does-not-exist", None, None, None, 10, "size");
         assert_eq!(missing.total_matches, 0);
         assert!(missing.files.is_empty());
 
@@ -901,7 +1039,7 @@ mod tests {
     fn rejects_relative_and_drive_relative_roots() {
         let cancel = AtomicBool::new(false);
         for root in [r"C:", r"relative\path", "."] {
-            let result = scan_disk_tree(root, 2, 10, false, &cancel, |_| {});
+            let result = scan_disk_tree(root, 2, 10, false, false, &cancel, |_| {});
             assert!(result.is_err(), "{} should be rejected", root);
         }
     }
@@ -911,7 +1049,7 @@ mod tests {
         let cancel = AtomicBool::new(true);
         let root = std::env::temp_dir().join("purgekit_disk_scan_cancel_test");
         let _ = fs::create_dir_all(&root);
-        let result = scan_disk_tree(&root.to_string_lossy(), 2, 10, false, &cancel, |_| {});
+        let result = scan_disk_tree(&root.to_string_lossy(), 2, 10, false, false, &cancel, |_| {});
         assert!(result.is_err());
         let _ = fs::remove_dir_all(&root);
     }
@@ -929,7 +1067,7 @@ mod tests {
         }
 
         let cancel = AtomicBool::new(false);
-        let result = scan_disk_tree(&root.to_string_lossy(), 2, 20, true, &cancel, |_| {}).unwrap();
+        let result = scan_disk_tree(&root.to_string_lossy(), 2, 20, true, false, &cancel, |_| {}).unwrap();
         assert_eq!(result.total_files, 2);
         assert_eq!(result.total_size, 4096);
         assert!(result.duplicate_groups.is_empty());
@@ -949,7 +1087,7 @@ mod tests {
         fs::write(root.join("b\\empty-two.txt"), b"").unwrap();
 
         let cancel = AtomicBool::new(false);
-        let result = scan_disk_tree(&root.to_string_lossy(), 3, 20, true, &cancel, |_| {}).unwrap();
+        let result = scan_disk_tree(&root.to_string_lossy(), 3, 20, true, false, &cancel, |_| {}).unwrap();
         assert!(result.duplicate_groups.is_empty());
 
         let _ = fs::remove_dir_all(&root);
@@ -965,19 +1103,19 @@ mod tests {
         fs::write(root.join("nested\\backup.bin"), vec![0u8; 1024]).unwrap();
 
         let cancel = AtomicBool::new(false);
-        let result = scan_disk_tree(&root.to_string_lossy(), 3, 20, false, &cancel, |_| {}).unwrap();
+        let result = scan_disk_tree(&root.to_string_lossy(), 3, 20, false, false, &cancel, |_| {}).unwrap();
         let index = result.file_index.as_ref().unwrap();
         assert_eq!(index.files.len(), 3);
         assert!(index.complete);
         assert!(index.files.iter().all(|file| file.modified_epoch_ms.is_some()));
 
-        let search = search_cached_files(index, "setup", None, None, 10, "size");
+        let search = search_cached_files(index, "setup", None, None, None, 10, "size");
         assert_eq!(search.total_matches, 1);
         assert_eq!(search.files[0].name, "Big_Setup.EXE");
         assert_eq!(search.files[0].extension, "exe");
         assert!(search.files[0].modified_epoch_ms.is_some());
 
-        let by_extension = search_cached_files(index, "", Some(".TXT"), None, 10, "size");
+        let by_extension = search_cached_files(index, "", Some(".TXT"), None, None, 10, "size");
         assert_eq!(by_extension.total_matches, 1);
         assert_eq!(by_extension.files[0].name, "notes.txt");
 
@@ -986,17 +1124,18 @@ mod tests {
             "",
             None,
             Some(&root.join("nested").to_string_lossy()),
+            None,
             10,
             "size",
         );
         assert_eq!(scoped.total_matches, 2);
 
-        let sorted = search_cached_files(index, "", None, None, 2, "size");
+        let sorted = search_cached_files(index, "", None, None, None, 2, "size");
         assert_eq!(sorted.total_matches, 3);
         assert_eq!(sorted.files.len(), 2);
         assert_eq!(sorted.files[0].name, "Big_Setup.EXE");
 
-        let by_name = search_cached_files(index, "", None, None, 10, "name");
+        let by_name = search_cached_files(index, "", None, None, None, 10, "name");
         assert_eq!(by_name.files[0].name, "backup.bin");
         assert_eq!(by_name.files[1].name, "Big_Setup.EXE");
 

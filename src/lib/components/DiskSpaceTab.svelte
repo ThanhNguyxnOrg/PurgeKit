@@ -13,6 +13,7 @@
     size_bytes: number;
     allocated_bytes: number;
     modified_epoch_ms: number | null;
+    attributes: string;
     file_count: number;
     children: DiskTreeNode[];
   }
@@ -24,6 +25,7 @@
     size_bytes: number;
     allocated_bytes: number;
     modified_epoch_ms: number | null;
+    attributes: string;
   }
 
   interface FileTypeStat {
@@ -55,6 +57,7 @@
     errors: number;
     truncated: boolean;
     engine: "mft" | "traversal";
+    duplicate_mode: "off" | "name_size" | "name_size_date";
   }
 
   interface DiskProgress {
@@ -95,7 +98,7 @@
   let focusStack = $state<DiskTreeNode[]>([]);
   let selectedNode = $state<DiskTreeNode | null>(null);
   let activeView = $state<"treemap" | "files" | "types" | "duplicates">("treemap");
-  let findDuplicates = $state(false);
+  let duplicateMode = $state<"off" | "name_size" | "name_size_date">("off");
   let lastScanHadDuplicates = $state(false);
   let isScanning = $state(false);
   let isCancelling = $state(false);
@@ -109,6 +112,8 @@
   let fileExtensionFilter = $state<string | null>(null);
   let fileSort = $state<"size" | "modified" | "name">("size");
   let fileScope = $state<"all" | "folder">("all");
+  let fileFilterMode = $state<"name" | "path">("name");
+  let fileLimit = $state(500);
   let searchResult = $state<DiskFileSearchResult | null>(null);
   let isSearching = $state(false);
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -147,13 +152,24 @@
     result
       ? result.top_files.filter((file) => {
           const query = fileQuery.trim().toLowerCase();
+          const haystack = fileFilterMode === "path" ? file.path : file.name;
           return !query ||
-            file.name.toLowerCase().includes(query) ||
-            file.path.toLowerCase().includes(query) ||
+            haystack.toLowerCase().includes(query) ||
             file.extension.toLowerCase().includes(query);
         })
       : []
   );
+
+  let scanRootWeight = $derived(result ? nodeWeight(result.root) : 0);
+
+  function fileSharePercent(file: DiskFile): string {
+    if (scanRootWeight <= 0) return "0.0";
+    return ((Math.max(file.allocated_bytes, file.size_bytes) / scanRootWeight) * 100).toFixed(1);
+  }
+
+  function attributesLabel(attributes: string): string {
+    return attributes ? attributes : "—";
+  }
 
   let displayFiles = $derived(
     searchResult ? searchResult.files : sortTopFiles(filteredTopFiles, fileSort)
@@ -290,8 +306,9 @@
         query: fileQuery.trim(),
         extension: fileExtensionFilter,
         prefix: fileScope === "folder" ? focusNode?.path ?? null : null,
+        filterMode: fileFilterMode,
         sort: fileSort,
-        limit: 500,
+        limit: fileLimit,
       });
       if (sequence === searchSequence) {
         searchResult = response;
@@ -324,6 +341,13 @@
     scheduleFileSearch();
   }
 
+  function setFileFilterMode(mode: "name" | "path") {
+    fileFilterMode = mode;
+    if (isSearchActive) {
+      scheduleFileSearch();
+    }
+  }
+
   async function scanDisk() {
     const target = pathInput.trim();
     if (!target) {
@@ -350,9 +374,9 @@
         path: target,
         maxDepth: 4,
         maxChildren: 40,
-        findDuplicates,
+        duplicateMode,
       });
-      lastScanHadDuplicates = findDuplicates;
+      lastScanHadDuplicates = scanResult.duplicate_mode !== "off";
       result = scanResult;
       focusStack = [scanResult.root];
       focusNode = scanResult.root;
@@ -661,12 +685,14 @@
 
     const escapeCsv = (value: string) => `"${value.replace(/"/g, '""')}"`;
     const rows = [
-      ["Name", "Path", "Extension", "Modified", "LogicalBytes", "AllocatedBytes"],
+      ["Name", "Path", "Extension", "Modified", "Attributes", "SharePercent", "LogicalBytes", "AllocatedBytes"],
       ...displayFiles.map((file) => [
         file.name,
         file.path,
         file.extension,
         file.modified_epoch_ms ? formatModified(file.modified_epoch_ms) : "",
+        file.attributes,
+        fileSharePercent(file),
         String(file.size_bytes),
         String(file.allocated_bytes),
       ]),
@@ -752,7 +778,7 @@
 
     pathInput = root;
     await scanDisk();
-    if (findDuplicates && result) activeView = "duplicates";
+    if (duplicateMode !== "off" && result) activeView = "duplicates";
   }
 
   async function quarantineSelected() {
@@ -953,14 +979,18 @@
             C:\
           </button>
         {/each}
-        <label class="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-bg border border-border-default text-xs font-semibold text-text-secondary cursor-pointer select-none">
-          <input
-            type="checkbox"
-            bind:checked={findDuplicates}
-            disabled={isScanning}
-            class="rounded border-border-default text-accent focus:ring-accent bg-surface-bg cursor-pointer w-3.5 h-3.5"
-          />
+        <label class="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-bg border border-border-default text-xs font-semibold text-text-secondary">
           Duplicates
+          <select
+            bind:value={duplicateMode}
+            disabled={isScanning}
+            aria-label="Duplicate comparison mode"
+            class="bg-transparent text-[11px] font-mono text-text-primary outline-none cursor-pointer disabled:opacity-40"
+          >
+            <option value="off">Off</option>
+            <option value="name_size">Name + size</option>
+            <option value="name_size_date">Name + size + date</option>
+          </select>
         </label>
       </div>
     </div>
@@ -1064,7 +1094,7 @@
           class="px-3 py-2 text-xs font-semibold border-b-2 transition-colors {activeView === 'duplicates' ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-primary'}"
         >
           Duplicates
-          {#if findDuplicates}
+          {#if duplicateMode !== "off"}
             <span class="ml-1 font-mono text-[10px] text-text-muted">({result.duplicate_groups.length})</span>
           {/if}
         </button>
@@ -1174,7 +1204,7 @@
             <input
               bind:value={fileQuery}
               oninput={scheduleFileSearch}
-              placeholder="Search every scanned file by name or path…"
+              placeholder={fileFilterMode === "path" ? "Search entire file paths…" : "Search file names…"}
               aria-label="Search all scanned files"
               class="w-full pl-9 pr-3 py-2 rounded-lg bg-surface-bg border border-border-default focus:border-accent/50 focus:ring-1 focus:ring-accent/30 outline-none text-xs text-text-primary placeholder:text-text-muted"
             />
@@ -1207,6 +1237,38 @@
               This folder
             </button>
           </div>
+          <div class="flex items-center rounded-lg border border-border-default overflow-hidden" role="group" aria-label="File search matching">
+            <button
+              onclick={() => setFileFilterMode("name")}
+              aria-pressed={fileFilterMode === "name"}
+              title="Match file names only; fastest"
+              class="px-2.5 py-2 text-[11px] font-semibold transition-colors {fileFilterMode === 'name' ? 'bg-accent-subtle text-accent' : 'bg-surface-bg text-text-muted hover:text-text-primary'}"
+            >
+              Name
+            </button>
+            <button
+              onclick={() => setFileFilterMode("path")}
+              aria-pressed={fileFilterMode === "path"}
+              title="Match the entire path; slower on large scans"
+              class="px-2.5 py-2 text-[11px] font-semibold border-l border-border-default transition-colors {fileFilterMode === 'path' ? 'bg-accent-subtle text-accent' : 'bg-surface-bg text-text-muted hover:text-text-primary'}"
+            >
+              Path
+            </button>
+          </div>
+          <label class="flex items-center gap-1.5 text-[11px] font-mono text-text-muted">
+            Max
+            <select
+              bind:value={fileLimit}
+              onchange={scheduleFileSearch}
+              aria-label="Maximum files to display"
+              class="px-2 py-2 rounded-lg bg-surface-bg border border-border-default text-[11px] font-mono text-text-secondary outline-none cursor-pointer"
+            >
+              <option value={100}>100</option>
+              <option value={500}>500</option>
+              <option value={1000}>1000</option>
+              <option value={2000}>2000</option>
+            </select>
+          </label>
           <button
             onclick={exportTopFilesCsv}
             class="px-3 py-2 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-xs font-semibold text-text-secondary hover:text-text-primary transition-colors"
@@ -1229,7 +1291,7 @@
 
         <div class="border border-border-default rounded-lg overflow-hidden">
           <div class="overflow-x-auto">
-            <table class="w-full text-left text-xs min-w-[760px]">
+            <table class="w-full text-left text-xs min-w-[960px]">
               <thead class="bg-sidebar-bg text-text-muted uppercase tracking-wider font-mono sticky top-0 z-10">
                 <tr>
                   <th class="px-4 py-3" aria-sort={fileSort === "name" ? "ascending" : "none"}>
@@ -1255,6 +1317,8 @@
                       {#if fileSort === "modified"}<ArrowDown class="w-3 h-3 text-accent" aria-hidden="true" />{/if}
                     </button>
                   </th>
+                  <th class="px-4 py-3">Attributes</th>
+                  <th class="px-4 py-3 text-right">Share</th>
                   <th class="px-4 py-3 text-right" aria-sort={fileSort === "size" ? "descending" : "none"}>
                     <button
                       type="button"
@@ -1286,12 +1350,14 @@
                     </td>
                     <td class="px-4 py-2.5 font-mono text-text-secondary">{file.extension}</td>
                     <td class="px-4 py-2.5 font-mono text-text-muted whitespace-nowrap">{formatModified(file.modified_epoch_ms)}</td>
+                    <td class="px-4 py-2.5 font-mono text-text-muted whitespace-nowrap" title="Read-only, Hidden, System, Directory, Archive, Temporary, Sparse, Compressed, Offline, Encrypted, Integrity, Not-indexed">{attributesLabel(file.attributes)}</td>
+                    <td class="px-4 py-2.5 text-right font-mono text-data-cyan">{fileSharePercent(file)}%</td>
                     <td class="px-4 py-2.5 text-right font-mono text-text-primary">{formatBytes(file.allocated_bytes)}</td>
                     <td class="px-4 py-2.5 text-right font-mono text-text-muted">{formatBytes(file.size_bytes)}</td>
                   </tr>
                 {:else}
                   <tr>
-                    <td colspan="5" class="px-4 py-8 text-center text-text-muted">
+                    <td colspan="7" class="px-4 py-8 text-center text-text-muted">
                       {isSearching ? "Searching indexed files…" : isSearchActive ? "No scanned files match this search." : "No top files match this filter."}
                     </td>
                   </tr>
@@ -1331,11 +1397,11 @@
       {:else}
         {#if !lastScanHadDuplicates}
           <div class="p-6 border border-dashed border-border-default rounded-lg bg-surface-bg/20 text-center text-xs text-text-muted">
-            Enable the <b class="text-text-secondary">Duplicates</b> option and scan again to compare files by name + size.
+            Enable <b class="text-text-secondary">Duplicates</b> and scan again to compare by name + size or name + size + date.
           </div>
         {:else if result.duplicate_groups.length === 0}
           <div class="p-6 border border-dashed border-border-default rounded-lg bg-surface-bg/20 text-center text-xs text-text-muted">
-            No duplicate groups found (same name + size).
+            No duplicate groups found ({result.duplicate_mode === "name_size_date" ? "same name, size and modified date" : "same name and size"}).
           </div>
         {:else}
           <div class="flex flex-wrap items-center justify-between gap-3 instrument-panel px-3.5 py-2.5">

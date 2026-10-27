@@ -684,6 +684,7 @@ pub async fn scan_disk_space(
     max_depth: Option<u32>,
     max_children: Option<usize>,
     find_duplicates: Option<bool>,
+    duplicate_mode: Option<String>,
 ) -> Result<scanner::DiskScanResult, String> {
     state.0.store(false, Ordering::Relaxed);
     let cancel = state.0.clone();
@@ -692,7 +693,12 @@ pub async fn scan_disk_space(
     let mut result = tauri::async_runtime::spawn_blocking(move || {
         let max_depth = max_depth.unwrap_or(4);
         let max_children = max_children.unwrap_or(40);
-        let find_duplicates = find_duplicates.unwrap_or(false);
+        let (find_duplicates, duplicate_include_date) = match duplicate_mode.as_deref() {
+            Some("off") => (false, false),
+            Some("name_size_date") => (true, true),
+            Some("name_size") => (true, false),
+            _ => (find_duplicates.unwrap_or(false), false),
+        };
 
         let mft_app = app.clone();
         let mft_result = scanner::mft_scan::scan_ntfs_mft(
@@ -700,6 +706,7 @@ pub async fn scan_disk_space(
             max_depth,
             max_children,
             find_duplicates,
+            duplicate_include_date,
             &cancel,
             move |progress| {
                 let _ = mft_app.emit("disk-scan-progress", progress);
@@ -718,6 +725,7 @@ pub async fn scan_disk_space(
             max_depth,
             max_children,
             find_duplicates,
+            duplicate_include_date,
             &cancel,
             move |progress| {
                 let _ = fallback_app.emit("disk-scan-progress", progress);
@@ -747,6 +755,7 @@ pub async fn search_disk_files(
     query: String,
     extension: Option<String>,
     prefix: Option<String>,
+    filter_mode: Option<String>,
     limit: Option<usize>,
     sort: Option<String>,
 ) -> Result<scanner::disk_scan::DiskFileSearchResult, String> {
@@ -772,6 +781,7 @@ pub async fn search_disk_files(
             &query,
             extension.as_deref(),
             prefix.as_deref(),
+            filter_mode.as_deref(),
             limit,
             &sort,
         )
