@@ -15,13 +15,13 @@
   ];
 </script>
 
-<aside class="fixed top-0 left-0 h-screen z-30 bg-sidebar-bg border-r border-border-default flex flex-col transition-all duration-300 ease-in-out w-16 hover:w-64 group/sidebar shadow-xl">
+<aside class="peer/sidebar fixed top-0 left-0 h-screen z-30 bg-sidebar-bg border-r border-border-default flex flex-col transition-all duration-300 ease-in-out w-16 xl:hover:w-64 xl:focus-within:w-64 group/sidebar shadow-xl">
   <!-- Brand Header -->
   <div class="h-16 border-b border-border-default flex items-center px-3 gap-3 overflow-hidden">
     <div class="w-10 h-10 rounded-lg bg-surface-bg border border-border-default flex items-center justify-center flex-shrink-0">
       <img src="/logo.png" alt="PurgeKit Logo" class="w-6 h-6 object-contain" />
     </div>
-    <div class="flex flex-col opacity-0 group-hover/sidebar:opacity-100 transition-opacity duration-200 delay-75 whitespace-nowrap overflow-hidden">
+    <div class="flex flex-col opacity-0 xl:group-hover/sidebar:opacity-100 xl:group-focus-within/sidebar:opacity-100 transition-opacity duration-200 delay-75 whitespace-nowrap overflow-hidden">
       <h1 class="text-sm font-bold text-text-primary tracking-wide leading-none mb-1">
         PurgeKit
       </h1>
@@ -54,7 +54,7 @@
           {activeTab === item.id ? 'text-accent' : 'text-text-secondary group-hover/btn:text-text-primary'}"
         />
         
-        <span class="opacity-0 group-hover/sidebar:opacity-100 transition-opacity duration-200 delay-75 whitespace-nowrap font-sans font-normal">
+        <span class="opacity-0 xl:group-hover/sidebar:opacity-100 xl:group-focus-within/sidebar:opacity-100 transition-opacity duration-200 delay-75 whitespace-nowrap font-sans font-normal">
           {item.label}
         </span>
       </button>
@@ -83,7 +83,7 @@
         {activeTab === 'settings' ? 'text-accent' : 'text-text-secondary group-hover/btn:text-text-primary'}"
       />
       
-      <span class="opacity-0 group-hover/sidebar:opacity-100 transition-opacity duration-200 delay-75 whitespace-nowrap font-sans font-normal">
+      <span class="opacity-0 xl:group-hover/sidebar:opacity-100 xl:group-focus-within/sidebar:opacity-100 transition-opacity duration-200 delay-75 whitespace-nowrap font-sans font-normal">
         Settings
       </span>
     </button>

@@ -208,34 +208,34 @@
     {:else}
       <div class="border border-border-default rounded-lg overflow-hidden bg-surface-bg/50">
         <div class="overflow-x-auto w-full">
-          <table class="w-full text-left border-collapse min-w-[800px]">
+          <table class="w-full table-fixed text-left border-collapse min-w-[720px]">
           <thead>
             <tr class="bg-sidebar-bg border-b border-border-default text-xs font-semibold text-text-secondary uppercase tracking-wider font-mono">
-              <th class="py-4 px-5">Program Name</th>
-              <th class="py-4 px-5">Startup Location</th>
-              <th class="py-4 px-5">Command</th>
-              <th class="py-4 px-5">Status</th>
-              <th class="py-4 px-5 text-right">Action</th>
+              <th class="py-4 px-3 lg:px-5 w-[24%]">Program Name</th>
+              <th class="py-4 px-3 lg:px-5 w-[18%]">Startup Location</th>
+              <th class="py-4 px-3 lg:px-5 w-[30%]">Command</th>
+              <th class="py-4 px-3 lg:px-5 w-[16%]">Status</th>
+              <th class="py-4 px-3 lg:px-5 w-[12%] text-right">Action</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-border-default text-sm">
             {#each filteredItems as item}
               <tr class="hover:bg-elevated-bg/50 transition-colors duration-150 group">
                 <!-- Name -->
-                <td class="py-4 px-5 font-sans font-medium flex items-center gap-3">
+                <td class="py-4 px-3 lg:px-5 font-sans font-medium flex items-center gap-3 min-w-0">
                   <div class="w-8 h-8 rounded-lg border flex items-center justify-center overflow-hidden transition-colors shadow-sm bg-surface-bg border-border-default flex-shrink-0">
                     <div class="w-full h-full flex items-center justify-center font-mono text-xs {getAvatarStyle(item.name)}">
                       {item.name.charAt(0).toUpperCase()}
                     </div>
                   </div>
-                  <div class="flex flex-col">
-                    <span class="text-text-primary group-hover:text-white transition-colors">{item.name}</span>
+                  <div class="flex flex-col min-w-0">
+                    <span class="text-text-primary group-hover:text-accent transition-colors truncate" title={item.name}>{item.name}</span>
                   </div>
                 </td>
                 
                 <!-- Location -->
-                <td class="py-4 px-5 text-text-secondary max-w-[200px] truncate">
-                  <span class="px-2 py-0.5 rounded text-[10px] font-mono border
+                <td class="py-4 px-3 lg:px-5 text-text-secondary max-w-[200px] truncate">
+                  <span class="inline-block max-w-full truncate align-middle px-2 py-0.5 rounded text-[10px] font-mono border
                     {item.location.startsWith('HKLM') 
                       ? 'bg-amber-950/30 text-amber-400 border-amber-800/40' 
                       : item.location.startsWith('HKCU')
@@ -246,12 +246,12 @@
                 </td>
 
                 <!-- Command -->
-                <td class="py-4 px-5 text-text-muted font-mono text-xs max-w-[250px] truncate" title={item.command}>
+                <td class="py-4 px-3 lg:px-5 text-text-muted font-mono text-xs max-w-[250px] truncate" title={item.command}>
                   {item.command}
                 </td>
 
                 <!-- Status (Toggle) -->
-                <td class="py-4 px-5">
+                <td class="py-4 px-3 lg:px-5">
                   <div class="flex items-center">
                     <button
                       onclick={() => toggleStatus(item)}
@@ -272,7 +272,7 @@
                 </td>
 
                 <!-- Actions -->
-                <td class="py-4 px-5 text-right font-sans">
+                <td class="py-4 px-3 lg:px-5 text-right font-sans">
                   <button
                     onclick={() => deleteItem(item)}
                     title="Delete permanently"

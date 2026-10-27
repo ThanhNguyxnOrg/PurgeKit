@@ -307,7 +307,7 @@
                       <Layers class="w-4 h-4 text-accent" />
                     </div>
                     <div>
-                      <h4 class="text-sm font-bold font-sans text-text-primary group-hover:text-white transition-colors">{snap.name}</h4>
+                      <h4 class="text-sm font-bold font-sans text-text-primary group-hover:text-accent transition-colors">{snap.name}</h4>
                       <div class="flex items-center gap-1.5 text-[10px] text-text-muted font-mono mt-0.5">
                         <Calendar class="w-3 h-3" />
                         <span class="truncate max-w-[150px]">{snap.created_at}</span>

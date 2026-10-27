@@ -20,12 +20,12 @@
   });
 </script>
 
-<div class="flex h-screen w-screen overflow-hidden bg-app-bg text-text-primary font-sans pl-16">
+<div class="flex h-screen w-screen overflow-hidden bg-app-bg text-text-primary font-sans">
   <!-- Sidebar Navigation -->
   <Sidebar bind:activeTab={activeTab} />
 
   <!-- Main Content Viewer -->
-  <main class="flex-1 h-screen overflow-hidden flex flex-col bg-app-bg relative transition-all duration-300">
+  <main class="flex-1 h-screen overflow-hidden flex flex-col bg-app-bg relative pl-16 xl:peer-hover/sidebar:pl-64 xl:peer-focus-within/sidebar:pl-64 transition-all duration-300 ease-in-out">
     {#if visitedTabs.apps}
       <div class="flex-1 flex flex-col h-full {activeTab === 'apps' ? '' : 'hidden'}">
         <AppsTab />

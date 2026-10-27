@@ -189,21 +189,21 @@
       {:else}
         <div class="border border-border-default rounded-lg overflow-hidden bg-surface-bg/50">
           <div class="overflow-x-auto w-full">
-            <table class="w-full text-left border-collapse min-w-[800px]">
+            <table class="w-full text-left border-collapse min-w-[720px]">
             <thead>
               <tr class="bg-sidebar-bg border-b border-border-default text-xs font-semibold text-text-secondary uppercase tracking-wider font-mono">
-                <th class="py-4 px-5 w-10">Select</th>
-                <th class="py-4 px-5">Variable Scope</th>
-                <th class="py-4 px-5">Path Value</th>
-                <th class="py-4 px-5">Status</th>
-                <th class="py-4 px-5">Details / Reason</th>
+                <th class="py-4 px-3 lg:px-5 w-10">Select</th>
+                <th class="py-4 px-3 lg:px-5">Variable Scope</th>
+                <th class="py-4 px-3 lg:px-5">Path Value</th>
+                <th class="py-4 px-3 lg:px-5">Status</th>
+                <th class="py-4 px-3 lg:px-5">Details / Reason</th>
               </tr>
             </thead>
             <tbody class="divide-y border-border-default text-sm">
               {#each envPaths as p, idx}
                 <tr class="hover:bg-elevated-bg/50 transition-colors duration-150 group">
                   <!-- Checkbox -->
-                  <td class="py-4 px-5">
+                  <td class="py-4 px-3 lg:px-5">
                     <button
                       onclick={() => toggleSelection(idx)}
                       class="text-accent focus:outline-none flex-shrink-0 cursor-pointer"
@@ -217,7 +217,7 @@
                   </td>
                   
                   <!-- Scope -->
-                  <td class="py-4 px-5 font-mono text-xs font-semibold">
+                  <td class="py-4 px-3 lg:px-5 font-mono text-xs font-semibold">
                     <span class="px-2 py-0.5 rounded border
                       {p.scope === 'System' ? 'bg-surface-bg text-text-secondary border-border-default' : 'bg-brand-purple/10 text-brand-purple border-brand-purple/20'}">
                       {p.scope}
@@ -225,12 +225,12 @@
                   </td>
                   
                   <!-- Value -->
-                  <td class="py-4 px-5 font-mono text-xs text-text-secondary group-hover:text-text-primary break-all max-w-[400px]">
+                  <td class="py-4 px-3 lg:px-5 font-mono text-xs text-text-secondary group-hover:text-text-primary break-all max-w-[400px]">
                     {p.value}
                   </td>
                   
                   <!-- Status -->
-                  <td class="py-4 px-5 font-mono text-xs">
+                  <td class="py-4 px-3 lg:px-5 font-mono text-xs">
                     {#if !p.is_valid}
                       <span class="px-2 py-0.5 rounded bg-danger/10 text-danger border border-danger/20 flex items-center gap-1 w-max">
                         <ShieldAlert class="w-3.5 h-3.5" />
@@ -250,7 +250,7 @@
                   </td>
                   
                   <!-- Reason -->
-                  <td class="py-4 px-5 text-xs text-text-muted font-sans max-w-[200px] truncate" title={p.issue_reason}>
+                  <td class="py-4 px-3 lg:px-5 text-xs text-text-muted font-sans max-w-[200px] truncate" title={p.issue_reason}>
                     {p.issue_reason}
                   </td>
                 </tr>

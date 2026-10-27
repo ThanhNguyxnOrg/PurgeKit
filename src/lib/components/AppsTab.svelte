@@ -794,15 +794,15 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
 
 <div class="flex-1 flex flex-col h-full bg-app-bg text-text-primary relative">
   <!-- Section Header -->
-  <header class="p-6 border-b border-border-default flex items-center justify-between bg-sidebar-bg">
-    <div>
-      <h2 class="text-2xl font-bold font-sans text-text-primary">
+  <header class="p-4 md:p-6 border-b border-border-default flex flex-wrap items-center justify-between gap-3 bg-sidebar-bg">
+    <div class="min-w-0">
+      <h2 class="text-xl md:text-2xl font-bold font-sans text-text-primary">
         Apps Manager
       </h2>
       <p class="text-xs text-text-muted mt-1">Manage and clean standard desktop apps & Windows Store apps</p>
     </div>
 
-    <div class="flex items-center gap-2">
+    <div class="flex items-center gap-2 shrink-0">
       <button
         onclick={loadApps}
         disabled={isLoading}
@@ -849,7 +849,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
   </header>
 
   <!-- Filter Toolbar -->
-  <div class="p-6 pb-2 flex flex-col md:flex-row gap-4 justify-between items-stretch">
+  <div class="p-4 md:p-6 pb-2 flex flex-col md:flex-row gap-3 md:gap-4 justify-between items-stretch">
     <!-- Search Bar -->
     <div class="relative flex-1 max-w-md">
       <Search class="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
@@ -907,7 +907,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
   </div>
 
   <!-- Content Area -->
-  <div class="flex-1 overflow-y-auto px-6 pb-6">
+  <div class="flex-1 overflow-y-auto overflow-x-hidden px-4 md:px-6 pb-6">
     {#if isLoading}
       <div class="flex flex-col items-center justify-center h-64 gap-3">
         <RefreshCw class="w-8 h-8 text-accent animate-spin" />
@@ -921,10 +921,10 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
     {:else}
       <div class="border border-border-default rounded-lg overflow-hidden bg-surface-bg/50">
         <div class="overflow-x-auto w-full">
-          <table class="w-full text-left border-collapse min-w-[800px]">
+          <table class="w-full text-left border-collapse min-w-[720px]">
             <thead>
-              <tr class="bg-sidebar-bg border-b border-border-default text-xs font-semibold text-text-secondary uppercase tracking-wider font-mono">
-                <th class="py-4 px-5 w-10">
+              <tr class="bg-sidebar-bg border-b border-border-default text-xs font-semibold text-text-secondary uppercase tracking-wider font-mono whitespace-nowrap">
+                <th class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 w-10">
                   <input
                     type="checkbox"
                     aria-label="Select all applications"
@@ -933,18 +933,18 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                     class="rounded border-border-default text-accent focus:ring-accent bg-surface-bg cursor-pointer w-4 h-4"
                   />
                 </th>
-                <th class="py-4 px-5">App Name</th>
-                <th class="py-4 px-5">Publisher</th>
-                <th class="py-4 px-5">Version</th>
-                <th class="py-4 px-5">Size</th>
-                <th class="py-4 px-5">Source</th>
-                <th class="py-4 px-5 text-right">Actions</th>
+                <th class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5">App Name</th>
+                <th class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 hidden xl:table-cell">Publisher</th>
+                <th class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 hidden lg:table-cell">Version</th>
+                <th class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5">Size</th>
+                <th class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5">Source</th>
+                <th class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 text-right">Actions</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-border-default text-sm">
               {#each filteredApps as app}
                 <tr class="hover:bg-elevated-bg/50 transition-colors duration-150 group {selectedApps[app.id] ? 'bg-accent/5' : ''}">
-                  <td class="py-4 px-5 w-10">
+                  <td class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 w-10">
                     <input
                       type="checkbox"
                       aria-label="Select application {app.display_name}"
@@ -956,7 +956,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                     />
                   </td>
                   <!-- Name -->
-                  <td class="py-4 px-5 font-sans font-medium flex items-center gap-3">
+                  <td class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 font-sans font-medium flex items-center gap-3">
                     <div class="w-8 h-8 rounded-lg border flex items-center justify-center overflow-hidden transition-colors shadow-sm bg-surface-bg border-border-default flex-shrink-0">
                       {#if app.icon_base64}
                         <img src="data:image/png;base64,{app.icon_base64}" class="w-6 h-6 object-contain" alt="" />
@@ -968,7 +968,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                     </div>
                     <div class="flex flex-col min-w-0">
                       <div class="flex items-center gap-1.5">
-                        <span class="text-text-primary group-hover:text-white transition-colors max-w-[180px] md:max-w-[280px] truncate" title={app.display_name}>{app.display_name}</span>
+                        <span class="text-text-primary group-hover:text-accent transition-colors max-w-[180px] md:max-w-[280px] truncate" title={app.display_name}>{app.display_name}</span>
                         {#if app.is_verified}
                           <span class="inline-flex items-center" title="Verified Publisher Certificate">
                             <svg class="w-3.5 h-3.5 text-emerald-400 fill-emerald-400/20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -996,22 +996,22 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                   </td>
                   
                   <!-- Publisher -->
-                  <td class="py-4 px-5 text-text-secondary max-w-[150px] truncate">
+                  <td class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 text-text-secondary max-w-[150px] truncate hidden xl:table-cell">
                     {app.publisher || "Unknown"}
                   </td>
                   
                   <!-- Version -->
-                  <td class="py-4 px-5 text-text-secondary font-mono text-xs">
+                  <td class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 text-text-secondary font-mono text-xs hidden lg:table-cell">
                     {app.display_version || "—"}
                   </td>
                   
                   <!-- Size -->
-                  <td class="py-4 px-5 text-text-secondary font-mono text-xs">
+                  <td class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 text-text-secondary font-mono text-xs">
                     {formatSize(app.estimated_size)}
                   </td>
                   
                   <!-- Hive / Type -->
-                  <td class="py-4 px-5">
+                  <td class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5">
                     <span class="px-2 py-0.5 rounded text-[10px] font-mono border
                       {appSource(app) === 'store'
                         ? 'bg-blue-950/30 text-blue-400 border-blue-800/40'
@@ -1032,7 +1032,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                   </td>
                   
                   <!-- Actions -->
-                  <td class="py-4 px-5 text-right font-sans">
+                  <td class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 text-right font-sans whitespace-nowrap">
                     <div class="flex items-center justify-end gap-2">
                       {#if appSource(app) === "cli"}
                         <button
