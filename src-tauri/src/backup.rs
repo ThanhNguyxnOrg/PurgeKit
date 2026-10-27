@@ -228,12 +228,22 @@ mod tests {
         assert!(res.is_ok(), "Quarantine should succeed");
 
         let q_path = res.unwrap();
-        assert!(q_path.exists(), "Quarantined file should exist at destination");
-        assert!(!test_file.exists(), "Source file should have been removed");
+        let quarantined_exists = q_path.exists();
+        let source_exists = test_file.exists();
 
-        // Clean up
+        // The test uses the real app database, so remove the row it created;
+        // otherwise every test run would appear in the Settings UI.
+        if let Ok(conn) = crate::db::open_connection() {
+            let _ = conn.execute(
+                "DELETE FROM quarantine WHERE original_path = ?1",
+                [&test_file_str],
+            );
+        }
         let _ = fs::remove_file(&q_path);
         let _ = fs::remove_dir_all(&temp_dir);
+
+        assert!(quarantined_exists, "Quarantined file should exist at destination");
+        assert!(!source_exists, "Source file should have been removed");
     }
 
     #[test]
