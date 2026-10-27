@@ -23,7 +23,7 @@ struct MftRecord {
     attributes: String,
 }
 
-fn drive_letter(root: &str) -> Option<char> {
+fn parse_scan_target(root: &str) -> Option<(char, Vec<String>)> {
     let path = Path::new(root);
     let mut components = path.components();
     let Component::Prefix(prefix) = components.next()? else {
@@ -35,10 +35,34 @@ fn drive_letter(root: &str) -> Option<char> {
     if !matches!(components.next(), Some(Component::RootDir)) {
         return None;
     }
-    if components.next().is_some() {
-        return None;
+
+    let mut target_components = Vec::new();
+    for component in components {
+        match component {
+            Component::Normal(name) => target_components.push(name.to_string_lossy().to_string()),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
+        }
     }
-    Some((drive as char).to_ascii_uppercase())
+    Some(((drive as char).to_ascii_uppercase(), target_components))
+}
+
+fn find_subtree_root(
+    records: &HashMap<u64, MftRecord>,
+    children_by_parent: &HashMap<u64, Vec<u64>>,
+    target_components: &[String],
+) -> Option<u64> {
+    let mut current = 5u64;
+    for component in target_components {
+        let child = children_by_parent.get(&current)?.iter().copied().find(|record_id| {
+            records
+                .get(record_id)
+                .map(|record| record.is_dir && record.name.eq_ignore_ascii_case(component))
+                .unwrap_or(false)
+        })?;
+        current = child;
+    }
+    Some(current)
 }
 
 fn extension_for(path: &str) -> String {
@@ -82,8 +106,8 @@ where
     F: FnMut(DiskScanProgress),
 {
     let started = Instant::now();
-    let drive = drive_letter(root)
-        .ok_or_else(|| "MFT scan requires a local drive root such as C:\\".to_string())?;
+    let (drive, target_components) = parse_scan_target(root)
+        .ok_or_else(|| "MFT scan requires a drive root or folder on a local volume".to_string())?;
     let volume_path = format!(r"\\.\{}:", drive);
 
     let mut volume = File::open(&volume_path)
@@ -208,24 +232,24 @@ where
         }
     }
 
-    let Some(root_record) = records.remove(&5) else {
-        return Err("MFT root record (5) was not found".to_string());
-    };
-    if !root_record.is_dir {
-        return Err("MFT root record is not a directory".to_string());
-    }
-
     let mut children_by_parent: HashMap<u64, Vec<u64>> = HashMap::new();
     for (record_number, record) in &records {
-        if record_number != &5 {
-            children_by_parent
-                .entry(record.parent)
-                .or_default()
-                .push(*record_number);
-        }
+        children_by_parent
+            .entry(record.parent)
+            .or_default()
+            .push(*record_number);
     }
     for children in children_by_parent.values_mut() {
         children.sort_unstable();
+    }
+
+    let root_record_id = find_subtree_root(&records, &children_by_parent, &target_components)
+        .ok_or_else(|| "The selected folder was not found in the MFT".to_string())?;
+    let Some(root_record) = records.remove(&root_record_id) else {
+        return Err("MFT root record was not found".to_string());
+    };
+    if !root_record.is_dir {
+        return Err("MFT root record is not a directory".to_string());
     }
 
     let root_path = root
@@ -255,9 +279,9 @@ where
     }];
 
     let mut queue: VecDeque<(u64, usize, String)> = VecDeque::new();
-    queue.push_back((5, 0, root_path.clone()));
+    queue.push_back((root_record_id, 0, root_path.clone()));
     let mut visited: std::collections::HashSet<u64> = std::collections::HashSet::new();
-    visited.insert(5);
+    visited.insert(root_record_id);
     let mut file_total = 0u64;
     let mut dir_total = 0u64;
 
@@ -330,11 +354,57 @@ where
 mod tests {
     use super::*;
 
+    fn test_record(name: &str, parent: u64, is_dir: bool) -> MftRecord {
+        MftRecord {
+            name: name.to_string(),
+            parent,
+            is_dir,
+            size_bytes: if is_dir { 0 } else { 10 },
+            allocated_bytes: if is_dir { 0 } else { 10 },
+            modified_epoch_ms: None,
+            attributes: String::new(),
+        }
+    }
+
     #[test]
-    fn recognizes_only_drive_roots() {
-        assert_eq!(drive_letter("C:\\"), Some('C'));
-        assert_eq!(drive_letter("d:\\"), Some('D'));
-        assert_eq!(drive_letter("C:\\Code"), None);
-        assert_eq!(drive_letter("\\\\server\\share\\"), None);
+    fn parses_drive_roots_and_folders() {
+        assert_eq!(parse_scan_target("C:\\"), Some(('C', vec![])));
+        assert_eq!(
+            parse_scan_target("d:\\Code"),
+            Some(('D', vec!["Code".to_string()]))
+        );
+        assert_eq!(
+            parse_scan_target("C:\\Code\\src\\"),
+            Some(('C', vec!["Code".to_string(), "src".to_string()]))
+        );
+        assert_eq!(parse_scan_target("C:"), None);
+        assert_eq!(parse_scan_target("\\\\server\\share\\"), None);
+    }
+
+    #[test]
+    fn resolves_a_folder_subtree_root() {
+        let mut records = HashMap::new();
+        records.insert(5, test_record("", 5, true));
+        records.insert(10, test_record("Code", 5, true));
+        records.insert(20, test_record("src", 10, true));
+        records.insert(30, test_record("main.rs", 20, false));
+        let mut children = HashMap::new();
+        children.insert(5, vec![10]);
+        children.insert(10, vec![20]);
+        children.insert(20, vec![30]);
+
+        assert_eq!(find_subtree_root(&records, &children, &[]), Some(5));
+        assert_eq!(
+            find_subtree_root(&records, &children, &["code".to_string()]),
+            Some(10)
+        );
+        assert_eq!(
+            find_subtree_root(&records, &children, &["Code".to_string(), "src".to_string()]),
+            Some(20)
+        );
+        assert_eq!(
+            find_subtree_root(&records, &children, &["missing".to_string()]),
+            None
+        );
     }
 }
