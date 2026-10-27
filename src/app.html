@@ -16,6 +16,8 @@
           var light = window.matchMedia("(prefers-color-scheme: light)").matches;
           var resolved = saved === "light" || saved === "dark" ? saved : light ? "light" : "dark";
           document.documentElement.dataset.theme = resolved;
+          document.documentElement.dataset.colorblind =
+            localStorage.getItem("purgekit.colorblind") === "1" ? "true" : "false";
           document.documentElement.style.colorScheme = resolved;
         } catch (error) {}
       })();

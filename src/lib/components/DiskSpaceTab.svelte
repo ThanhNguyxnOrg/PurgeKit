@@ -5,6 +5,7 @@
   import { openPath } from "@tauri-apps/plugin-opener";
   import { FolderOpen, Play, Square, HardDrive, File, Folder, Search, X, ArrowUp, ArrowDown, Upload, Save, History } from "@lucide/svelte";
   import { toast } from "../toast.svelte";
+  import { theme } from "../theme.svelte";
 
   interface DiskTreeNode {
     name: string;
@@ -260,6 +261,7 @@
   );
 
   const DIR_COLORS = ["#33545A", "#3E5364", "#4B465E", "#5A4B43", "#3C5747", "#45566B"];
+  const DIR_COLORS_CB = ["#3A5F8A", "#3E7485", "#5A5E9E", "#7C663D", "#3C6E5A", "#536B7C"];
   const EXT_COLORS: Record<string, string> = {
     code: "#3E8C88",
     web: "#6E6AA8",
@@ -270,6 +272,18 @@
     binary: "#6B7280",
     other: "#4D6470",
   };
+  const EXT_COLORS_CB: Record<string, string> = {
+    code: "#56B4E9",
+    web: "#0072B2",
+    image: "#E69F00",
+    media: "#CC79A7",
+    archive: "#8C6D31",
+    document: "#6B7B8C",
+    binary: "#009E73",
+    other: "#7A8794",
+  };
+
+  let activeDirColors = $derived(theme.colorBlind ? DIR_COLORS_CB : DIR_COLORS);
   const CODE_EXTENSIONS = new Set(["rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "c", "cc", "cpp", "h", "hpp", "cs", "php", "rb", "swift", "kt", "kts", "sh", "ps1"]);
   const WEB_EXTENSIONS = new Set(["html", "htm", "css", "scss", "sass", "vue", "svelte", "astro"]);
   const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp", "avif"]);
@@ -291,7 +305,8 @@
   }
 
   function colorForExtension(extension: string): string {
-    return EXT_COLORS[extensionGroup(extension)] || EXT_COLORS.other;
+    const palette = theme.colorBlind ? EXT_COLORS_CB : EXT_COLORS;
+    return palette[extensionGroup(extension)] || palette.other;
   }
 
   function formatBytes(bytes: number): string {
@@ -849,7 +864,7 @@
       hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
     }
     if (node.is_dir) {
-      return DIR_COLORS[(hash + index) % DIR_COLORS.length];
+      return activeDirColors[(hash + index) % activeDirColors.length];
     }
     const extension = node.name.includes(".")
       ? node.name.split(".").pop() || ""
@@ -1259,6 +1274,7 @@
     canvasEl;
     hoverPath;
     selectedNode;
+    theme.colorBlind;
     if (canvasEl && activeView === "treemap") {
       requestAnimationFrame(drawTreemap);
     }
@@ -1705,7 +1721,7 @@
         <div class="flex flex-wrap items-center gap-3 text-[11px] text-text-muted">
           <span class="font-mono">Click to zoom or select · hover for details</span>
           <span class="text-border-strong">/</span>
-          <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-sm" style="background: {DIR_COLORS[0]}"></span>folder</span>
+          <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-sm" style="background: {activeDirColors[0]}"></span>folder</span>
           {#each result.file_types.slice(0, 6) as type}
             <span class="flex items-center gap-1.5">
               <span class="w-2 h-2 rounded-sm" style="background: {colorForExtension(type.extension)}"></span>

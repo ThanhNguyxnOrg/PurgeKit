@@ -2,9 +2,11 @@ export type ThemeMode = "auto" | "light" | "dark";
 export type ResolvedTheme = "light" | "dark";
 
 const STORAGE_KEY = "purgekit.theme";
+const COLOR_BLIND_KEY = "purgekit.colorblind";
 
 class ThemeController {
   mode = $state<ThemeMode>("auto");
+  colorBlind = $state(false);
   systemLight = $state(false);
   resolved: ResolvedTheme = $derived(
     this.mode === "auto" ? (this.systemLight ? "light" : "dark") : this.mode
@@ -19,6 +21,7 @@ class ThemeController {
       if (saved === "auto" || saved === "light" || saved === "dark") {
         this.mode = saved;
       }
+      this.colorBlind = localStorage.getItem(COLOR_BLIND_KEY) === "1";
     } catch {}
     if (typeof window !== "undefined" && window.matchMedia) {
       this.media = window.matchMedia("(prefers-color-scheme: light)");
@@ -32,6 +35,14 @@ class ThemeController {
     this.mode = mode;
     try {
       localStorage.setItem(STORAGE_KEY, mode);
+    } catch {}
+    this.apply();
+  }
+
+  setColorBlind(enabled: boolean) {
+    this.colorBlind = enabled;
+    try {
+      localStorage.setItem(COLOR_BLIND_KEY, enabled ? "1" : "0");
     } catch {}
     this.apply();
   }
@@ -52,6 +63,7 @@ class ThemeController {
     if (typeof document === "undefined") return;
     const resolved = this.resolved;
     document.documentElement.dataset.theme = resolved;
+    document.documentElement.dataset.colorblind = this.colorBlind ? "true" : "false";
     document.documentElement.style.colorScheme = resolved;
     void syncWindowTheme(resolved);
   }

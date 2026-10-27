@@ -316,6 +316,20 @@
           </span>
         </button>
       </div>
+      <label class="flex items-center justify-between gap-4 p-3 rounded-lg bg-app-bg border border-border-default cursor-pointer">
+        <span class="flex flex-col">
+          <span class="text-xs font-bold text-text-primary">Color-blind friendly palette</span>
+          <span class="text-[10px] text-text-muted mt-0.5">
+            Swaps chart and status colors to a blue/orange/magenta-safe set.
+          </span>
+        </span>
+        <input
+          type="checkbox"
+          checked={theme.colorBlind}
+          onchange={(event) => theme.setColorBlind(event.currentTarget.checked)}
+          class="w-4 h-4 rounded accent-accent bg-app-bg border-border-default focus:ring-accent/30 cursor-pointer shrink-0"
+        />
+      </label>
     </section>
 
     <!-- Scanner settings -->

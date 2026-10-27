@@ -80,6 +80,32 @@ html[data-theme="light"] ::selection {
   color: #171A1F;
 }
 
+html[data-colorblind="true"] {
+  --color-success: #56B4E9;
+  --color-warning: #E69F00;
+  --color-danger: #CC79A7;
+  --color-info: #0072B2;
+  --color-brand-purple: #CC79A7;
+
+  --color-data-cyan: #56B4E9;
+  --color-data-green: #009E73;
+  --color-data-amber: #E69F00;
+  --color-data-rose: #CC79A7;
+}
+
+html[data-theme="light"][data-colorblind="true"] {
+  --color-success: #0072B2;
+  --color-warning: #9A6700;
+  --color-danger: #A33A6B;
+  --color-info: #005F8A;
+  --color-brand-purple: #8E4A80;
+
+  --color-data-cyan: #0072B2;
+  --color-data-green: #00796B;
+  --color-data-amber: #9A6700;
+  --color-data-rose: #A33A6B;
+}
+
 @layer components {
   .instrument-panel {
     background:
