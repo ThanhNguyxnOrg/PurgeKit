@@ -791,6 +791,48 @@ pub async fn search_disk_files(
 }
 
 #[tauri::command]
+pub async fn export_disk_files_csv(
+    cache: tauri::State<'_, scanner::disk_scan::DiskFileCache>,
+    path: String,
+    query: String,
+    extension: Option<String>,
+    prefix: Option<String>,
+    filter_mode: Option<String>,
+    sort: Option<String>,
+    limit: Option<usize>,
+) -> Result<scanner::disk_scan::DiskCsvExport, String> {
+    let key = crate::winutil::canonicalize_path_safety(&path)
+        .to_string_lossy()
+        .to_lowercase();
+    let index = {
+        let indexes = cache
+            .0
+            .lock()
+            .map_err(|_| "Disk file index is unavailable".to_string())?;
+        indexes
+            .get(&key)
+            .cloned()
+            .ok_or_else(|| "Scan this path before exporting its files.".to_string())?
+    };
+
+    let sort = sort.unwrap_or_else(|| "size".to_string());
+    let limit = limit.unwrap_or(100_000);
+    tauri::async_runtime::spawn_blocking(move || {
+        scanner::disk_scan::export_cached_files_csv(
+            &index,
+            &query,
+            extension.as_deref(),
+            prefix.as_deref(),
+            filter_mode.as_deref(),
+            &sort,
+            limit,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn cancel_disk_scan(state: tauri::State<'_, scanner::DiskScanState>) {
     state.0.store(true, Ordering::Relaxed);
 }
@@ -955,6 +997,44 @@ pub async fn save_settings(settings: AppSettings) -> Result<(), String> {
 #[tauri::command]
 pub async fn check_is_admin() -> Result<bool, String> {
     Ok(settings::check_is_admin())
+}
+
+#[tauri::command]
+pub fn restart_as_admin() -> Result<(), String> {
+    if is_elevated::is_elevated() {
+        return Ok(());
+    }
+
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+    let executable_wide: Vec<u16> = executable
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let runas: Vec<u16> = "runas\0".encode_utf16().collect();
+
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            runas.as_ptr(),
+            executable_wide.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    if (result as isize) <= 32 {
+        return Err(format!(
+            "The elevation request was cancelled or failed (code {}).",
+            result as isize
+        ));
+    }
+
+    std::process::exit(0);
 }
 
 #[tauri::command]

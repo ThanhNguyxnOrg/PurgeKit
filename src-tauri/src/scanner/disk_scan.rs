@@ -151,23 +151,20 @@ fn file_extension(path: &str) -> Option<String> {
         .map(|extension| extension.to_lowercase())
 }
 
-pub fn search_cached_files(
-    index: &DiskFileIndex,
+fn cached_matches<'a>(
+    index: &'a DiskFileIndex,
     query: &str,
     extension: Option<&str>,
     prefix: Option<&str>,
     filter_mode: Option<&str>,
-    limit: usize,
-    sort: &str,
-) -> DiskFileSearchResult {
+) -> Vec<&'a CachedDiskFile> {
     let query = query.trim();
     let extension = extension
         .map(|value| value.trim().trim_start_matches('.').to_lowercase())
         .filter(|value| !value.is_empty());
     let prefix = prefix.map(str::trim).filter(|value| !value.is_empty());
-    let limit = limit.clamp(1, 2_000);
 
-    let mut matches: Vec<&CachedDiskFile> = Vec::new();
+    let mut matches = Vec::new();
     for file in &index.files {
         if let Some(prefix) = prefix {
             if !is_under_prefix(&file.path, prefix) {
@@ -195,8 +192,10 @@ pub fn search_cached_files(
         }
         matches.push(file);
     }
+    matches
+}
 
-    let total_matches = matches.len();
+fn sort_cached_matches(matches: &mut [&CachedDiskFile], sort: &str) {
     match sort {
         "name" => matches.sort_unstable_by(|left, right| {
             let left_name = Path::new(&left.path)
@@ -215,22 +214,40 @@ pub fn search_cached_files(
         _ => matches
             .sort_unstable_by_key(|file| Reverse(file.allocated_bytes.max(file.size_bytes))),
     }
-    matches.truncate(limit);
+}
+
+fn disk_file_from_cached(file: &CachedDiskFile) -> DiskFile {
+    DiskFile {
+        name: Path::new(&file.path)
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| file.path.clone()),
+        path: file.path.clone(),
+        extension: file_extension(&file.path).unwrap_or_else(|| "(none)".to_string()),
+        size_bytes: file.size_bytes,
+        allocated_bytes: file.allocated_bytes,
+        modified_epoch_ms: file.modified_epoch_ms,
+        attributes: file.attributes.clone(),
+    }
+}
+
+pub fn search_cached_files(
+    index: &DiskFileIndex,
+    query: &str,
+    extension: Option<&str>,
+    prefix: Option<&str>,
+    filter_mode: Option<&str>,
+    limit: usize,
+    sort: &str,
+) -> DiskFileSearchResult {
+    let mut matches = cached_matches(index, query, extension, prefix, filter_mode);
+    let total_matches = matches.len();
+    sort_cached_matches(&mut matches, sort);
+    matches.truncate(limit.clamp(1, 2_000));
 
     let files = matches
         .into_iter()
-        .map(|file| DiskFile {
-            name: Path::new(&file.path)
-                .file_name()
-                .map(|name| name.to_string_lossy().to_string())
-                .unwrap_or_else(|| file.path.clone()),
-            path: file.path.clone(),
-            extension: file_extension(&file.path).unwrap_or_else(|| "(none)".to_string()),
-            size_bytes: file.size_bytes,
-            allocated_bytes: file.allocated_bytes,
-            modified_epoch_ms: file.modified_epoch_ms,
-            attributes: file.attributes.clone(),
-        })
+        .map(disk_file_from_cached)
         .collect();
 
     DiskFileSearchResult {
@@ -238,6 +255,90 @@ pub fn search_cached_files(
         total_matches,
         indexed_files: index.files.len(),
         index_complete: index.complete,
+    }
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct DiskCsvExport {
+    pub csv: String,
+    pub exported: usize,
+    pub total: usize,
+    pub truncated: bool,
+}
+
+fn csv_field(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\"\""))
+}
+
+fn csv_modified(epoch_ms: Option<u64>) -> String {
+    epoch_ms
+        .and_then(|milliseconds| {
+            chrono::DateTime::from_timestamp_millis(milliseconds as i64)
+        })
+        .map(|date| date.format("%Y-%m-%d %H:%M:%S").to_string())
+        .unwrap_or_default()
+}
+
+pub fn export_cached_files_csv(
+    index: &DiskFileIndex,
+    query: &str,
+    extension: Option<&str>,
+    prefix: Option<&str>,
+    filter_mode: Option<&str>,
+    sort: &str,
+    limit: usize,
+) -> DiskCsvExport {
+    let mut matches = cached_matches(index, query, extension, prefix, filter_mode);
+    let total = matches.len();
+    sort_cached_matches(&mut matches, sort);
+    let limit = limit.clamp(1, 100_000);
+    let truncated = total > limit;
+    matches.truncate(limit);
+
+    let root_weight: u64 = index
+        .files
+        .iter()
+        .map(|file| file.allocated_bytes.max(file.size_bytes))
+        .sum();
+
+    let mut csv = String::from(
+        "\u{feff}Name,Path,Extension,Modified,Attributes,SharePercent,LogicalBytes,AllocatedBytes\n",
+    );
+    for file in &matches {
+        let weight = file.allocated_bytes.max(file.size_bytes);
+        let share = if root_weight == 0 {
+            0.0
+        } else {
+            (weight as f64 / root_weight as f64) * 100.0
+        };
+        let name = Path::new(&file.path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(&file.path);
+        let extension = file_extension(&file.path).unwrap_or_else(|| "(none)".to_string());
+        csv.push_str(&csv_field(name));
+        csv.push(',');
+        csv.push_str(&csv_field(&file.path));
+        csv.push(',');
+        csv.push_str(&csv_field(&extension));
+        csv.push(',');
+        csv.push_str(&csv_field(&csv_modified(file.modified_epoch_ms)));
+        csv.push(',');
+        csv.push_str(&csv_field(&file.attributes));
+        csv.push(',');
+        csv.push_str(&format!("{:.1}", share));
+        csv.push(',');
+        csv.push_str(&file.size_bytes.to_string());
+        csv.push(',');
+        csv.push_str(&file.allocated_bytes.to_string());
+        csv.push('\n');
+    }
+
+    DiskCsvExport {
+        csv,
+        exported: matches.len(),
+        total,
+        truncated,
     }
 }
 
@@ -1031,6 +1132,34 @@ mod tests {
         let missing = search_cached_files(index, "does-not-exist", None, None, None, 10, "size");
         assert_eq!(missing.total_matches, 0);
         assert!(missing.files.is_empty());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn exports_all_matching_files_as_csv() {
+        let root = std::env::temp_dir().join("purgekit_disk_csv_export_test");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("alpha.txt"), b"alpha").unwrap();
+        fs::write(root.join("beta,quoted.txt"), b"beta data").unwrap();
+
+        let cancel = AtomicBool::new(false);
+        let result =
+            scan_disk_tree(&root.to_string_lossy(), 2, 20, false, false, &cancel, |_| {}).unwrap();
+        let index = result.file_index.as_ref().unwrap();
+
+        let exported = export_cached_files_csv(index, "", None, None, Some("name"), "name", 10);
+        assert_eq!(exported.total, 2);
+        assert_eq!(exported.exported, 2);
+        assert!(!exported.truncated);
+        assert!(exported.csv.contains("Name,Path,Extension,Modified,Attributes"));
+        assert!(exported.csv.contains("alpha.txt"));
+        assert!(exported.csv.contains("\"beta,quoted.txt\""));
+
+        let limited = export_cached_files_csv(index, "", None, None, Some("name"), "name", 1);
+        assert_eq!(limited.exported, 1);
+        assert!(limited.truncated);
 
         let _ = fs::remove_dir_all(&root);
     }

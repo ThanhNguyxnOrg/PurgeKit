@@ -127,6 +127,17 @@
     }
   }
 
+  async function restartAsAdmin() {
+    if (!confirm("Restart PurgeKit with Administrator privileges? The current window will close.")) {
+      return;
+    }
+    try {
+      await invoke("restart_as_admin");
+    } catch (e: any) {
+      toast.show(`Could not restart as Administrator: ${e.toString()}`, "error");
+    }
+  }
+
   async function checkUpdates() {
     isCheckingUpdates = true;
     updateMessage = null;
@@ -306,10 +317,17 @@
       {:else}
         <div class="flex items-center gap-3 p-3.5 rounded-lg bg-danger/10 border border-danger/20 mb-4 animate-fade-in">
           <Shield class="w-5 h-5 text-danger" />
-          <div class="flex flex-col">
+          <div class="flex flex-col flex-1">
             <span class="text-xs font-bold text-text-primary">Standard Mode Active</span>
             <span class="text-[10px] text-text-muted font-mono">Running as standard user. Some clean features will be restricted.</span>
           </div>
+          <button
+            onclick={restartAsAdmin}
+            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent hover:bg-accent-hover text-white text-[11px] font-semibold transition-colors"
+          >
+            <RefreshCw class="w-3.5 h-3.5" />
+            Restart as Administrator
+          </button>
         </div>
       {/if}
     </section>

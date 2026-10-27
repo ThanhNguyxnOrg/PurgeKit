@@ -74,6 +74,13 @@
     index_complete: boolean;
   }
 
+  interface DiskCsvExport {
+    csv: string;
+    exported: number;
+    total: number;
+    truncated: boolean;
+  }
+
   interface DriveInfo {
     letter: string;
     label: string;
@@ -90,6 +97,8 @@
     h: number;
     depth: number;
   }
+
+  const DISK_PREFS_KEY = "purgekit.disk.preferences.v1";
 
   let pathInput = $state("C:\\");
   let drives = $state<DriveInfo[]>([]);
@@ -272,9 +281,50 @@
 
   function setFileSort(sort: "size" | "modified" | "name") {
     fileSort = sort;
+    saveDiskPreferences();
     if (isSearchActive) {
       scheduleFileSearch();
     }
+  }
+
+  function saveDiskPreferences() {
+    try {
+      localStorage.setItem(
+        DISK_PREFS_KEY,
+        JSON.stringify({
+          path: pathInput,
+          duplicateMode,
+          fileSort,
+          fileFilterMode,
+          fileLimit,
+          fileScope,
+        })
+      );
+    } catch {}
+  }
+
+  function loadDiskPreferences() {
+    try {
+      const raw = localStorage.getItem(DISK_PREFS_KEY);
+      if (!raw) return;
+      const prefs = JSON.parse(raw) as Record<string, unknown>;
+      if (typeof prefs.path === "string" && prefs.path.trim()) pathInput = prefs.path;
+      if (["off", "name_size", "name_size_date"].includes(prefs.duplicateMode as string)) {
+        duplicateMode = prefs.duplicateMode as "off" | "name_size" | "name_size_date";
+      }
+      if (["size", "modified", "name"].includes(prefs.fileSort as string)) {
+        fileSort = prefs.fileSort as "size" | "modified" | "name";
+      }
+      if (prefs.fileFilterMode === "name" || prefs.fileFilterMode === "path") {
+        fileFilterMode = prefs.fileFilterMode;
+      }
+      if (prefs.fileScope === "all" || prefs.fileScope === "folder") {
+        fileScope = prefs.fileScope;
+      }
+      if ([100, 500, 1000, 2000].includes(Number(prefs.fileLimit))) {
+        fileLimit = Number(prefs.fileLimit);
+      }
+    } catch {}
   }
 
   function nodeWeight(node: DiskTreeNode): number {
@@ -353,11 +403,13 @@
 
   function setFileScope(scope: "all" | "folder") {
     fileScope = scope;
+    saveDiskPreferences();
     scheduleFileSearch();
   }
 
   function setFileFilterMode(mode: "name" | "path") {
     fileFilterMode = mode;
+    saveDiskPreferences();
     if (isSearchActive) {
       scheduleFileSearch();
     }
@@ -369,6 +421,7 @@
       toast.show("Enter a drive or folder path first.", "warning");
       return;
     }
+    saveDiskPreferences();
 
     isScanning = true;
     isCancelling = false;
@@ -726,6 +779,38 @@
     URL.revokeObjectURL(url);
   }
 
+  async function exportAllFilesCsv() {
+    if (!result) return;
+    try {
+      const exported = await invoke<DiskCsvExport>("export_disk_files_csv", {
+        path: result.root_path,
+        query: fileQuery.trim(),
+        extension: fileExtensionFilter,
+        prefix: fileScope === "folder" ? focusNode?.path ?? null : null,
+        filterMode: fileFilterMode,
+        sort: fileSort,
+        limit: 100000,
+      });
+      const blob = new Blob([exported.csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `purgekit_disk_all_${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      toast.show(
+        exported.truncated
+          ? `Exported ${exported.exported.toLocaleString()} of ${exported.total.toLocaleString()} files (100k cap).`
+          : `Exported ${exported.exported.toLocaleString()} files.`,
+        exported.truncated ? "warning" : "success"
+      );
+    } catch (e: any) {
+      toast.show(`Export failed: ${e.toString()}`, "error");
+    }
+  }
+
   function duplicatesSelectedInGroup(group: DuplicateGroup): number {
     return group.files.filter((file) => duplicateSelection[file.path]).length;
   }
@@ -909,6 +994,7 @@
   });
 
   onMount(() => {
+    loadDiskPreferences();
     invoke<DriveInfo[]>("list_disk_drives")
       .then((list) => { drives = list; })
       .catch(() => {});
@@ -1000,6 +1086,7 @@
           Duplicates
           <select
             bind:value={duplicateMode}
+            onchange={saveDiskPreferences}
             disabled={isScanning}
             aria-label="Duplicate comparison mode"
             class="bg-transparent text-[11px] font-mono text-text-primary outline-none cursor-pointer disabled:opacity-40"
@@ -1276,7 +1363,7 @@
             Max
             <select
               bind:value={fileLimit}
-              onchange={scheduleFileSearch}
+              onchange={() => { scheduleFileSearch(); saveDiskPreferences(); }}
               aria-label="Maximum files to display"
               class="px-2 py-2 rounded-lg bg-surface-bg border border-border-default text-[11px] font-mono text-text-secondary outline-none cursor-pointer"
             >
@@ -1289,8 +1376,16 @@
           <button
             onclick={exportTopFilesCsv}
             class="px-3 py-2 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-xs font-semibold text-text-secondary hover:text-text-primary transition-colors"
+            title="Export the files currently shown"
           >
-            Export CSV
+            Export view
+          </button>
+          <button
+            onclick={exportAllFilesCsv}
+            class="px-3 py-2 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-xs font-semibold text-text-secondary hover:text-text-primary transition-colors"
+            title="Export every indexed file matching the current filters"
+          >
+            Export all
           </button>
           <span class="text-[11px] font-mono text-text-muted self-center" aria-live="polite">
             {#if isSearching}
