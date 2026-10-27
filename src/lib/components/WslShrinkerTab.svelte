@@ -7,6 +7,7 @@
     Terminal, Settings, ToggleLeft, ToggleRight, X, Play, Info
   } from "@lucide/svelte";
   import { toast } from "../toast.svelte";
+  import { t } from "$lib/i18n.svelte";
 
   interface WslDistroInfo {
     id: string;
@@ -40,7 +41,7 @@
       isAdmin = await invoke<boolean>("check_is_admin");
     } catch (e: any) {
       console.error(e);
-      toast.show(`Failed to load WSL distros: ${e.toString()}`, "error");
+      toast.show(t("Failed to load WSL distros: {error}", { error: e.toString() }), "error");
     } finally {
       isLoading = false;
     }
@@ -48,16 +49,16 @@
 
   async function toggleSparseMode(distro: WslDistroInfo, val: boolean) {
     updatingSparse[distro.name] = true;
-    const actionText = val ? "Enable Auto-Shrink (Sparse)" : "Disable Auto-Shrink (Thick)";
+    const actionText = val ? t("Enable Auto-Shrink (Sparse)") : t("Disable Auto-Shrink (Thick)");
     
     try {
-      toast.show(`${actionText} for ${distro.name}...`, "info");
+      toast.show(t("{action} for {name}...", { action: actionText, name: distro.name }), "info");
       await invoke("set_wsl_distro_sparse_mode", { name: distro.name, sparse: val });
-      toast.show(`Successfully updated sparse property for ${distro.name}!`, "success");
+      toast.show(t("Successfully updated sparse property for {name}!", { name: distro.name }), "success");
       await loadDistros();
     } catch (e: any) {
       console.error(e);
-      toast.show(`Failed to update sparse mode: ${e.toString()}`, "error");
+      toast.show(t("Failed to update sparse mode: {error}", { error: e.toString() }), "error");
     } finally {
       updatingSparse[distro.name] = false;
     }
@@ -65,16 +66,16 @@
 
   async function compactDistro(distro: WslDistroInfo) {
     if (!isAdmin) {
-      toast.show("WSL VHDX compaction requires Administrator privileges. Please run PurgeKit as Administrator.", "error");
+      toast.show(t("WSL VHDX compaction requires Administrator privileges. Please run PurgeKit as Administrator."), "error");
       return;
     }
 
     if (!distro.vhdx_path) {
-      toast.show("Could not locate the VHDX file path for this distribution.", "error");
+      toast.show(t("Could not locate the VHDX file path for this distribution."), "error");
       return;
     }
 
-    const message = `Are you sure you want to compact the virtual disk for ${distro.name}?\n\nThis will temporarily shutdown WSL and use the Windows diskpart utility to reclaim deleted storage.`;
+    const message = `${t("Are you sure you want to compact the virtual disk for {name}?", { name: distro.name })}\n\n${t("This will temporarily shutdown WSL and use the Windows diskpart utility to reclaim deleted storage.")}`;
     if (!confirm(message)) {
       return;
     }
@@ -108,13 +109,13 @@
         vhdxPath: distro.vhdx_path
       });
 
-      toast.show(`Successfully compacted virtual disk for ${distro.name}!`, "success");
+      toast.show(t("Successfully compacted virtual disk for {name}!", { name: distro.name }), "success");
       await loadDistros();
     } catch (e: any) {
       console.error(e);
       compactPhase = "Failed";
       compactLog += `[Error] ${e.toString()}\n`;
-      toast.show(`Compaction failed: ${e.toString()}`, "error");
+      toast.show(t("Compaction failed: {error}", { error: e.toString() }), "error");
     } finally {
       if (unlistenProgress) {
         unlistenProgress();
@@ -157,10 +158,10 @@
   <header class="p-6 border-b border-border-default flex items-center justify-between bg-sidebar-bg">
     <div>
       <h2 class="text-2xl font-bold font-sans text-text-primary">
-        WSL2 Disk Shrinker
+        {t("WSL2 Disk Shrinker")}
       </h2>
       <p class="text-xs text-text-muted mt-1">
-        Reclaim physical hard disk space from bloated WSL2 virtual drive files (`ext4.vhdx`).
+        {t("Reclaim physical hard disk space from bloated WSL2 virtual drive files (`ext4.vhdx`).")}
       </p>
     </div>
 
@@ -170,7 +171,7 @@
       class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-bg border border-border-default hover:bg-elevated-bg active:scale-95 disabled:opacity-50 transition-all text-text-primary cursor-pointer"
     >
       <RefreshCw class="w-3.5 h-3.5 {isLoading ? 'animate-spin' : ''}" />
-      Refresh Distros
+      {t("Refresh Distros")}
     </button>
   </header>
 
@@ -185,7 +186,7 @@
           <HardDrive class="w-5 h-5" />
         </div>
         <div>
-          <span class="block text-[10px] text-text-muted font-mono uppercase">Total VHDX Disk Size</span>
+          <span class="block text-[10px] text-text-muted font-mono uppercase">{t("Total VHDX Disk Size")}</span>
           <span class="text-lg font-bold text-text-primary">{formatSize(totalDiskBytes)}</span>
         </div>
       </div>
@@ -196,8 +197,8 @@
           <Cpu class="w-5 h-5" />
         </div>
         <div>
-          <span class="block text-[10px] text-text-muted font-mono uppercase">WSL Distributions</span>
-          <span class="text-lg font-bold text-text-primary">{distros.length} Detected</span>
+          <span class="block text-[10px] text-text-muted font-mono uppercase">{t("WSL Distributions")}</span>
+          <span class="text-lg font-bold text-text-primary">{t("{count} Detected", { count: distros.length })}</span>
         </div>
       </div>
 
@@ -208,8 +209,8 @@
             <ShieldCheck class="w-5 h-5" />
           </div>
           <div>
-            <span class="block text-[10px] text-success/80 font-mono uppercase">Privileges</span>
-            <span class="text-xs font-bold text-success">Privileged Mode Active</span>
+            <span class="block text-[10px] text-success/80 font-mono uppercase">{t("Privileges")}</span>
+            <span class="text-xs font-bold text-success">{t("Privileged Mode Active")}</span>
           </div>
         </div>
       {:else}
@@ -218,8 +219,8 @@
             <ShieldAlert class="w-5 h-5" />
           </div>
           <div>
-            <span class="block text-[10px] text-danger/80 font-mono uppercase">Privileges Restricted</span>
-            <span class="text-xs font-bold text-danger">Standard User (Run as Admin to Compact)</span>
+            <span class="block text-[10px] text-danger/80 font-mono uppercase">{t("Privileges Restricted")}</span>
+            <span class="text-xs font-bold text-danger">{t("Standard User (Run as Admin to Compact)")}</span>
           </div>
         </div>
       {/if}
@@ -229,29 +230,29 @@
     <div class="p-4 border border-border-default rounded-xl bg-surface-bg/30 text-xs text-text-secondary leading-relaxed flex gap-3">
       <Info class="w-5 h-5 text-accent flex-shrink-0 mt-0.5" />
       <div class="space-y-1">
-        <span class="font-bold text-text-primary block">Why do WSL2 virtual drives expand?</span>
+        <span class="font-bold text-text-primary block">{t("Why do WSL2 virtual drives expand?")}</span>
         <p>
-          WSL2 virtual drives (`ext4.vhdx`) grow as you write files inside Linux. However, when you delete files in Linux, the Windows host does not automatically shrink the `.vhdx` file. This utility allows you to manually co-root (compact) the virtual drives to reclaim unused storage or set them to sparse mode so Windows can automatically free up blocks in the background.
+          {t("WSL2 virtual drives (`ext4.vhdx`) grow as you write files inside Linux. However, when you delete files in Linux, the Windows host does not automatically shrink the `.vhdx` file. This utility allows you to manually co-root (compact) the virtual drives to reclaim unused storage or set them to sparse mode so Windows can automatically free up blocks in the background.")}
         </p>
       </div>
     </div>
 
     <!-- Active List -->
     <div class="space-y-4">
-      <h3 class="text-xs font-mono font-semibold uppercase text-text-muted tracking-wider">WSL2 Distributions</h3>
+      <h3 class="text-xs font-mono font-semibold uppercase text-text-muted tracking-wider">{t("WSL2 Distributions")}</h3>
 
       {#if isLoading}
         <div class="flex flex-col items-center justify-center py-16 gap-3">
           <RefreshCw class="w-7 h-7 text-accent animate-spin" />
-          <span class="text-xs text-text-muted font-mono">Analyzing Windows Subsystem for Linux...</span>
+          <span class="text-xs text-text-muted font-mono">{t("Analyzing Windows Subsystem for Linux...")}</span>
         </div>
       {:else if distros.length === 0}
         <div class="py-16 text-center border border-dashed border-border-default rounded-xl bg-surface-bg/10 flex flex-col items-center justify-center space-y-2">
           <div class="w-10 h-10 rounded-lg bg-surface-bg border border-border-default flex items-center justify-center text-text-muted">
             <Cpu class="w-5.5 h-5.5" />
           </div>
-          <h4 class="text-xs font-bold text-text-primary">No WSL2 distributions registered.</h4>
-          <p class="text-[11px] text-text-muted">We could not find any active WSL configurations under HKCU registry.</p>
+          <h4 class="text-xs font-bold text-text-primary">{t("No WSL2 distributions registered.")}</h4>
+          <p class="text-[11px] text-text-muted">{t("We could not find any active WSL configurations under HKCU registry.")}</p>
         </div>
       {:else}
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -278,14 +279,14 @@
                     {formatSize(distro.vhdx_size_bytes)}
                   </span>
                   <span class="block text-[9px] uppercase font-semibold text-text-muted mt-0.5 font-mono">
-                    Drive size
+                    {t("Drive size")}
                   </span>
                 </div>
               </div>
 
               <!-- Disk Path Info -->
               <div class="space-y-1">
-                <span class="text-[9px] text-text-muted font-mono uppercase tracking-wider block">VHDX Virtual Disk Path</span>
+                <span class="text-[9px] text-text-muted font-mono uppercase tracking-wider block">{t("VHDX Virtual Disk Path")}</span>
                 {#if distro.vhdx_path}
                   <div class="flex items-center gap-1.5 bg-app-bg border border-border-default p-2 rounded-lg text-[10px] font-mono select-all truncate text-text-secondary" title={distro.vhdx_path}>
                     <HardDrive class="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
@@ -294,7 +295,7 @@
                 {:else}
                   <div class="flex items-center gap-1.5 bg-danger/10 border border-danger/20 p-2 rounded-lg text-[10px] font-sans text-danger font-medium">
                     <ShieldAlert class="w-3.5 h-3.5 flex-shrink-0" />
-                    <span>Unable to locate ext4.vhdx disk file.</span>
+                    <span>{t("Unable to locate ext4.vhdx disk file.")}</span>
                   </div>
                 {/if}
               </div>
@@ -307,7 +308,7 @@
                     onclick={() => toggleSparseMode(distro, !distro.is_sparse)}
                     disabled={updatingSparse[distro.name] || !distro.vhdx_path}
                     class="focus:outline-none transition-all duration-150 disabled:opacity-50 flex items-center cursor-pointer"
-                    title={distro.is_sparse ? "Disable Sparse Mode" : "Enable Sparse Mode"}
+                    title={distro.is_sparse ? t("Disable Sparse Mode") : t("Enable Sparse Mode")}
                   >
                     {#if distro.is_sparse}
                       <ToggleRight class="w-8 h-8 text-success" />
@@ -316,8 +317,8 @@
                     {/if}
                   </button>
                   <div class="flex flex-col text-left">
-                    <span class="text-[11px] font-bold text-text-primary leading-none">Auto-Shrink</span>
-                    <span class="text-[9px] text-text-muted mt-0.5">Sparse VHDX</span>
+                    <span class="text-[11px] font-bold text-text-primary leading-none">{t("Auto-Shrink")}</span>
+                    <span class="text-[9px] text-text-muted mt-0.5">{t("Sparse VHDX")}</span>
                   </div>
                 </div>
 
@@ -329,10 +330,10 @@
                     {!isAdmin 
                       ? 'bg-surface-bg border-border-default text-text-secondary hover:bg-elevated-bg' 
                       : 'bg-accent hover:bg-accent-hover text-white border-accent'}"
-                  title={!isAdmin ? "Requires Administrator privileges" : "Compact disk now"}
+                  title={!isAdmin ? t("Requires Administrator privileges") : t("Compact disk now")}
                 >
                   <Trash2 class="w-3.5 h-3.5" />
-                  Compact Disk
+                  {t("Compact Disk")}
                 </button>
               </div>
 
@@ -354,9 +355,9 @@
         <div>
           <h3 class="text-base font-bold text-text-primary flex items-center gap-2">
             <Terminal class="w-4.5 h-4.5 text-accent animate-pulse" />
-            VHDX Compaction Sequence: <span class="text-accent">{compactingDistro.name}</span>
+            {t("VHDX Compaction Sequence:")} <span class="text-accent">{compactingDistro.name}</span>
           </h3>
-          <p class="text-xs text-text-muted mt-1">Status: <span class="text-accent font-semibold">{compactPhase}</span></p>
+          <p class="text-xs text-text-muted mt-1">{t("Status:")} <span class="text-accent font-semibold">{t(compactPhase)}</span></p>
         </div>
         
         {#if compactPhase === "Completed" || compactPhase === "Failed"}
@@ -376,7 +377,7 @@
         {#if compactPhase !== "Completed" && compactPhase !== "Failed"}
           <div class="flex items-center gap-2 mt-4 text-accent animate-pulse">
             <RefreshCw class="w-3.5 h-3.5 animate-spin" />
-            <span>Processing virtual hard disk compaction...</span>
+            <span>{t("Processing virtual hard disk compaction...")}</span>
           </div>
         {/if}
       </div>
@@ -388,7 +389,7 @@
           disabled={compactPhase !== "Completed" && compactPhase !== "Failed"}
           class="px-5 py-2.5 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white active:scale-95 disabled:opacity-50 transition-all shadow cursor-pointer"
         >
-          {compactPhase === "Completed" || compactPhase === "Failed" ? "Close Terminal" : "Compacting Disk..."}
+          {compactPhase === "Completed" || compactPhase === "Failed" ? t("Close Terminal") : t("Compacting Disk...")}
         </button>
       </footer>
     </div>

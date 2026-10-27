@@ -3,6 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { Camera, Calendar, ArrowRight, Shield, Layers, RefreshCw, Database, FileText, CheckCircle, Trash2, X, Play, Square, Activity } from "@lucide/svelte";
   import { toast } from "../toast.svelte";
+  import { t } from "$lib/i18n.svelte";
 
   interface SnapshotRecord {
     id: string;
@@ -44,7 +45,7 @@
       snapshots = await invoke<SnapshotRecord[]>("list_snapshots");
     } catch (e) {
       console.error("Failed to load snapshots:", e);
-      toast.show("Error loading snapshots list!", "error");
+      toast.show(t("Error loading snapshots list!"), "error");
     } finally {
       isLoading = false;
     }
@@ -56,19 +57,19 @@
 
   async function handleCreateSnapshot() {
     if (newSnapshotName.trim() === "") {
-      toast.show("Please enter a name for the snapshot.", "warning");
+      toast.show(t("Please enter a name for the snapshot."), "warning");
       return;
     }
 
     isCreating = true;
     try {
       await invoke("take_snapshot", { name: newSnapshotName });
-      toast.show(`Snapshot "${newSnapshotName}" created successfully!`, "success");
+      toast.show(t("Snapshot \"{name}\" created successfully!", { name: newSnapshotName }), "success");
       newSnapshotName = "";
       showCreateModal = false;
       await loadSnapshots();
     } catch (e: any) {
-      toast.show(`Failed to create snapshot: ${e.toString()}`, "error");
+      toast.show(t("Failed to create snapshot: {error}", { error: e.toString() }), "error");
     } finally {
       isCreating = false;
     }
@@ -76,7 +77,7 @@
 
   async function handleStartTracking() {
     if (trackSessionName.trim() === "") {
-      toast.show("Please enter a name for the installation session.", "warning");
+      toast.show(t("Please enter a name for the installation session."), "warning");
       return;
     }
 
@@ -85,9 +86,9 @@
       await invoke("start_install_tracking", { name: trackSessionName });
       isTracking = true;
       showTrackModal = false;
-      toast.show(`Started installation tracking for "${trackSessionName}"!`, "success");
+      toast.show(t("Started installation tracking for \"{name}\"!", { name: trackSessionName }), "success");
     } catch (e: any) {
-      toast.show(`Failed to start tracking: ${e.toString()}`, "error");
+      toast.show(t("Failed to start tracking: {error}", { error: e.toString() }), "error");
     } finally {
       isStartingTrack = false;
     }
@@ -98,11 +99,11 @@
     try {
       const snap: any = await invoke("stop_install_tracking");
       isTracking = false;
-      toast.show(`Finished installation tracking for "${trackSessionName}"! Snapshot "${snap.name}" created.`, "success");
+      toast.show(t("Finished installation tracking for \"{session}\"! Snapshot \"{snapshot}\" created.", { session: trackSessionName, snapshot: snap.name }), "success");
       trackSessionName = "";
       await loadSnapshots();
     } catch (e: any) {
-      toast.show(`Error stopping installation tracking: ${e.toString()}`, "error");
+      toast.show(t("Error stopping installation tracking: {error}", { error: e.toString() }), "error");
     } finally {
       isStoppingTrack = false;
     }
@@ -110,12 +111,12 @@
 
   async function handleCompare() {
     if (!selectedBefore || !selectedAfter) {
-      toast.show("Please select both BEFORE and AFTER snapshots to compare.", "warning");
+      toast.show(t("Please select both BEFORE and AFTER snapshots to compare."), "warning");
       return;
     }
 
     if (selectedBefore === selectedAfter) {
-      toast.show("Please select two different snapshots to compare.", "warning");
+      toast.show(t("Please select two different snapshots to compare."), "warning");
       return;
     }
 
@@ -126,24 +127,24 @@
         beforeId: selectedBefore,
         afterId: selectedAfter,
       });
-      toast.show("Snapshot comparison completed!", "success");
+      toast.show(t("Snapshot comparison completed!"), "success");
     } catch (e: any) {
-      toast.show(`Comparison failed: ${e.toString()}`, "error");
+      toast.show(t("Comparison failed: {error}", { error: e.toString() }), "error");
     } finally {
       isComparing = false;
     }
   }
 
   async function handleDeleteSnapshot(id: string) {
-    if (!confirm("Are you sure you want to delete this snapshot?")) return;
+    if (!confirm(t("Are you sure you want to delete this snapshot?"))) return;
     try {
       await invoke("delete_snapshot", { id });
-      toast.show("Snapshot deleted successfully!", "success");
+      toast.show(t("Snapshot deleted successfully!"), "success");
       if (selectedBefore === id) selectedBefore = "";
       if (selectedAfter === id) selectedAfter = "";
       await loadSnapshots();
     } catch (e: any) {
-      toast.show(`Failed to delete snapshot: ${e.toString()}`, "error");
+      toast.show(t("Failed to delete snapshot: {error}", { error: e.toString() }), "error");
     }
   }
 
@@ -165,9 +166,9 @@
   <header class="p-6 border-b border-border-default flex items-center justify-between bg-sidebar-bg">
     <div>
       <h2 class="text-2xl font-bold font-sans text-text-primary">
-        System Snapshots
+        {t("System Snapshots")}
       </h2>
-      <p class="text-xs text-text-muted mt-1">Track system changes by comparing snapshots taken before and after app installations for 100% clean uninstall</p>
+      <p class="text-xs text-text-muted mt-1">{t("Track system changes by comparing snapshots taken before and after app installations for 100% clean uninstall")}</p>
     </div>
 
     <div class="flex items-center gap-2">
@@ -177,7 +178,7 @@
           class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-brand-purple hover:bg-purple-600 text-white active:scale-95 transition-all shadow"
         >
           <Activity class="w-3.5 h-3.5" />
-          Install Monitor
+          {t("Install Monitor")}
         </button>
       {/if}
       <button
@@ -185,7 +186,7 @@
         class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white active:scale-95 transition-all shadow"
       >
         <Camera class="w-3.5 h-3.5" />
-        Create Snapshot
+        {t("Create Snapshot")}
       </button>
       <button
         onclick={loadSnapshots}
@@ -193,7 +194,7 @@
         class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-bg border border-border-default hover:bg-elevated-bg active:scale-95 disabled:opacity-50 transition-all text-text-primary"
       >
         <RefreshCw class="w-3.5 h-3.5 {isLoading ? 'animate-spin' : ''}" />
-        Refresh
+        {t("Refresh")}
       </button>
     </div>
   </header>
@@ -208,7 +209,7 @@
             <span class="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
           </span>
           <span class="text-xs font-bold text-red-400">
-            Installation Monitor Active: Tracking changes for "{trackSessionName}"... Please run your software installer now.
+            {t("Installation Monitor Active: Tracking changes for \"{name}\"... Please run your software installer now.", { name: trackSessionName })}
           </span>
         </div>
         <button
@@ -218,10 +219,10 @@
         >
           {#if isStoppingTrack}
             <RefreshCw class="w-3.5 h-3.5 animate-spin" />
-            Saving Snapshot...
+            {t("Saving Snapshot...")}
           {:else}
             <Square class="w-3 h-3 fill-white" />
-            Stop & Save Snapshot
+            {t("Stop & Save Snapshot")}
           {/if}
         </button>
       </div>
@@ -232,11 +233,11 @@
         <Shield class="w-5 h-5 text-accent" />
       </div>
       <div>
-        <h3 class="text-sm font-bold text-text-primary">How Active Monitoring Works</h3>
+        <h3 class="text-sm font-bold text-text-primary">{t("How Active Monitoring Works")}</h3>
         <p class="text-xs text-text-muted mt-1 leading-relaxed">
-          1. Take a snapshot <b>before</b> installing a new application.<br>
-          2. Install the application and run it once.<br>
-          3. Take a snapshot <b>after</b> installation. PurgeKit compares them, tracking every registry entry and file created, guaranteeing 100% trace-free removal.
+          {t("1. Take a snapshot")} <b>{t("before")}</b> {t("installing a new application.")}<br>
+          {t("2. Install the application and run it once.")}<br>
+          {t("3. Take a snapshot")} <b>{t("after")}</b> {t("installation.")} {t("PurgeKit compares them, tracking every registry entry and file created, guaranteeing 100% trace-free removal.")}
         </p>
       </div>
     </div>
@@ -249,8 +250,8 @@
           1
         </div>
         <div class="flex flex-col">
-          <span class="text-xs font-bold {step1Status === 'completed' ? 'text-success' : 'text-text-primary'}">Take Baseline</span>
-          <span class="text-[10px] text-text-muted">Scan before install</span>
+          <span class="text-xs font-bold {step1Status === 'completed' ? 'text-success' : 'text-text-primary'}">{t("Take Baseline")}</span>
+          <span class="text-[10px] text-text-muted">{t("Scan before install")}</span>
         </div>
       </div>
       
@@ -262,8 +263,8 @@
           2
         </div>
         <div class="flex flex-col">
-          <span class="text-xs font-bold {step2Status === 'completed' ? 'text-success' : (step2Status === 'active' ? 'text-text-primary' : 'text-text-disabled')}">Install Software</span>
-          <span class="text-[10px] text-text-muted font-normal">Run app installer</span>
+          <span class="text-xs font-bold {step2Status === 'completed' ? 'text-success' : (step2Status === 'active' ? 'text-text-primary' : 'text-text-disabled')}">{t("Install Software")}</span>
+          <span class="text-[10px] text-text-muted font-normal">{t("Run app installer")}</span>
         </div>
       </div>
 
@@ -275,8 +276,8 @@
           3
         </div>
         <div class="flex flex-col">
-          <span class="text-xs font-bold {step3Status === 'completed' ? 'text-success' : (step3Status === 'active' ? 'text-text-primary' : 'text-text-disabled')}">Compare Changes</span>
-          <span class="text-[10px] text-text-muted">Generate clean diff</span>
+          <span class="text-xs font-bold {step3Status === 'completed' ? 'text-success' : (step3Status === 'active' ? 'text-text-primary' : 'text-text-disabled')}">{t("Compare Changes")}</span>
+          <span class="text-[10px] text-text-muted">{t("Generate clean diff")}</span>
         </div>
       </div>
     </div>
@@ -285,17 +286,17 @@
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
       <!-- Snapshots List (2 Cols on lg) -->
       <div class="lg:col-span-2 space-y-4">
-        <h3 class="text-xs font-mono font-semibold uppercase text-text-muted tracking-wider">Saved System Snapshots</h3>
+        <h3 class="text-xs font-mono font-semibold uppercase text-text-muted tracking-wider">{t("Saved System Snapshots")}</h3>
         
         {#if isLoading}
           <div class="flex flex-col items-center justify-center py-12 gap-3">
             <RefreshCw class="w-7 h-7 text-accent animate-spin" />
-            <span class="text-xs text-text-muted font-mono">Loading saved snapshots...</span>
+            <span class="text-xs text-text-muted font-mono">{t("Loading saved snapshots...")}</span>
           </div>
         {:else if snapshots.length === 0}
           <div class="p-8 text-center border border-dashed border-border-default rounded-lg bg-surface-bg/30 flex flex-col items-center justify-center">
-            <span class="text-sm font-sans text-text-muted font-medium">No Snapshots Found</span>
-            <span class="text-xs text-text-muted mt-1">Take a snapshot before installing apps to start tracking.</span>
+            <span class="text-sm font-sans text-text-muted font-medium">{t("No Snapshots Found")}</span>
+            <span class="text-xs text-text-muted mt-1">{t("Take a snapshot before installing apps to start tracking.")}</span>
           </div>
         {:else}
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -317,7 +318,7 @@
                   <button 
                     onclick={() => handleDeleteSnapshot(snap.id)}
                     class="p-1 rounded bg-transparent text-text-muted hover:text-danger hover:bg-danger/10 border border-transparent hover:border-danger/20 transition-all opacity-0 group-hover:opacity-100"
-                    title="Delete snapshot"
+                    title={t("Delete snapshot")}
                   >
                     <Trash2 class="w-3.5 h-3.5" />
                   </button>
@@ -326,11 +327,11 @@
                 <!-- Stats -->
                 <div class="grid grid-cols-2 gap-2 mt-4 p-3 rounded-lg bg-app-bg border border-border-default text-center font-mono text-[10px]">
                   <div>
-                    <span class="block text-text-muted">Registry Keys</span>
+                    <span class="block text-text-muted">{t("Registry Keys")}</span>
                     <span class="text-xs font-bold text-text-primary mt-0.5 block">{snap.reg_count}</span>
                   </div>
                   <div class="border-l border-border-default">
-                    <span class="block text-text-muted">Files Tracked</span>
+                    <span class="block text-text-muted">{t("Files Tracked")}</span>
                     <span class="text-xs font-bold text-text-primary mt-0.5 block">{snap.file_count}</span>
                   </div>
                 </div>
@@ -344,7 +345,7 @@
                         ? 'bg-accent-subtle text-accent border-accent/20' 
                         : 'bg-surface-bg text-text-secondary border-border-default hover:text-text-primary hover:bg-elevated-bg'}"
                   >
-                    Set BEFORE
+                    {t("Set BEFORE")}
                   </button>
                   <button
                     onclick={() => selectedAfter = snap.id}
@@ -353,7 +354,7 @@
                         ? 'bg-accent-subtle text-accent border-accent/20' 
                         : 'bg-surface-bg text-text-secondary border-border-default hover:text-text-primary hover:bg-elevated-bg'}"
                   >
-                    Set AFTER
+                    {t("Set AFTER")}
                   </button>
                 </div>
               </div>
@@ -364,20 +365,20 @@
 
       <!-- Compare Sidebar (1 Col on lg) -->
       <div class="border border-border-default rounded-lg p-5 bg-surface-bg/50 space-y-4">
-        <h3 class="text-xs font-mono font-semibold uppercase text-text-muted tracking-wider">Compare snapshots</h3>
+        <h3 class="text-xs font-mono font-semibold uppercase text-text-muted tracking-wider">{t("Compare snapshots")}</h3>
 
         <div class="space-y-3">
           <div class="space-y-1">
-            <span class="text-[10px] text-text-muted uppercase font-mono">Snapshot BEFORE installation</span>
+            <span class="text-[10px] text-text-muted uppercase font-mono">{t("Snapshot BEFORE installation")}</span>
             <div class="p-3 rounded-lg bg-app-bg border border-border-default font-sans text-xs text-text-secondary truncate">
-              {snapshots.find(s => s.id === selectedBefore)?.name || "Select a snapshot below..."}
+              {snapshots.find(s => s.id === selectedBefore)?.name || t("Select a snapshot below...")}
             </div>
           </div>
 
           <div class="space-y-1">
-            <span class="text-[10px] text-text-muted uppercase font-mono">Snapshot AFTER installation</span>
+            <span class="text-[10px] text-text-muted uppercase font-mono">{t("Snapshot AFTER installation")}</span>
             <div class="p-3 rounded-lg bg-app-bg border border-border-default font-sans text-xs text-text-secondary truncate">
-              {snapshots.find(s => s.id === selectedAfter)?.name || "Select a snapshot below..."}
+              {snapshots.find(s => s.id === selectedAfter)?.name || t("Select a snapshot below...")}
             </div>
           </div>
         </div>
@@ -388,7 +389,7 @@
               onclick={clearCompare}
               class="flex-1 py-2 rounded-lg text-xs font-semibold bg-surface-bg border border-border-default hover:bg-elevated-bg text-text-secondary hover:text-text-primary transition-all"
             >
-              Reset
+              {t("Reset")}
             </button>
           {/if}
           <button
@@ -398,9 +399,9 @@
           >
             {#if isComparing}
               <RefreshCw class="w-3.5 h-3.5 animate-spin" />
-              Comparing...
+              {t("Comparing...")}
             {:else}
-              Compare
+              {t("Compare")}
               <ArrowRight class="w-3.5 h-3.5" />
             {/if}
           </button>
@@ -413,7 +414,7 @@
       <div class="border border-border-default rounded-lg p-6 bg-surface-bg/30 space-y-4 animate-fade-in">
         <h3 class="text-sm font-bold text-text-primary flex items-center gap-2">
           <Database class="w-4.5 h-4.5 text-accent" />
-          Comparison Results ({diffResults.new_registry_keys.length + (diffResults.new_registry_values?.length ?? 0) + diffResults.new_files.length} differences found)
+          {t("Comparison Results ({count} differences found)", { count: diffResults.new_registry_keys.length + (diffResults.new_registry_values?.length ?? 0) + diffResults.new_files.length })}
         </h3>
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -421,11 +422,11 @@
           <div class="space-y-3">
             <span class="text-xs font-mono font-semibold uppercase text-text-muted tracking-wider flex items-center gap-1.5">
               <Database class="w-3.5 h-3.5 text-brand-purple" />
-              New Registry Keys ({diffResults.new_registry_keys.length})
+              {t("New Registry Keys ({count})", { count: diffResults.new_registry_keys.length })}
             </span>
             <div class="border border-border-default rounded-lg bg-app-bg p-4 max-h-[300px] overflow-y-auto font-mono text-[10px] space-y-1.5">
               {#if diffResults.new_registry_keys.length === 0}
-                <span class="text-text-muted italic block py-4 text-center">No new registry keys detected.</span>
+                <span class="text-text-muted italic block py-4 text-center">{t("No new registry keys detected.")}</span>
               {:else}
                 {#each diffResults.new_registry_keys as key}
                   <span class="block text-success break-all select-all">+ {key}</span>
@@ -438,11 +439,11 @@
           <div class="space-y-3">
             <span class="text-xs font-mono font-semibold uppercase text-text-muted tracking-wider flex items-center gap-1.5">
               <Database class="w-3.5 h-3.5 text-warning" />
-              New Registry Values ({diffResults.new_registry_values?.length ?? 0})
+              {t("New Registry Values ({count})", { count: diffResults.new_registry_values?.length ?? 0 })}
             </span>
             <div class="border border-border-default rounded-lg bg-app-bg p-4 max-h-[300px] overflow-y-auto font-mono text-[10px] space-y-1.5">
               {#if !diffResults.new_registry_values || diffResults.new_registry_values.length === 0}
-                <span class="text-text-muted italic block py-4 text-center">No new registry values detected.</span>
+                <span class="text-text-muted italic block py-4 text-center">{t("No new registry values detected.")}</span>
               {:else}
                 {#each diffResults.new_registry_values as value}
                   <span class="block text-success break-all select-all">+ {value}</span>
@@ -455,11 +456,11 @@
           <div class="space-y-3">
             <span class="text-xs font-mono font-semibold uppercase text-text-muted tracking-wider flex items-center gap-1.5">
               <FileText class="w-3.5 h-3.5 text-info" />
-              New Files & Folders ({diffResults.new_files.length})
+              {t("New Files & Folders ({count})", { count: diffResults.new_files.length })}
             </span>
             <div class="border border-border-default rounded-lg bg-app-bg p-4 max-h-[300px] overflow-y-auto font-mono text-[10px] space-y-1.5">
               {#if diffResults.new_files.length === 0}
-                <span class="text-text-muted italic block py-4 text-center">No new files detected.</span>
+                <span class="text-text-muted italic block py-4 text-center">{t("No new files detected.")}</span>
               {:else}
                 {#each diffResults.new_files as file}
                   <span class="block text-success break-all select-all">+ {file}</span>
@@ -476,15 +477,15 @@
   {#if showCreateModal}
     <div class="fixed inset-0 z-50 bg-overlay-bg backdrop-blur-md flex items-center justify-center p-4">
       <div class="bg-surface-bg border border-border-default w-full max-w-md rounded-lg flex flex-col shadow-2xl p-6 relative animate-scale-up duration-200">
-        <h3 class="text-base font-bold text-text-primary">Create System Snapshot</h3>
-        <p class="text-xs text-text-muted mt-1">Take a scan of important registry directories & application folders to establish a before/after baseline.</p>
+        <h3 class="text-base font-bold text-text-primary">{t("Create System Snapshot")}</h3>
+        <p class="text-xs text-text-muted mt-1">{t("Take a scan of important registry directories & application folders to establish a before/after baseline.")}</p>
         
         <div class="mt-4 space-y-2">
-          <label for="snap-name-input" class="text-xs font-medium text-text-secondary">Snapshot Name</label>
+          <label for="snap-name-input" class="text-xs font-medium text-text-secondary">{t("Snapshot Name")}</label>
           <input
             type="text"
             id="snap-name-input"
-            placeholder="e.g., Before Docker Install"
+            placeholder={t("e.g., Before Docker Install")}
             bind:value={newSnapshotName}
             class="w-full px-3.5 py-2 rounded-lg bg-app-bg border border-border-default focus:border-accent/50 outline-none text-xs font-sans text-text-primary transition-all placeholder:text-text-muted"
           />
@@ -495,7 +496,7 @@
             onclick={() => { showCreateModal = false; newSnapshotName = ""; }}
             class="px-4 py-2 rounded-lg text-xs font-semibold bg-surface-bg border border-border-default hover:bg-elevated-bg text-text-secondary hover:text-text-primary transition-all"
           >
-            Cancel
+            {t("Cancel")}
           </button>
           <button
             onclick={handleCreateSnapshot}
@@ -504,9 +505,9 @@
           >
             {#if isCreating}
               <RefreshCw class="w-3.5 h-3.5 animate-spin" />
-              Scanning System...
+              {t("Scanning System...")}
             {:else}
-              Scan Baseline
+              {t("Scan Baseline")}
             {/if}
           </button>
         </div>
@@ -520,18 +521,18 @@
       <div class="bg-surface-bg border border-border-default w-full max-w-md rounded-lg flex flex-col shadow-2xl p-6 relative animate-scale-up duration-200">
         <h3 class="text-base font-bold text-text-primary flex items-center gap-2">
           <Activity class="w-5 h-5 text-brand-purple" />
-          Real-time Install Monitor
+          {t("Real-time Install Monitor")}
         </h3>
         <p class="text-xs text-text-muted mt-1">
-          PurgeKit will record a baseline and monitor file creations (using the NTFS USN Journal) on every ready NTFS volume, plus registry entries, in real-time.
+          {t("PurgeKit will record a baseline and monitor file creations (using the NTFS USN Journal) on every ready NTFS volume, plus registry entries, in real-time.")}
         </p>
         
         <div class="mt-4 space-y-2">
-          <label for="track-name-input" class="text-xs font-medium text-text-secondary">Application Name / Session ID</label>
+          <label for="track-name-input" class="text-xs font-medium text-text-secondary">{t("Application Name / Session ID")}</label>
           <input
             type="text"
             id="track-name-input"
-            placeholder="e.g., Python 3.12, VS Code"
+            placeholder={t("e.g., Python 3.12, VS Code")}
             bind:value={trackSessionName}
             class="w-full px-3.5 py-2 rounded-lg bg-app-bg border border-border-default focus:border-accent/50 outline-none text-xs font-sans text-text-primary transition-all placeholder:text-text-muted"
           />
@@ -542,7 +543,7 @@
             onclick={() => { showTrackModal = false; trackSessionName = ""; }}
             class="px-4 py-2 rounded-lg text-xs font-semibold bg-surface-bg border border-border-default hover:bg-elevated-bg text-text-secondary hover:text-text-primary transition-all"
           >
-            Cancel
+            {t("Cancel")}
           </button>
           <button
             onclick={handleStartTracking}
@@ -551,9 +552,9 @@
           >
             {#if isStartingTrack}
               <RefreshCw class="w-3.5 h-3.5 animate-spin" />
-              Initializing...
+              {t("Initializing...")}
             {:else}
-              Start Tracking
+              {t("Start Tracking")}
             {/if}
           </button>
         </div>

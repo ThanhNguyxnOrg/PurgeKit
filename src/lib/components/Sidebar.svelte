@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Monitor, Terminal, Layers, FileCode, Settings, Zap, FolderSearch, Cpu, HardDrive } from "@lucide/svelte";
+  import { t } from "$lib/i18n.svelte";
 
   let { activeTab = $bindable() } = $props();
 
@@ -19,13 +20,13 @@
   <!-- Brand Header -->
   <div class="h-16 border-b border-border-default flex items-center px-3 gap-3 overflow-hidden">
     <div class="w-10 h-10 rounded-lg bg-surface-bg border border-border-default flex items-center justify-center flex-shrink-0">
-      <img src="/logo.png" alt="PurgeKit Logo" class="w-6 h-6 object-contain" />
+      <img src="/logo.png" alt={t("PurgeKit Logo")} class="w-6 h-6 object-contain" />
     </div>
     <div class="flex flex-col opacity-0 xl:group-hover/sidebar:opacity-100 xl:group-focus-within/sidebar:opacity-100 transition-opacity duration-200 delay-75 whitespace-nowrap overflow-hidden">
       <h1 class="text-sm font-bold text-text-primary tracking-wide leading-none mb-1">
         PurgeKit
       </h1>
-      <span class="text-[9px] text-text-muted font-mono uppercase tracking-wider">Ultimate Uninstaller</span>
+      <span class="text-[9px] text-text-muted font-mono uppercase tracking-wider">{t("Ultimate Uninstaller")}</span>
     </div>
   </div>
 
@@ -35,9 +36,9 @@
       {@const Icon = item.icon}
       <button
         onclick={() => activeTab = item.id}
-        aria-label={item.label}
+        aria-label={t(item.label)}
         aria-current={activeTab === item.id ? "page" : undefined}
-        title={item.label}
+        title={t(item.label)}
         class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 group/btn relative overflow-hidden
           {activeTab === item.id
             ? 'text-accent bg-accent-subtle border-accent/20'
@@ -55,7 +56,7 @@
         />
         
         <span class="opacity-0 xl:group-hover/sidebar:opacity-100 xl:group-focus-within/sidebar:opacity-100 transition-opacity duration-200 delay-75 whitespace-nowrap font-sans font-normal">
-          {item.label}
+          {t(item.label)}
         </span>
       </button>
     {/each}
@@ -65,9 +66,9 @@
   <div class="p-2 border-t border-border-default">
     <button
       onclick={() => activeTab = 'settings'}
-      aria-label="Settings"
+      aria-label={t("Settings")}
       aria-current={activeTab === 'settings' ? "page" : undefined}
-      title="Settings"
+      title={t("Settings")}
       class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 group/btn relative overflow-hidden
         {activeTab === 'settings'
           ? 'text-accent bg-accent-subtle border-accent/20'
@@ -84,7 +85,7 @@
       />
       
       <span class="opacity-0 xl:group-hover/sidebar:opacity-100 xl:group-focus-within/sidebar:opacity-100 transition-opacity duration-200 delay-75 whitespace-nowrap font-sans font-normal">
-        Settings
+        {t("Settings")}
       </span>
     </button>
   </div>

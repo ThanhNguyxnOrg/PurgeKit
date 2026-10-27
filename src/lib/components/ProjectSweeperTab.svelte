@@ -8,6 +8,7 @@
     Terminal, Settings, ShieldAlert, CheckSquare, Square, HardDrive, Info
   } from "@lucide/svelte";
   import { toast } from "../toast.svelte";
+  import { t } from "$lib/i18n.svelte";
 
   interface ProjectFolder {
     path: string;
@@ -81,14 +82,14 @@
       settings.project_scan_paths = updatedRoots;
       await invoke("save_settings", { settings });
     } catch (e: any) {
-      toast.show(`Error saving paths: ${e.toString()}`, "error");
+      toast.show(t("Error saving paths: {error}", { error: e.toString() }), "error");
     }
   }
 
   async function addRootPath() {
     const trimmed = newPath.trim();
     if (!trimmed) {
-      toast.show("Please enter a valid directory path.", "warning");
+      toast.show(t("Please enter a valid directory path."), "warning");
       return;
     }
 
@@ -98,7 +99,7 @@
     // Block drive roots (like C:\ or D:)
     const driveRootRegex = /^[A-Z]:\\?$/;
     if (driveRootRegex.test(normalizedUpper)) {
-      toast.show("Scanning drive roots directly is blocked for safety. Please select a specific folder inside the drive.", "error");
+      toast.show(t("Scanning drive roots directly is blocked for safety. Please select a specific folder inside the drive."), "error");
       return;
     }
 
@@ -111,7 +112,7 @@
       "C:\\USERS"
     ];
     if (blockedExact.some(dir => normalizedUpper === dir)) {
-      toast.show("Protected system directory cannot be swept directly for security reasons.", "error");
+      toast.show(t("Protected system directory cannot be swept directly for security reasons."), "error");
       return;
     }
 
@@ -123,7 +124,7 @@
       "C:\\PROGRAMDATA\\"
     ];
     if (blockedPrefixes.some(prefix => normalizedUpper.startsWith(prefix))) {
-      toast.show("Protected system or program directory cannot be swept directly for security reasons.", "error");
+      toast.show(t("Protected system or program directory cannot be swept directly for security reasons."), "error");
       return;
     }
 
@@ -131,12 +132,12 @@
       // Validate path existence on the backend
       const exists = await invoke<boolean>("check_directory_exists", { path: trimmed });
       if (!exists) {
-        toast.show("Directory path does not exist on your computer.", "error");
+        toast.show(t("Directory path does not exist on your computer."), "error");
         return;
       }
 
       if (roots.includes(trimmed)) {
-        toast.show("This path is already configured.", "warning");
+        toast.show(t("This path is already configured."), "warning");
         return;
       }
 
@@ -144,9 +145,9 @@
       roots = updated;
       newPath = "";
       await saveSettingsPaths(updated);
-      toast.show("Scan root path added successfully!", "success");
+      toast.show(t("Scan root path added successfully!"), "success");
     } catch (e: any) {
-      toast.show(`Failed to validate path: ${e.toString()}`, "error");
+      toast.show(t("Failed to validate path: {error}", { error: e.toString() }), "error");
     }
   }
 
@@ -154,23 +155,23 @@
     const updated = roots.filter(r => r !== pathToRemove);
     roots = updated;
     await saveSettingsPaths(updated);
-    toast.show("Scan root path removed.", "success");
+    toast.show(t("Scan root path removed."), "success");
   }
 
   async function startScan() {
     if (roots.length === 0) {
-      toast.show("Please add at least one scan root directory first.", "warning");
+      toast.show(t("Please add at least one scan root directory first."), "warning");
       return;
     }
 
-    const activeTypes = folderTypes.filter(t => t.checked).map(t => t.id);
+    const activeTypes = folderTypes.filter(type => type.checked).map(type => type.id);
     if (activeTypes.length === 0) {
-      toast.show("Please check at least one target folder type to sweep.", "warning");
+      toast.show(t("Please check at least one target folder type to sweep."), "warning");
       return;
     }
 
     scanning = true;
-    currentScanDir = "Initializing...";
+    currentScanDir = t("Initializing...");
     foldersFound = [];
     selectedPaths = {};
     foldersFoundCount = 0;
@@ -198,10 +199,10 @@
         selectedPaths[f.path] = true;
       });
 
-      toast.show(`Scan complete! Found ${foldersFound.length} project folders.`, "success");
+      toast.show(t("Scan complete! Found {count} project folders.", { count: foldersFound.length }), "success");
     } catch (e: any) {
       console.error(e);
-      toast.show(`Scan failed: ${e.toString()}`, "error");
+      toast.show(t("Scan failed: {error}", { error: e.toString() }), "error");
     } finally {
       scanning = false;
       if (unlistenProgress) {
@@ -214,17 +215,17 @@
   async function purgeSelected() {
     const selected = foldersFound.filter(f => selectedPaths[f.path]).map(f => f.path);
     if (selected.length === 0) {
-      toast.show("No items selected for cleaning.", "warning");
+      toast.show(t("No items selected for cleaning."), "warning");
       return;
     }
 
-    const message = `Are you sure you want to permanently delete the ${selected.length} selected build/dependency directories?\nThis will clear compiled binaries and packages, which can be re-installed/re-built later.`;
+    const message = `${t("Are you sure you want to permanently delete the {count} selected build/dependency directories?", { count: selected.length })}\n${t("This will clear compiled binaries and packages, which can be re-installed/re-built later.")}`;
     if (!confirm(message)) {
       return;
     }
 
     deleting = true;
-    deleteProgress = { current: 0, total: selected.length, message: "Starting delete process..." };
+    deleteProgress = { current: 0, total: selected.length, message: t("Starting delete process...") };
     deleteReport = {};
     showReportModal = false;
 
@@ -253,10 +254,10 @@
         selectedPaths[f.path] = true;
       });
 
-      toast.show("Project directories cleanup finished!", "success");
+      toast.show(t("Project directories cleanup finished!"), "success");
     } catch (e: any) {
       console.error(e);
-      toast.show(`Purge failed: ${e.toString()}`, "error");
+      toast.show(t("Purge failed: {error}", { error: e.toString() }), "error");
     } finally {
       deleting = false;
       if (unlistenDelete) {
@@ -289,7 +290,7 @@
   // Get badge type color class
   function getBadgeMeta(typeId: string) {
     const found = folderTypes.find(f => f.id === typeId);
-    return found ? { badge: found.badge, color: found.color } : { badge: "Unknown", color: "text-text-muted bg-surface-bg/30" };
+    return found ? { badge: found.badge, color: found.color } : { badge: t("Unknown"), color: "text-text-muted bg-surface-bg/30" };
   }
 
   // Derived metrics
@@ -322,10 +323,10 @@
   <header class="p-6 border-b border-border-default flex items-center justify-between bg-sidebar-bg">
     <div>
       <h2 class="text-2xl font-bold font-sans text-text-primary">
-        Universal Project Sweeper
+        {t("Universal Project Sweeper")}
       </h2>
       <p class="text-xs text-text-muted mt-1">
-        Locate and purge heavy build artifacts, temporary caches, and dependency folders in programming directories.
+        {t("Locate and purge heavy build artifacts, temporary caches, and dependency folders in programming directories.")}
       </p>
     </div>
 
@@ -333,7 +334,7 @@
       {#if scanning}
         <div class="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-accent-subtle/50 text-accent border border-accent/20">
           <RefreshCw class="w-3.5 h-3.5 animate-spin" />
-          Scanning...
+          {t("Scanning...")}
         </div>
       {:else}
         <button
@@ -342,7 +343,7 @@
           class="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white disabled:opacity-50 active:scale-95 transition-all shadow cursor-pointer"
         >
           <Play class="w-3.5 h-3.5 fill-current" />
-          Start Sweep Scan
+          {t("Start Sweep Scan")}
         </button>
       {/if}
     </div>
@@ -359,16 +360,16 @@
         <div>
           <h3 class="text-xs font-mono font-semibold uppercase text-text-muted tracking-wider flex items-center gap-1.5">
             <Settings class="w-4 h-4 text-accent" />
-            Configured Scan Roots
+            {t("Configured Scan Roots")}
           </h3>
-          <p class="text-[10px] text-text-muted mt-1">Add folders that contain your active programming projects.</p>
+          <p class="text-[10px] text-text-muted mt-1">{t("Add folders that contain your active programming projects.")}</p>
         </div>
 
         <!-- Path List -->
         <div class="space-y-2 max-h-[140px] overflow-y-auto pr-1 flex-1 min-h-[80px]">
           {#if roots.length === 0}
             <div class="py-6 text-center border border-dashed border-border-default rounded-lg bg-surface-bg/20 text-xs text-text-muted">
-              No scan paths configured. Add one below.
+              {t("No scan paths configured. Add one below.")}
             </div>
           {:else}
             {#each roots as root}
@@ -377,7 +378,7 @@
                 <button
                   onclick={() => removeRootPath(root)}
                   class="p-1 rounded hover:bg-danger/20 text-text-muted hover:text-danger transition-colors cursor-pointer"
-                  title="Remove Path"
+                  title={t("Remove Path")}
                 >
                   <X class="w-3.5 h-3.5" />
                 </button>
@@ -391,14 +392,14 @@
           <input
             type="text"
             bind:value={newPath}
-            placeholder="e.g. D:\Projects or D:\Code"
+            placeholder={t("e.g. D:\\Projects or D:\\Code")}
             class="flex-1 px-3 py-2 rounded-lg bg-app-bg border border-border-default text-xs text-text-primary outline-none focus:border-accent/50 font-mono"
             onkeydown={(e) => e.key === "Enter" && addRootPath()}
           />
           <button
             onclick={addRootPath}
             class="p-2 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg transition-all active:scale-95 cursor-pointer text-text-primary"
-            title="Add directory path"
+            title={t("Add directory path")}
           >
             <Plus class="w-4 h-4" />
           </button>
@@ -410,9 +411,9 @@
         <div>
           <h3 class="text-xs font-mono font-semibold uppercase text-text-muted tracking-wider flex items-center gap-1.5">
             <HardDrive class="w-4 h-4 text-accent" />
-            Target Directory Filters
+            {t("Target Directory Filters")}
           </h3>
-          <p class="text-[10px] text-text-muted mt-1">Select directory types to search for and purge.</p>
+          <p class="text-[10px] text-text-muted mt-1">{t("Select directory types to search for and purge.")}</p>
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
@@ -429,7 +430,7 @@
                   <Square class="w-4 h-4 text-text-muted" />
                 {/if}
               </div>
-              <span class="truncate" title={type.label}>{type.label}</span>
+              <span class="truncate" title={t(type.label)}>{t(type.label)}</span>
             </button>
           {/each}
         </div>
@@ -443,17 +444,17 @@
         <div class="flex items-center justify-between text-xs">
           <span class="font-mono text-accent font-semibold flex items-center gap-2">
             <Activity class="w-4 h-4 animate-pulse" />
-            Active Scan Traversal
+            {t("Active Scan Traversal")}
           </span>
           <span class="font-mono text-text-secondary">
-            Found: <b class="text-accent">{foldersFoundCount}</b> directories ({formatSize(totalBytesFound)})
+            {t("Found:")} <b class="text-accent">{foldersFoundCount}</b> {t("directories")} ({formatSize(totalBytesFound)})
           </span>
         </div>
         <div class="h-1.5 w-full bg-app-bg rounded-full overflow-hidden border border-border-default">
           <div class="h-full bg-accent animate-infinite-loading w-1/3 rounded-full"></div>
         </div>
         <div class="text-[10px] font-mono text-text-muted truncate bg-app-bg p-2.5 rounded-lg border border-border-default">
-          Searching: {currentScanDir}
+          {t("Searching: {path}", { path: currentScanDir })}
         </div>
       </div>
     {/if}
@@ -466,8 +467,8 @@
             <FolderSearch class="w-6 h-6" />
           </div>
           <div>
-            <h4 class="text-sm font-bold text-text-primary">No Project Directories Loaded</h4>
-            <p class="text-xs text-text-muted mt-1">Configure root paths and target filters, then run a Sweep Scan above.</p>
+            <h4 class="text-sm font-bold text-text-primary">{t("No Project Directories Loaded")}</h4>
+            <p class="text-xs text-text-muted mt-1">{t("Configure root paths and target filters, then run a Sweep Scan above.")}</p>
           </div>
         </div>
       {:else}
@@ -479,7 +480,7 @@
               <HardDrive class="w-5 h-5 text-accent" />
             </div>
             <div>
-              <span class="block text-[10px] text-text-muted font-mono uppercase">Reclaimable Space</span>
+              <span class="block text-[10px] text-text-muted font-mono uppercase">{t("Reclaimable Space")}</span>
               <span class="text-lg font-bold text-text-primary">{formatSize(totalReclaimableBytes)}</span>
             </div>
           </div>
@@ -489,8 +490,8 @@
               <Folder class="w-5 h-5 text-text-secondary" />
             </div>
             <div>
-              <span class="block text-[10px] text-text-muted font-mono uppercase">Total Folders Found</span>
-              <span class="text-lg font-bold text-text-primary">{foldersFound.length} Directories</span>
+              <span class="block text-[10px] text-text-muted font-mono uppercase">{t("Total Folders Found")}</span>
+              <span class="text-lg font-bold text-text-primary">{t("{count} Directories", { count: foldersFound.length })}</span>
             </div>
           </div>
 
@@ -499,8 +500,8 @@
               <CheckSquare class="w-5 h-5" />
             </div>
             <div>
-              <span class="block text-[10px] text-accent/80 font-mono uppercase">Selected for Purging</span>
-              <span class="text-lg font-bold text-accent">{selectedCount} items ({formatSize(totalSelectedSize)})</span>
+              <span class="block text-[10px] text-accent/80 font-mono uppercase">{t("Selected for Purging")}</span>
+              <span class="text-lg font-bold text-accent">{t("{count} items ({size})", { count: selectedCount, size: formatSize(totalSelectedSize) })}</span>
             </div>
           </div>
 
@@ -515,18 +516,18 @@
                 onclick={() => selectAll(true)}
                 class="text-accent hover:text-accent-hover font-semibold cursor-pointer"
               >
-                Select All
+                {t("Select All")}
               </button>
               <span class="text-border-default">|</span>
               <button
                 onclick={() => selectAll(false)}
                 class="text-text-secondary hover:text-text-primary font-semibold cursor-pointer"
               >
-                Deselect All
+                {t("Deselect All")}
               </button>
             </div>
             <span class="text-text-muted">
-              {selectedCount} of {foldersFound.length} selected
+              {t("{selected} of {total} selected", { selected: selectedCount, total: foldersFound.length })}
             </span>
           </div>
 
@@ -534,12 +535,12 @@
             <table class="w-full text-left border-collapse min-w-[800px]">
               <thead>
                 <tr class="bg-sidebar-bg/60 border-b border-border-default text-xs font-semibold text-text-secondary uppercase tracking-wider font-mono">
-                  <th class="py-3.5 px-5 w-10">Select</th>
-                  <th class="py-3.5 px-5">Project Name</th>
-                  <th class="py-3.5 px-5">Clean Target</th>
-                  <th class="py-3.5 px-5">Size / Count</th>
-                  <th class="py-3.5 px-5">Last Modified</th>
-                  <th class="py-3.5 px-5">Directory Path</th>
+                  <th class="py-3.5 px-5 w-10">{t("Select")}</th>
+                  <th class="py-3.5 px-5">{t("Project Name")}</th>
+                  <th class="py-3.5 px-5">{t("Clean Target")}</th>
+                  <th class="py-3.5 px-5">{t("Size / Count")}</th>
+                  <th class="py-3.5 px-5">{t("Last Modified")}</th>
+                  <th class="py-3.5 px-5">{t("Directory Path")}</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-border-default text-sm">
@@ -576,7 +577,7 @@
                     <td class="py-3.5 px-5">
                       <div class="flex flex-col font-mono text-xs">
                         <span class="font-bold text-accent">{formatSize(f.size_bytes)}</span>
-                        <span class="text-[9px] text-text-muted">{f.file_count.toLocaleString()} files</span>
+                        <span class="text-[9px] text-text-muted">{t("{count} files", { count: f.file_count.toLocaleString() })}</span>
                       </div>
                     </td>
 
@@ -603,9 +604,9 @@
   {#if selectedCount > 0 && !scanning}
     <div class="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-40 bg-surface-bg/85 backdrop-blur-xl border border-border-default py-4 px-6 rounded-xl flex items-center justify-between shadow-2xl gap-8 animate-fade-in max-w-2xl w-[90%]">
       <div class="flex flex-col font-sans">
-        <span class="text-xs text-text-secondary font-medium">Sweep Plan Configured</span>
+        <span class="text-xs text-text-secondary font-medium">{t("Sweep Plan Configured")}</span>
         <span class="text-[10px] text-text-muted mt-0.5">
-          Will delete <b class="text-accent">{selectedCount}</b> project directories and free up <b class="text-accent font-mono">{formatSize(totalSelectedSize)}</b>
+          {t("Will delete")} <b class="text-accent">{selectedCount}</b> {t("project directories and free up")} <b class="text-accent font-mono">{formatSize(totalSelectedSize)}</b>
         </span>
       </div>
 
@@ -614,7 +615,7 @@
           onclick={() => selectAll(false)}
           class="px-4 py-2 rounded-lg text-xs font-semibold bg-app-bg hover:bg-elevated-bg border border-border-default text-text-secondary hover:text-text-primary transition-all cursor-pointer"
         >
-          Cancel
+          {t("Cancel")}
         </button>
         <button
           onclick={purgeSelected}
@@ -623,10 +624,10 @@
         >
           {#if deleting}
             <RefreshCw class="w-3.5 h-3.5 animate-spin" />
-            Purging...
+            {t("Purging...")}
           {:else}
             <Trash2 class="w-3.5 h-3.5" />
-            Purge Selected
+            {t("Purge Selected")}
           {/if}
         </button>
       </div>
@@ -642,9 +643,9 @@
         <Trash2 class="w-5 h-5 text-danger animate-pulse" />
       </div>
       <div>
-        <h4 class="text-base font-bold text-text-primary">Purging Project Directories</h4>
+        <h4 class="text-base font-bold text-text-primary">{t("Purging Project Directories")}</h4>
         <p class="text-xs text-text-muted mt-1 font-mono">
-          Deleting {deleteProgress.current} / {deleteProgress.total} items
+          {t("Deleting {current} / {total} items", { current: deleteProgress.current, total: deleteProgress.total })}
         </p>
       </div>
       <div class="w-full bg-app-bg h-1.5 rounded-full overflow-hidden border border-border-default">
@@ -668,9 +669,9 @@
       <header class="p-6 border-b border-border-default flex items-center justify-between">
         <div>
           <h3 class="text-base font-bold text-text-primary">
-            Sweeper Deletion Report
+            {t("Sweeper Deletion Report")}
           </h3>
-          <p class="text-xs text-text-muted mt-1">Review the final deletion results of selected directories.</p>
+          <p class="text-xs text-text-muted mt-1">{t("Review the final deletion results of selected directories.")}</p>
         </div>
         <button
           onclick={() => showReportModal = false}
@@ -691,11 +692,11 @@
               </span>
             {:else if status === "ScheduledForReboot"}
               <span class="px-2 py-0.5 rounded bg-blue-950/20 border border-blue-800/30 text-blue-400 text-[10px] font-semibold font-mono">
-                Boot-Pending
+                {t("Boot-Pending")}
               </span>
             {:else}
               <span class="px-2 py-0.5 rounded bg-danger/15 border border-danger/30 text-danger text-[10px] font-semibold font-mono" title={status}>
-                Failed
+                {t("Failed")}
               </span>
             {/if}
           </div>
@@ -708,7 +709,7 @@
           onclick={() => showReportModal = false}
           class="px-5 py-2.5 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white active:scale-95 transition-all shadow cursor-pointer"
         >
-          Close Report
+          {t("Close Report")}
         </button>
       </footer>
     </div>

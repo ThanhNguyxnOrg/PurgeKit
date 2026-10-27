@@ -4,6 +4,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { Search, RefreshCw, Trash2, X, CheckSquare, Square, Folder, Database, File } from "@lucide/svelte";
   import { toast } from "../toast.svelte";
+  import { t } from "$lib/i18n.svelte";
 
   type AppSource = "registry" | "store" | "cli" | "toolchain" | "portable";
 
@@ -53,7 +54,7 @@
   let categoryFilter = $state("all");
   let sortBy = $state<"name" | "size" | "source">("name");
   let isLoading = $state(true);
-  let statusMessage = $state("Scanning applications, Store packages & developer tools...");
+  let statusMessage = $state(t("Scanning applications, Store packages & developer tools..."));
 
   // Uninstall preflight: confirm exactly what will run and what is backed up.
   let preflightApp = $state<InstalledApp | null>(null);
@@ -129,7 +130,7 @@
       apps = await invoke<InstalledApp[]>("get_installed_apps");
     } catch (e) {
       console.error("Failed to load apps:", e);
-      toast.show("Error scanning application list!", "error");
+      toast.show(t("Error scanning application list!"), "error");
     } finally {
       isLoading = false;
     }
@@ -232,11 +233,11 @@
 
   let remnantGroups = $derived(
     [
-      { type: "Directory", label: "Folders" },
-      { type: "File", label: "Files" },
-      { type: "RegistryKey", label: "Registry keys" },
-      { type: "RegistryValue", label: "Registry values" },
-      { type: "ScheduledTask", label: "Scheduled tasks" },
+      { type: "Directory", label: t("Folders") },
+      { type: "File", label: t("Files") },
+      { type: "RegistryKey", label: t("Registry keys") },
+      { type: "RegistryValue", label: t("Registry values") },
+      { type: "ScheduledTask", label: t("Scheduled tasks") },
     ]
       .map((group) => ({
         ...group,
@@ -254,20 +255,20 @@
   }
 
   function remnantReason(item: RemnantItem): string {
-    if (item.item_type === "ScheduledTask") return "Task references this app or its install path";
+    if (item.item_type === "ScheduledTask") return t("Task references this app or its install path");
     if (item.item_type === "RegistryKey" || item.item_type === "RegistryValue") {
       return item.path.toLowerCase().includes("\\uninstall\\")
-        ? "Registered uninstall entry"
-        : "Name/path-matched registry trace";
+        ? t("Registered uninstall entry")
+        : t("Name/path-matched registry trace");
     }
     return item.confidence === "VeryHigh"
-      ? "Strong install-location match"
-      : "Name-matched leftover in a scanned location";
+      ? t("Strong install-location match")
+      : t("Name-matched leftover in a scanned location");
   }
 
   // Helper to format file size
   function formatSize(bytes: number | null): string {
-    if (bytes === null || bytes <= 0 || isNaN(bytes)) return "Unknown";
+    if (bytes === null || bytes <= 0 || isNaN(bytes)) return t("Unknown");
     const k = 1024;
     const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -301,18 +302,18 @@
     // Step 1: Run official uninstaller (if present)
     if (app.uninstall_string) {
       uninstallStep = "uninstalling";
-      uninstallStatusText = "Executing the official uninstaller. Please follow the uninstallation GUI prompts on your screen...";
+      uninstallStatusText = t("Executing the official uninstaller. Please follow the uninstallation GUI prompts on your screen...");
       try {
         await invoke("run_uninstall_command", { uninstallString: app.uninstall_string });
       } catch (e: any) {
         console.error("Official uninstaller failed or was closed:", e);
-        toast.show("The official uninstaller returned an error or was closed.", "warning");
+        toast.show(t("The official uninstaller returned an error or was closed."), "warning");
       }
     }
 
     // Step 2: Scan for remnants
     uninstallStep = "scanning";
-    uninstallStatusText = "Scanning system directories and registry paths for leftover traces...";
+    uninstallStatusText = t("Scanning system directories and registry paths for leftover traces...");
     isScanningRemnants = true;
     
     try {
@@ -330,7 +331,7 @@
       });
     } catch (e) {
       console.error("Failed to scan remnants:", e);
-      toast.show("Error scanning remnant files on the system!", "error");
+      toast.show(t("Error scanning remnant files on the system!"), "error");
     } finally {
       isScanningRemnants = false;
       uninstallStep = "remnants_list";
@@ -341,7 +342,7 @@
     const manager = app.managed_by;
     if (!manager) return;
 
-    if (!confirmed && !confirm(`Uninstall global ${manager} package "${app.display_name}"?`)) {
+    if (!confirmed && !confirm(t("Uninstall global {manager} package \"{name}\"?", { manager, name: app.display_name }))) {
       return;
     }
 
@@ -351,7 +352,7 @@
     purgeResult = null;
     isScanningRemnants = true;
     uninstallStep = "uninstalling";
-    uninstallStatusText = `Uninstalling ${app.display_name} via ${manager}...`;
+    uninstallStatusText = t("Uninstalling {name} via {manager}...", { name: app.display_name, manager });
 
     try {
       const binNames = app.install_location
@@ -364,7 +365,7 @@
       });
 
       uninstallStep = "scanning";
-      uninstallStatusText = `Scanning package-owned paths for ${app.display_name}...`;
+      uninstallStatusText = t("Scanning package-owned paths for {name}...", { name: app.display_name });
 
       const found = await invoke<RemnantItem[]>("get_cli_package_remnants", {
         name: app.display_name,
@@ -379,7 +380,7 @@
       });
       uninstallStep = "remnants_list";
     } catch (e: any) {
-      toast.show(`Package uninstall failed: ${e.toString()}`, "error");
+      toast.show(t("Package uninstall failed: {error}", { error: e.toString() }), "error");
       closeRemnantsModal();
     } finally {
       isScanningRemnants = false;
@@ -392,9 +393,9 @@
     if (!manager || !version || !app.install_location) return;
 
     const warning = app.is_active
-      ? `\n\nWARNING: ${version} is the ACTIVE ${manager} toolchain. Uninstalling it can break existing projects.`
+      ? "\n\n" + t("WARNING: {version} is the ACTIVE {manager} toolchain. Uninstalling it can break existing projects.", { version, manager })
       : "";
-    if (!confirmed && !confirm(`Uninstall ${manager} toolchain "${version}"?${warning}`)) {
+    if (!confirmed && !confirm(t("Uninstall {manager} toolchain \"{version}\"?{warning}", { manager, version, warning }))) {
       return;
     }
 
@@ -404,10 +405,10 @@
         version,
         path: app.install_location,
       });
-      toast.show(`Uninstalled ${manager} ${version}.`, "success");
+      toast.show(t("Uninstalled {manager} {version}.", { manager, version }), "success");
       await loadApps();
     } catch (e: any) {
-      toast.show(`Toolchain uninstall failed: ${e.toString()}`, "error");
+      toast.show(t("Toolchain uninstall failed: {error}", { error: e.toString() }), "error");
     }
   }
 
@@ -469,11 +470,11 @@
     const source = appSource(app);
     if (!confirmed) {
       const confirmedByUser = confirm(
-        `FORCE REMOVE "${app.display_name}"?\n\n` +
-        `This bypasses the official uninstaller and removes:\n` +
-        `- install folder: ${app.install_location || "(none)"}\n` +
-        `- uninstall registry entry: ${source === "registry" ? app.registry_path || "(none)" : "(not applicable)"}\n\n` +
-        `Files are quarantined if backup is enabled; registry is exported first.`
+        t("FORCE REMOVE \"{name}\"?\n\nThis bypasses the official uninstaller and removes:\n- install folder: {path}\n- uninstall registry entry: {registry}\n\nFiles are quarantined if backup is enabled; registry is exported first.", {
+          name: app.display_name,
+          path: app.install_location || t("(none)"),
+          registry: source === "registry" ? app.registry_path || t("(none)") : t("(not applicable)"),
+        })
       );
       if (!confirmedByUser) return;
     }
@@ -492,18 +493,21 @@
 
       if (result.fail > 0) {
         toast.show(
-          `Force remove finished with ${result.fail} failure(s): ${result.errors?.[0] || "see logs"}`,
+          t("Force remove finished with {count} failure(s): {error}", {
+            count: result.fail,
+            error: result.errors?.[0] || t("see logs"),
+          }),
           "warning"
         );
       } else {
-        toast.show(`Force removed ${app.display_name}.`, "success");
+        toast.show(t("Force removed {name}.", { name: app.display_name }), "success");
       }
       isForceRemoving = false;
       preflightApp = null;
       preflightSettings = null;
       await loadApps();
     } catch (e: any) {
-      toast.show(`Force remove failed: ${e.toString()}`, "error");
+      toast.show(t("Force remove failed: {error}", { error: e.toString() }), "error");
     } finally {
       isForceRemoving = false;
     }
@@ -511,22 +515,23 @@
 
   async function runModify(app: InstalledApp) {
     if (!app.modify_path) return;
-    if (!confirm(`Run the registered Modify command for "${app.display_name}"?\n\n${app.modify_path}`)) {
+    if (!confirm(t("Run the registered Modify command for \"{name}\"?\n\n{path}", { name: app.display_name, path: app.modify_path }))) {
       return;
     }
     try {
       await invoke("run_app_command", { command: app.modify_path });
-      toast.show(`Modify command finished for ${app.display_name}.`, "success");
+      toast.show(t("Modify command finished for {name}.", { name: app.display_name }), "success");
     } catch (e: any) {
-      toast.show(`Modify command failed: ${e.toString()}`, "error");
+      toast.show(t("Modify command failed: {error}", { error: e.toString() }), "error");
     }
   }
 
   async function removeUninstallEntry(app: InstalledApp) {
     const confirmed = confirm(
-      `Remove the uninstall entry for "${app.display_name}"?\n\n` +
-      `Registry key: ${app.registry_path}\n\n` +
-      `This only removes the registry record. Files are NOT deleted.`
+      t("Remove the uninstall entry for \"{name}\"?\n\nRegistry key: {path}\n\nThis only removes the registry record. Files are NOT deleted.", {
+        name: app.display_name,
+        path: app.registry_path,
+      })
     );
     if (!confirmed) return;
 
@@ -535,10 +540,10 @@
         hive: app.hive,
         registryPath: app.registry_path,
       });
-      toast.show(`Removed the uninstall entry for ${app.display_name}.`, "success");
+      toast.show(t("Removed the uninstall entry for {name}.", { name: app.display_name }), "success");
       await loadApps();
     } catch (e: any) {
-      toast.show(`Failed to remove entry: ${e.toString()}`, "error");
+      toast.show(t("Failed to remove entry: {error}", { error: e.toString() }), "error");
     }
   }
 
@@ -558,7 +563,7 @@
   async function performPurge() {
     const itemsToPurge = remnants.filter((r) => selectedRemnants[r.path]);
     if (itemsToPurge.length === 0) {
-      toast.show("Please select at least one remnant item to clean.", "warning");
+      toast.show(t("Please select at least one remnant item to clean."), "warning");
       return;
     }
 
@@ -568,11 +573,11 @@
         items: itemsToPurge,
       });
       purgeResult = result;
-      toast.show(`Purge completed! Successfully removed ${result.success} remnant items.`, "success");
+      toast.show(t("Purge completed! Successfully removed {count} remnant items.", { count: result.success }), "success");
       // Reload apps list
       await loadApps();
     } catch (e: any) {
-      toast.show(`Error purging remnants: ${e.toString()}`, "error");
+      toast.show(t("Error purging remnants: {error}", { error: e.toString() }), "error");
     } finally {
       isPurging = false;
     }
@@ -602,7 +607,7 @@
 
   function exportApps(format: "csv" | "json" | "html") {
     if (filteredApps.length === 0) {
-      toast.show("No application data to export!", "warning");
+      toast.show(t("No application data to export!"), "warning");
       return;
     }
 
@@ -618,17 +623,17 @@
       const rows = filteredApps.map((app) => `
         <tr>
           <td>${escapeHtml(app.display_name)}</td>
-          <td>${escapeHtml(app.publisher || "Unknown")}</td>
+          <td>${escapeHtml(app.publisher || t("Unknown"))}</td>
           <td>${escapeHtml(app.display_version || "—")}</td>
           <td>${formatSize(app.estimated_size)}</td>
           <td>${escapeHtml(appSource(app).toUpperCase())}</td>
           <td>${app.is_dev ? "DEV" : "—"}${app.categories?.length ? ` · ${escapeHtml(app.categories.join(", "))}` : ""}</td>
-          <td>${app.is_verified === true ? "Verified" : app.is_verified === false ? "Unverified" : "Unknown"}</td>
+          <td>${app.is_verified === true ? t("Verified") : app.is_verified === false ? t("Unverified") : t("Unknown")}</td>
           <td class="path">${escapeHtml(app.install_location || app.registry_path)}</td>
         </tr>`).join("");
 
       content = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>PurgeKit application report</title>
+<html lang="en"><head><meta charset="utf-8"><title>${t("PurgeKit application report")}</title>
 <style>
 body{font:14px system-ui,Segoe UI,sans-serif;background:#0f1115;color:#e6e8eb;padding:24px}
 h1{font-size:20px;margin:0 0 4px}p{color:#9aa4b2;margin:0 0 20px}
@@ -636,9 +641,9 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:9px 10px
 th{color:#9aa4b2;font-size:11px;text-transform:uppercase;letter-spacing:.06em}
 tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:#9aa4b2}
 </style></head><body>
-<h1>PurgeKit application report</h1>
-<p>${filteredApps.length} applications · generated ${new Date().toLocaleString()}</p>
-<table><thead><tr><th>Name</th><th>Publisher</th><th>Version</th><th>Size</th><th>Source</th><th>Dev / Categories</th><th>Signature</th><th>Location</th></tr></thead>
+<h1>${t("PurgeKit application report")}</h1>
+<p>${t("{count} applications · generated {date}", { count: filteredApps.length, date: new Date().toLocaleString() })}</p>
+<table><thead><tr><th>${t("Name")}</th><th>${t("Publisher")}</th><th>${t("Version")}</th><th>${t("Size")}</th><th>${t("Source")}</th><th>${t("Dev / Categories")}</th><th>${t("Signature")}</th><th>${t("Location")}</th></tr></thead>
 <tbody>${rows}</tbody></table></body></html>`;
       mimeType = "text/html;charset=utf-8";
       filename = `purgekit_apps_${new Date().toISOString().slice(0, 10)}.html`;
@@ -679,7 +684,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
     link.click();
     document.body.removeChild(link);
     
-    toast.show(`Successfully exported report to ${format.toUpperCase()}!`, "success");
+    toast.show(t("Successfully exported report to {format}!", { format: format.toUpperCase() }), "success");
   }
 
   async function startBulkUninstall() {
@@ -692,7 +697,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
     isBulkUninstalling = true;
     bulkUninstallStep = "running";
     bulkUninstallError = "";
-    bulkUninstallLog = [`Initializing bulk silent uninstallation for ${selectedIds.length} application(s)...`];
+    bulkUninstallLog = [t("Initializing bulk silent uninstallation for {count} application(s)...", { count: selectedIds.length })];
     bulkRemnants = [];
     selectedBulkRemnants = {};
     
@@ -713,14 +718,14 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
         bulkUninstallStep = "remnants_list";
       } else {
         bulkUninstallStep = "done";
-        toast.show("Bulk uninstallation and auto-purge completed! No remaining leftovers found.", "success");
+        toast.show(t("Bulk uninstallation and auto-purge completed! No remaining leftovers found."), "success");
         clearAppSelection();
         await loadApps();
       }
     } catch (e: any) {
       console.error("Bulk silent uninstallation failed:", e);
       bulkUninstallError = e.toString();
-      toast.show(`Bulk uninstallation error: ${e.toString()}`, "error");
+      toast.show(t("Bulk uninstallation error: {error}", { error: e.toString() }), "error");
       bulkUninstallStep = "error";
       clearAppSelection();
       await loadApps();
@@ -730,7 +735,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
   async function performBulkRemnantsPurge() {
     const itemsToPurge = bulkRemnants.filter((r) => selectedBulkRemnants[r.path]);
     if (itemsToPurge.length === 0) {
-      toast.show("No leftovers selected to clean. Closing.", "info");
+      toast.show(t("No leftovers selected to clean. Closing."), "info");
       bulkUninstallStep = "done";
       clearAppSelection();
       await loadApps();
@@ -742,12 +747,12 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
       const result = await invoke<{ success: number; fail: number }>("purge_remnants", {
         items: itemsToPurge,
       });
-      toast.show(`Purge completed! Removed ${result.success} leftover items.`, "success");
+      toast.show(t("Purge completed! Removed {count} leftover items.", { count: result.success }), "success");
       bulkUninstallStep = "done";
       clearAppSelection();
       await loadApps();
     } catch (e: any) {
-      toast.show(`Error purging leftovers: ${e.toString()}`, "error");
+      toast.show(t("Error purging leftovers: {error}", { error: e.toString() }), "error");
     } finally {
       isPurging = false;
     }
@@ -797,9 +802,9 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
   <header class="p-4 md:p-6 border-b border-border-default flex flex-wrap items-center justify-between gap-3 bg-sidebar-bg">
     <div class="min-w-0">
       <h2 class="text-xl md:text-2xl font-bold font-sans text-text-primary">
-        Apps Manager
+        {t("Apps Manager")}
       </h2>
-      <p class="text-xs text-text-muted mt-1">Manage and clean standard desktop apps & Windows Store apps</p>
+      <p class="text-xs text-text-muted mt-1">{t("Manage and clean standard desktop apps & Windows Store apps")}</p>
     </div>
 
     <div class="flex items-center gap-2 shrink-0">
@@ -809,7 +814,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
         class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-surface-bg border border-border-default hover:bg-elevated-bg hover:border-border-strong disabled:opacity-50 transition-all text-text-primary cursor-pointer active:scale-95"
       >
         <RefreshCw class="w-3.5 h-3.5 {isLoading ? 'animate-spin' : ''}" />
-        Reload List
+        {t("Reload List")}
       </button>
 
       <!-- Export Dropdown -->
@@ -822,26 +827,26 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
             <polyline points="7 10 12 15 17 10"/>
             <line x1="12" y1="15" x2="12" y2="3"/>
           </svg>
-          Export
+          {t("Export")}
         </button>
         <div class="absolute right-0 mt-1.5 w-32 rounded-lg bg-surface-bg border border-border-default shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-150 z-50 p-1 flex flex-col gap-0.5">
           <button
             onclick={() => exportApps("csv")}
             class="w-full text-left px-2.5 py-1.5 rounded-md hover:bg-elevated-bg text-xs text-text-secondary hover:text-text-primary transition-colors font-sans font-semibold cursor-pointer"
           >
-            Export to CSV
+            {t("Export to CSV")}
           </button>
           <button
             onclick={() => exportApps("json")}
             class="w-full text-left px-2.5 py-1.5 rounded-md hover:bg-elevated-bg text-xs text-text-secondary hover:text-text-primary transition-colors font-sans font-semibold cursor-pointer"
           >
-            Export to JSON
+            {t("Export to JSON")}
           </button>
           <button
             onclick={() => exportApps("html")}
             class="w-full text-left px-2.5 py-1.5 rounded-md hover:bg-elevated-bg text-xs text-text-secondary hover:text-text-primary transition-colors font-sans font-semibold cursor-pointer"
           >
-            Export to HTML
+            {t("Export to HTML")}
           </button>
         </div>
       </div>
@@ -855,7 +860,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
       <Search class="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
       <input
         type="text"
-        placeholder="Search apps by name or publisher..."
+        placeholder={t("Search apps by name or publisher...")}
         bind:value={searchQuery}
         class="w-full pl-10 pr-4 py-2 rounded-lg bg-surface-bg border border-border-default focus:border-accent/50 focus:ring-1 focus:ring-accent/30 outline-none text-sm font-sans transition-all text-text-primary placeholder:text-text-muted"
       />
@@ -865,29 +870,29 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
     <div class="flex flex-wrap items-center gap-2 self-start md:self-auto">
       <select
         bind:value={filterType}
-        aria-label="Filter by source"
+        aria-label={t("Filter by source")}
         class="px-3 py-2 rounded-lg bg-surface-bg border border-border-default text-xs font-semibold text-text-secondary hover:text-text-primary outline-none cursor-pointer"
       >
-        <option value="all">All sources ({apps.length})</option>
-        <option value="desktop">Desktop ({apps.filter(a => appSource(a) === 'registry' || appSource(a) === 'portable').length})</option>
-        <option value="store">Store ({apps.filter(a => appSource(a) === 'store').length})</option>
-        <option value="cli">CLI packages ({apps.filter(a => appSource(a) === 'cli').length})</option>
-        <option value="toolchain">Toolchains ({apps.filter(a => appSource(a) === 'toolchain').length})</option>
-        <option value="portable">Portable ({apps.filter(a => appSource(a) === 'portable').length})</option>
+        <option value="all">{t("All sources ({count})", { count: apps.length })}</option>
+        <option value="desktop">{t("Desktop ({count})", { count: apps.filter(a => appSource(a) === 'registry' || appSource(a) === 'portable').length })}</option>
+        <option value="store">{t("Store ({count})", { count: apps.filter(a => appSource(a) === 'store').length })}</option>
+        <option value="cli">{t("CLI packages ({count})", { count: apps.filter(a => appSource(a) === 'cli').length })}</option>
+        <option value="toolchain">{t("Toolchains ({count})", { count: apps.filter(a => appSource(a) === 'toolchain').length })}</option>
+        <option value="portable">{t("Portable ({count})", { count: apps.filter(a => appSource(a) === 'portable').length })}</option>
       </select>
 
       <label class="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-bg border border-border-default text-xs font-semibold text-text-secondary cursor-pointer select-none">
         <input type="checkbox" bind:checked={devOnly} class="rounded border-border-default text-accent focus:ring-accent bg-surface-bg cursor-pointer w-3.5 h-3.5" />
-        Dev only
+        {t("Dev only")}
       </label>
 
       {#if availableCategories.length > 0}
         <select
           bind:value={categoryFilter}
-          aria-label="Filter by developer category"
+          aria-label={t("Filter by developer category")}
           class="px-3 py-2 rounded-lg bg-surface-bg border border-border-default text-xs font-semibold text-text-secondary hover:text-text-primary outline-none cursor-pointer"
         >
-          <option value="all">All categories</option>
+          <option value="all">{t("All categories")}</option>
           {#each availableCategories as category}
             <option value={category}>{category}</option>
           {/each}
@@ -896,12 +901,12 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
 
       <select
         bind:value={sortBy}
-        aria-label="Sort applications"
+        aria-label={t("Sort applications")}
         class="px-3 py-2 rounded-lg bg-surface-bg border border-border-default text-xs font-semibold text-text-secondary hover:text-text-primary outline-none cursor-pointer"
       >
-        <option value="name">Sort: Name</option>
-        <option value="size">Sort: Size</option>
-        <option value="source">Sort: Source</option>
+        <option value="name">{t("Sort: Name")}</option>
+        <option value="size">{t("Sort: Size")}</option>
+        <option value="source">{t("Sort: Source")}</option>
       </select>
     </div>
   </div>
@@ -916,7 +921,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
 
     {:else if filteredApps.length === 0}
       <div class="flex flex-col items-center justify-center h-64 border border-dashed border-border-default rounded-lg bg-surface-bg/30">
-        <span class="text-sm text-text-muted">No applications matched your search criteria.</span>
+        <span class="text-sm text-text-muted">{t("No applications matched your search criteria.")}</span>
       </div>
     {:else}
       <div class="border border-border-default rounded-lg overflow-hidden bg-surface-bg/50">
@@ -927,18 +932,18 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                 <th class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 w-10">
                   <input
                     type="checkbox"
-                    aria-label="Select all applications"
+                    aria-label={t("Select all applications")}
                     checked={selectedVisibleAppsCount === bulkableVisibleCount && bulkableVisibleCount > 0}
                     onchange={(e) => toggleSelectAllApps(e.currentTarget.checked)}
                     class="rounded border-border-default text-accent focus:ring-accent bg-surface-bg cursor-pointer w-4 h-4"
                   />
                 </th>
-                <th class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5">App Name</th>
-                <th class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 hidden xl:table-cell">Publisher</th>
-                <th class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 hidden lg:table-cell">Version</th>
-                <th class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5">Size</th>
-                <th class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5">Source</th>
-                <th class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 text-right">Actions</th>
+                <th class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5">{t("App Name")}</th>
+                <th class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 hidden xl:table-cell">{t("Publisher")}</th>
+                <th class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 hidden lg:table-cell">{t("Version")}</th>
+                <th class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5">{t("Size")}</th>
+                <th class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5">{t("Source")}</th>
+                <th class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 text-right">{t("Actions")}</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-border-default text-sm">
@@ -947,10 +952,10 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                   <td class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 w-10">
                     <input
                       type="checkbox"
-                      aria-label="Select application {app.display_name}"
+                      aria-label={t("Select application {name}", { name: app.display_name })}
                       checked={!!selectedApps[app.id]}
                       disabled={!canBulkUninstall(app)}
-                      title={canBulkUninstall(app) ? "Select for bulk uninstall" : "CLI/toolchain entries are uninstalled individually"}
+                      title={canBulkUninstall(app) ? t("Select for bulk uninstall") : t("CLI/toolchain entries are uninstalled individually")}
                       onchange={() => toggleSelectApp(app)}
                       class="rounded border-border-default text-accent focus:ring-accent bg-surface-bg cursor-pointer w-4 h-4 disabled:opacity-30 disabled:cursor-not-allowed"
                     />
@@ -970,7 +975,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                       <div class="flex items-center gap-1.5">
                         <span class="text-text-primary group-hover:text-accent transition-colors max-w-[180px] md:max-w-[280px] truncate" title={app.display_name}>{app.display_name}</span>
                         {#if app.is_verified}
-                          <span class="inline-flex items-center" title="Verified Publisher Certificate">
+                          <span class="inline-flex items-center" title={t("Verified Publisher Certificate")}>
                             <svg class="w-3.5 h-3.5 text-emerald-400 fill-emerald-400/20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
                               <path d="m9 11 2 2 4-4"/>
@@ -981,7 +986,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                           <span class="px-1 py-0.5 rounded text-[9px] font-mono font-bold bg-brand-purple/10 text-brand-purple border border-brand-purple/20" title={(app.categories ?? []).join(", ")}>DEV</span>
                         {/if}
                         {#if app.is_active}
-                          <span class="px-1 py-0.5 rounded text-[9px] font-mono font-bold bg-success/10 text-success border border-success/20">ACTIVE</span>
+                          <span class="px-1 py-0.5 rounded text-[9px] font-mono font-bold bg-success/10 text-success border border-success/20">{t("ACTIVE")}</span>
                         {/if}
                       </div>
                       <span class="text-[10px] text-text-muted font-mono mt-0.5 max-w-[200px] truncate" title={app.registry_path}>
@@ -997,7 +1002,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                   
                   <!-- Publisher -->
                   <td class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 text-text-secondary max-w-[150px] truncate hidden xl:table-cell">
-                    {app.publisher || "Unknown"}
+                    {app.publisher || t("Unknown")}
                   </td>
                   
                   <!-- Version -->
@@ -1027,7 +1032,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                       {appSource(app) === 'registry' ? app.hive : appSource(app).toUpperCase()}
                     </span>
                     {#if app.is_update}
-                      <span class="ml-1 px-1 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-950/30 text-amber-300 border border-amber-800/40">UPDATE</span>
+                      <span class="ml-1 px-1 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-950/30 text-amber-300 border border-amber-800/40">{t("UPDATE")}</span>
                     {/if}
                   </td>
                   
@@ -1037,56 +1042,56 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                       {#if appSource(app) === "cli"}
                         <button
                           onclick={() => openPreflight(app)}
-                          title="Uninstall this global package and review owned leftovers"
+                          title={t("Uninstall this global package and review owned leftovers")}
                           class="px-2.5 py-1.5 rounded-lg bg-brand-purple/10 hover:bg-brand-purple text-brand-purple hover:text-white transition-all border border-brand-purple/20 flex items-center gap-1.5 text-xs font-semibold active:scale-95 cursor-pointer"
                         >
                           <Trash2 class="w-3.5 h-3.5" />
-                          Uninstall package
+                          {t("Uninstall package")}
                         </button>
                       {:else if appSource(app) === "toolchain"}
                         <button
                           onclick={() => openPreflight(app)}
-                          title="Uninstall this toolchain version"
+                          title={t("Uninstall this toolchain version")}
                           class="px-2.5 py-1.5 rounded-lg bg-emerald-950/30 hover:bg-emerald-600 text-emerald-300 hover:text-white transition-all border border-emerald-800/40 flex items-center gap-1.5 text-xs font-semibold active:scale-95 cursor-pointer"
                         >
                           <Trash2 class="w-3.5 h-3.5" />
-                          Uninstall
+                          {t("Uninstall")}
                         </button>
                       {:else if appSource(app) === "portable"}
                         <button
                           onclick={() => openPreflight(app)}
-                          title="Remove this unregistered portable application folder"
+                          title={t("Remove this unregistered portable application folder")}
                           class="px-2.5 py-1.5 rounded-lg bg-amber-950/30 hover:bg-amber-600 text-amber-300 hover:text-white transition-all border border-amber-800/40 flex items-center gap-1.5 text-xs font-semibold active:scale-95 cursor-pointer"
                         >
                           <Trash2 class="w-3.5 h-3.5" />
-                          Remove folder
+                          {t("Remove folder")}
                         </button>
                       {:else if app.uninstall_string}
                         {#if app.modify_path}
                           <button
                             onclick={() => runModify(app)}
-                            title="Run the registered Modify command"
+                            title={t("Run the registered Modify command")}
                             class="px-2.5 py-1.5 rounded-lg bg-surface-bg hover:bg-elevated-bg text-text-secondary hover:text-text-primary transition-all border border-border-default flex items-center gap-1.5 text-xs font-semibold active:scale-95 cursor-pointer"
                           >
-                            Modify
+                            {t("Modify")}
                           </button>
                         {/if}
                         <button
                           onclick={() => openPreflight(app)}
-                          title="Uninstall and Deep Clean Remnants"
+                          title={t("Uninstall and Deep Clean Remnants")}
                           class="px-2.5 py-1.5 rounded-lg bg-danger/10 hover:bg-danger text-danger hover:text-white transition-all border border-danger/20 flex items-center gap-1.5 text-xs font-semibold active:scale-95 cursor-pointer"
                         >
                           <Trash2 class="w-3.5 h-3.5" />
-                          Uninstall
+                          {t("Uninstall")}
                         </button>
                       {:else}
                         <button
                           onclick={() => removeUninstallEntry(app)}
-                          title="Remove only the orphaned uninstall registry entry"
+                          title={t("Remove only the orphaned uninstall registry entry")}
                           class="px-2.5 py-1.5 rounded-lg bg-amber-950/30 hover:bg-amber-600 text-amber-300 hover:text-white transition-all border border-amber-800/40 flex items-center gap-1.5 text-xs font-semibold active:scale-95 cursor-pointer"
                         >
                           <Database class="w-3.5 h-3.5" />
-                          Remove Entry
+                          {t("Remove Entry")}
                         </button>
                       {/if}
                     </div>
@@ -1111,16 +1116,16 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
       <div class="bg-surface-bg border border-border-default w-full max-w-xl rounded-xl flex flex-col max-h-[88vh] shadow-2xl relative overflow-hidden animate-scale-up duration-200">
         <header class="p-6 border-b border-border-default flex items-start justify-between gap-4">
           <div>
-            <h3 id="preflight-title" class="text-base font-bold text-text-primary">Confirm uninstall</h3>
+            <h3 id="preflight-title" class="text-base font-bold text-text-primary">{t("Confirm uninstall")}</h3>
             <p class="text-xs text-text-muted mt-1">
-              Review exactly what PurgeKit will run before anything is removed.
+              {t("Review exactly what PurgeKit will run before anything is removed.")}
             </p>
           </div>
           <button
             onclick={closePreflight}
             disabled={isForceRemoving}
             class="p-1.5 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-text-secondary hover:text-text-primary transition-colors disabled:opacity-40"
-            aria-label="Close uninstall confirmation"
+            aria-label={t("Close uninstall confirmation")}
           >
             <X class="w-4 h-4" />
           </button>
@@ -1145,7 +1150,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                   <span class="px-1.5 py-0.5 rounded text-[9px] font-mono border border-brand-purple/20 bg-brand-purple/10 text-brand-purple">DEV</span>
                 {/if}
                 {#if preflightApp.is_active}
-                  <span class="px-1.5 py-0.5 rounded text-[9px] font-mono border border-success/20 bg-success/10 text-success">ACTIVE</span>
+                  <span class="px-1.5 py-0.5 rounded text-[9px] font-mono border border-success/20 bg-success/10 text-success">{t("ACTIVE")}</span>
                 {/if}
               </div>
             </div>
@@ -1153,79 +1158,78 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
 
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
             <div class="p-3 rounded-lg bg-app-bg border border-border-default">
-              <span class="block text-[10px] uppercase tracking-wider text-text-muted font-mono">Publisher</span>
-              <span class="block mt-1 text-text-primary break-all">{preflightApp.publisher || "Unknown"}</span>
+              <span class="block text-[10px] uppercase tracking-wider text-text-muted font-mono">{t("Publisher")}</span>
+              <span class="block mt-1 text-text-primary break-all">{preflightApp.publisher || t("Unknown")}</span>
             </div>
             <div class="p-3 rounded-lg bg-app-bg border border-border-default">
-              <span class="block text-[10px] uppercase tracking-wider text-text-muted font-mono">Version</span>
+              <span class="block text-[10px] uppercase tracking-wider text-text-muted font-mono">{t("Version")}</span>
               <span class="block mt-1 text-text-primary font-mono break-all">{preflightApp.display_version || "—"}</span>
             </div>
             <div class="p-3 rounded-lg bg-app-bg border border-border-default">
-              <span class="block text-[10px] uppercase tracking-wider text-text-muted font-mono">Estimated size</span>
+              <span class="block text-[10px] uppercase tracking-wider text-text-muted font-mono">{t("Estimated size")}</span>
               <span class="block mt-1 text-text-primary font-mono">{formatSize(preflightApp.estimated_size)}</span>
             </div>
             <div class="p-3 rounded-lg bg-app-bg border border-border-default">
-              <span class="block text-[10px] uppercase tracking-wider text-text-muted font-mono">Managed by</span>
+              <span class="block text-[10px] uppercase tracking-wider text-text-muted font-mono">{t("Managed by")}</span>
               <span class="block mt-1 text-text-primary font-mono break-all">
-                {preflightApp.managed_by || (appSource(preflightApp) === "store" ? "Microsoft Store / Appx" : "Registry uninstall entry")}
+                {preflightApp.managed_by || (appSource(preflightApp) === "store" ? "Microsoft Store / Appx" : t("Registry uninstall entry"))}
               </span>
             </div>
           </div>
 
           <div class="p-3 rounded-lg bg-app-bg border border-border-default text-xs">
-            <span class="block text-[10px] uppercase tracking-wider text-text-muted font-mono">Install location</span>
-            <span class="block mt-1 text-text-primary font-mono break-all">{preflightApp.install_location || "Not registered"}</span>
+            <span class="block text-[10px] uppercase tracking-wider text-text-muted font-mono">{t("Install location")}</span>
+            <span class="block mt-1 text-text-primary font-mono break-all">{preflightApp.install_location || t("Not registered")}</span>
           </div>
 
           <div class="p-3 rounded-lg bg-app-bg border border-border-default text-xs space-y-1.5">
-            <span class="block text-[10px] uppercase tracking-wider text-text-muted font-mono">Execution method</span>
+            <span class="block text-[10px] uppercase tracking-wider text-text-muted font-mono">{t("Execution method")}</span>
             {#if appSource(preflightApp) === "cli"}
-              <p class="text-text-primary">Run <b>{preflightApp.managed_by}</b> package uninstall, then review package-owned leftovers.</p>
+              <p class="text-text-primary">{t("Run {manager} package uninstall, then review package-owned leftovers.", { manager: preflightApp.managed_by ?? "" })}</p>
             {:else if appSource(preflightApp) === "toolchain"}
-              <p class="text-text-primary">Run <b>{preflightApp.managed_by}</b> toolchain uninstall for <b>{preflightApp.display_version}</b>.</p>
+              <p class="text-text-primary">{t("Run {manager} toolchain uninstall for {version}.", { manager: preflightApp.managed_by ?? "", version: preflightApp.display_version ?? "" })}</p>
             {:else if appSource(preflightApp) === "store"}
-              <p class="text-text-primary">Run <b>Remove-AppxPackage</b> for the current user, then review leftovers.</p>
+              <p class="text-text-primary">{t("Run Remove-AppxPackage for the current user, then review leftovers.")}</p>
             {:else if appSource(preflightApp) === "portable"}
-              <p class="text-text-primary">Move the portable application folder to quarantine. No registry uninstaller is available.</p>
+              <p class="text-text-primary">{t("Move the portable application folder to quarantine. No registry uninstaller is available.")}</p>
             {:else}
-              <p class="text-text-primary break-all">Run the registered uninstaller: <span class="font-mono">{preflightApp.uninstall_string || "no uninstall string"}</span></p>
+              <p class="text-text-primary break-all">{t("Run the registered uninstaller:")} <span class="font-mono">{preflightApp.uninstall_string || t("no uninstall string")}</span></p>
             {/if}
             {#if preflightApp.requires_admin}
-              <p class="text-amber-300">Administrator rights are required for this operation.</p>
+              <p class="text-amber-300">{t("Administrator rights are required for this operation.")}</p>
             {/if}
             {#if preflightApp.is_active}
-              <p class="text-amber-300">WARNING: this toolchain is currently ACTIVE. Removing it can break existing projects.</p>
+              <p class="text-amber-300">{t("WARNING: this toolchain is currently ACTIVE. Removing it can break existing projects.")}</p>
             {/if}
           </div>
 
           <div class="p-3 rounded-lg bg-app-bg border border-border-default text-xs space-y-1.5">
-            <span class="block text-[10px] uppercase tracking-wider text-text-muted font-mono">Safety settings</span>
+            <span class="block text-[10px] uppercase tracking-wider text-text-muted font-mono">{t("Safety settings")}</span>
             {#if isPreflightLoading}
-              <p class="text-text-muted">Reading settings…</p>
+              <p class="text-text-muted">{t("Reading settings…")}</p>
             {:else if preflightSettings}
-              <p class="text-text-primary">Backup/quarantine before delete: <b>{preflightSettings.backup_before_delete ? "On" : "OFF"}</b></p>
-              <p class="text-text-primary">Create restore point: <b>{preflightSettings.create_restore_point ? "On" : "Off"}</b></p>
+              <p class="text-text-primary">{t("Backup/quarantine before delete:")} <b>{preflightSettings.backup_before_delete ? t("On") : t("Off")}</b></p>
+              <p class="text-text-primary">{t("Create restore point:")} <b>{preflightSettings.create_restore_point ? t("On") : t("Off")}</b></p>
               {#if !preflightSettings.backup_before_delete}
-                <p class="text-amber-300">Backup is off. Removed files may not be restorable.</p>
+                <p class="text-amber-300">{t("Backup is off. Removed files may not be restorable.")}</p>
               {/if}
             {:else}
-              <p class="text-text-muted">Could not read settings; backend defaults apply.</p>
+              <p class="text-text-muted">{t("Could not read settings; backend defaults apply.")}</p>
             {/if}
           </div>
 
           {#if (appSource(preflightApp) === "registry" || appSource(preflightApp) === "portable") && preflightApp.install_location}
             <div class="p-3 rounded-lg bg-danger/5 border border-danger/20 text-xs space-y-2">
-              <h4 class="font-bold text-danger">Force removal fallback</h4>
+              <h4 class="font-bold text-danger">{t("Force removal fallback")}</h4>
               <p class="text-text-muted leading-relaxed">
-                Bypasses the official uninstaller and removes the install folder plus the uninstall registry entry.
-                Use only when the normal uninstaller is missing or broken.
+                {t("Bypasses the official uninstaller and removes the install folder plus the uninstall registry entry. Use only when the normal uninstaller is missing or broken.")}
               </p>
               <button
                 onclick={() => forceRemovePreflight()}
                 disabled={isForceRemoving}
                 class="px-3 py-1.5 rounded-lg bg-danger/10 hover:bg-danger text-danger hover:text-white border border-danger/20 text-xs font-semibold transition-all disabled:opacity-40"
               >
-                {isForceRemoving ? "Force removing…" : "Force Remove"}
+                {isForceRemoving ? t("Force removing…") : t("Force Remove")}
               </button>
             </div>
           {/if}
@@ -1237,7 +1241,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
             disabled={isForceRemoving}
             class="px-4 py-2 rounded-lg text-xs font-semibold bg-surface-bg border border-border-default hover:bg-elevated-bg text-text-secondary hover:text-text-primary transition-all disabled:opacity-40"
           >
-            Cancel
+            {t("Cancel")}
           </button>
           <button
             onclick={confirmPreflight}
@@ -1245,7 +1249,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
             class="flex items-center gap-1.5 px-5 py-2 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white transition-all active:scale-95 disabled:opacity-50"
           >
             <Trash2 class="w-3.5 h-3.5" />
-            {appSource(preflightApp) === "portable" ? "Remove folder" : "Continue"}
+            {appSource(preflightApp) === "portable" ? t("Remove folder") : t("Continue")}
           </button>
         </footer>
       </div>
@@ -1265,15 +1269,15 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
         <header class="p-6 border-b border-border-default flex items-center justify-between">
           <div>
             <h3 id="remnants-title" class="text-base font-bold text-text-primary">
-              Deep Clean remnants for: <span class="text-accent">{activeApp.display_name}</span>
+              {t("Deep Clean remnants for:")} <span class="text-accent">{activeApp.display_name}</span>
             </h3>
-            <p class="text-xs text-text-muted mt-1">Review files, directories, and registry keys to be permanently purged.</p>
+            <p class="text-xs text-text-muted mt-1">{t("Review files, directories, and registry keys to be permanently purged.")}</p>
           </div>
           <button
             onclick={closeRemnantsModal}
             disabled={isPurging || uninstallStep === "uninstalling" || uninstallStep === "scanning"}
             class="p-1.5 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-text-secondary hover:text-text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            aria-label="Close remnants dialog"
+            aria-label={t("Close remnants dialog")}
           >
             <X class="w-4 h-4" />
           </button>
@@ -1287,7 +1291,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                 <Trash2 class="w-5 h-5 text-accent animate-pulse" />
               </div>
               <div>
-                <h4 class="text-sm font-bold text-text-primary">Official Uninstaller Running</h4>
+                <h4 class="text-sm font-bold text-text-primary">{t("Official Uninstaller Running")}</h4>
                 <p class="text-xs text-text-muted mt-2 max-w-sm leading-relaxed font-sans">{uninstallStatusText}</p>
               </div>
             </div>
@@ -1295,7 +1299,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
             <div class="flex flex-col items-center justify-center py-12 gap-4 text-center animate-fade-in">
               <RefreshCw class="w-8 h-8 text-accent animate-spin" />
               <div>
-                <h4 class="text-sm font-bold text-text-primary">Scanning Leftover Traces</h4>
+                <h4 class="text-sm font-bold text-text-primary">{t("Scanning Leftover Traces")}</h4>
                 <p class="text-xs text-text-muted mt-2 max-w-sm leading-relaxed font-sans">{uninstallStatusText}</p>
               </div>
             </div>
@@ -1306,11 +1310,11 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                   <Trash2 class="w-5 h-5" />
                 </div>
                 <div>
-                  <h4 class="text-sm font-bold text-text-primary">Purge Completed!</h4>
+                  <h4 class="text-sm font-bold text-text-primary">{t("Purge Completed!")}</h4>
                   <p class="text-xs text-text-muted mt-1">
-                    Successfully removed <b class="text-success">{purgeResult.success}</b> remnants.
+                    {t("Successfully removed")} <b class="text-success">{purgeResult.success}</b> {t("remnants.")}
                     {#if purgeResult.fail > 0}
-                      <span class="text-danger">Failed to remove {purgeResult.fail} items (locked or permission issue).</span>
+                      <span class="text-danger">{t("Failed to remove {count} items (locked or permission issue).", { count: purgeResult.fail })}</span>
                     {/if}
                   </p>
                 </div>
@@ -1320,8 +1324,8 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
             {#if remnants.length === 0}
               {#if !purgeResult}
                 <div class="p-8 text-center border border-dashed border-border-default rounded-lg bg-surface-bg/30 flex flex-col items-center justify-center">
-                  <span class="text-sm font-sans text-text-primary font-medium">No Remnants Detected!</span>
-                  <span class="text-xs text-text-muted mt-1">This application was successfully uninstalled without leaving residual traces.</span>
+                  <span class="text-sm font-sans text-text-primary font-medium">{t("No Remnants Detected!")}</span>
+                  <span class="text-xs text-text-muted mt-1">{t("This application was successfully uninstalled without leaving residual traces.")}</span>
                 </div>
               {/if}
             {:else}
@@ -1332,18 +1336,18 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                     onclick={() => selectAll(true)}
                     class="text-accent hover:text-accent-hover font-semibold"
                   >
-                    Select All
+                    {t("Select All")}
                   </button>
                   <span class="text-border-default">|</span>
                   <button
                     onclick={() => selectAll(false)}
                     class="text-text-secondary hover:text-text-primary font-semibold"
                   >
-                    Deselect All
+                    {t("Deselect All")}
                   </button>
                 </div>
                 <span class="text-text-muted font-mono">
-                  {remnants.filter(r => selectedRemnants[r.path]).length} of {remnants.length} items selected
+                  {t("{selected} of {total} items selected", { selected: remnants.filter(r => selectedRemnants[r.path]).length, total: remnants.length })}
                 </span>
               </div>
 
@@ -1356,9 +1360,9 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                         {group.label} <span class="text-text-secondary">({group.items.length})</span>
                       </h4>
                       <div class="flex items-center gap-2 text-[10px]">
-                        <button onclick={() => selectGroup(group.type, true)} class="text-accent hover:text-accent-hover font-semibold">All</button>
+                        <button onclick={() => selectGroup(group.type, true)} class="text-accent hover:text-accent-hover font-semibold">{t("All")}</button>
                         <span class="text-border-default">|</span>
-                        <button onclick={() => selectGroup(group.type, false)} class="text-text-muted hover:text-text-primary font-semibold">None</button>
+                        <button onclick={() => selectGroup(group.type, false)} class="text-text-muted hover:text-text-primary font-semibold">{t("None")}</button>
                       </div>
                     </div>
 
@@ -1421,14 +1425,14 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
         {#if !purgeResult && remnants.length > 0}
           <footer class="p-6 border-t border-border-default flex justify-between items-center bg-sidebar-bg">
             <span class="text-xs font-mono text-text-secondary">
-              Total selected: <b class="text-accent">{formatSize(remnants.filter(r => selectedRemnants[r.path]).reduce((acc, curr) => acc + curr.size, 0))}</b>
+              {t("Total selected:")} <b class="text-accent">{formatSize(remnants.filter(r => selectedRemnants[r.path]).reduce((acc, curr) => acc + curr.size, 0))}</b>
             </span>
             <div class="flex gap-3">
               <button
                 onclick={closeRemnantsModal}
                 class="px-4 py-2 rounded-lg text-xs font-semibold bg-surface-bg border border-border-default hover:bg-elevated-bg text-text-secondary hover:text-text-primary transition-all"
               >
-                Cancel
+                {t("Cancel")}
               </button>
               <button
                 onclick={performPurge}
@@ -1437,10 +1441,10 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
               >
                 {#if isPurging}
                   <RefreshCw class="w-3.5 h-3.5 animate-spin" />
-                  Purging remnants...
+                  {t("Purging remnants...")}
                 {:else}
                   <Trash2 class="w-3.5 h-3.5" />
-                  Purge Selected Remnants
+                  {t("Purge Selected Remnants")}
                 {/if}
               </button>
             </div>
@@ -1459,11 +1463,11 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
             <CheckSquare class="w-4.5 h-4.5" />
           </div>
           <div>
-            <h4 class="text-xs font-bold text-text-primary">{selectedVisibleAppsCount} apps selected</h4>
+            <h4 class="text-xs font-bold text-text-primary">{t("{count} apps selected", { count: selectedVisibleAppsCount })}</h4>
             <p class="text-[10px] text-text-muted mt-0.5 font-sans">
-              Ready for batch silent uninstallation
+              {t("Ready for batch silent uninstallation")}
               {#if selectedAppsCount > selectedVisibleAppsCount}
-                · {selectedAppsCount - selectedVisibleAppsCount} hidden ignored
+                · {t("{count} hidden ignored", { count: selectedAppsCount - selectedVisibleAppsCount })}
               {/if}
             </p>
           </div>
@@ -1478,8 +1482,8 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
               class="rounded border-border-default text-accent focus:ring-accent bg-surface-bg cursor-pointer w-4 h-4"
             />
             <div class="flex flex-col">
-              <span class="text-xs font-semibold text-text-secondary">Auto-Purge Leftovers</span>
-              <span class="text-[10px] text-text-muted font-sans font-medium">Delete remnants silently</span>
+              <span class="text-xs font-semibold text-text-secondary">{t("Auto-Purge Leftovers")}</span>
+              <span class="text-[10px] text-text-muted font-sans font-medium">{t("Delete remnants silently")}</span>
             </div>
           </label>
 
@@ -1490,8 +1494,8 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
               class="rounded border-border-default text-accent focus:ring-accent bg-surface-bg cursor-pointer w-4 h-4"
             />
             <div class="flex flex-col">
-              <span class="text-xs font-semibold text-text-secondary">Force Fallback</span>
-              <span class="text-[10px] text-text-muted font-sans font-medium">If uninstaller fails</span>
+              <span class="text-xs font-semibold text-text-secondary">{t("Force Fallback")}</span>
+              <span class="text-[10px] text-text-muted font-sans font-medium">{t("If uninstaller fails")}</span>
             </div>
           </label>
 
@@ -1502,14 +1506,14 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
               onclick={clearAppSelection}
               class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-surface-bg border border-border-default hover:bg-elevated-bg text-text-secondary hover:text-text-primary transition-all active:scale-95 cursor-pointer"
             >
-              Cancel
+              {t("Cancel")}
             </button>
             <button
               onclick={startBulkUninstall}
               class="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold bg-accent hover:bg-accent-hover text-white transition-all active:scale-95 shadow cursor-pointer"
             >
               <Trash2 class="w-3.5 h-3.5" />
-              Bulk Silent Uninstall
+              {t("Bulk Silent Uninstall")}
             </button>
           </div>
         </div>
@@ -1530,15 +1534,15 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
         <header class="p-6 border-b border-border-default flex items-center justify-between">
           <div>
             <h3 id="bulk-title" class="text-base font-bold text-text-primary">
-              Bulk Silent Uninstallation
+              {t("Bulk Silent Uninstallation")}
             </h3>
             <p class="text-xs text-text-muted mt-1">
               {#if bulkUninstallStep === "running"}
-                Processing <b>{bulkUninstallCurrent}/{bulkUninstallTotal}</b>: <span class="text-accent">{bulkUninstallCurrentAppName}</span>
+                {t("Processing")} <b>{bulkUninstallCurrent}/{bulkUninstallTotal}</b>: <span class="text-accent">{bulkUninstallCurrentAppName}</span>
               {:else if bulkUninstallStep === "remnants_list"}
-                Review remaining leftovers from batch uninstallation
+                {t("Review remaining leftovers from batch uninstallation")}
               {:else}
-                Batch operations completed
+                {t("Batch operations completed")}
               {/if}
             </p>
           </div>
@@ -1546,7 +1550,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
             <button
               onclick={closeBulkModal}
               class="p-1.5 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-text-secondary hover:text-text-primary transition-colors cursor-pointer"
-              aria-label="Close bulk uninstallation dialog"
+              aria-label={t("Close bulk uninstallation dialog")}
             >
               <X class="w-4 h-4" />
             </button>
@@ -1579,7 +1583,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
               </div>
 
               <!-- Console-style Log -->
-              <h4 class="text-xs font-bold text-text-secondary uppercase tracking-wider font-mono">Uninstall Log</h4>
+              <h4 class="text-xs font-bold text-text-secondary uppercase tracking-wider font-mono">{t("Uninstall Log")}</h4>
               <div class="bg-app-bg border border-border-default rounded-lg p-4 font-mono text-[11px] text-text-muted overflow-y-auto h-[250px] space-y-1.5 select-text">
                 {#each bulkUninstallLog as line}
                   <div class="leading-relaxed border-b border-border-default/20 pb-1 last:border-b-0 break-all">{line}</div>
@@ -1593,8 +1597,8 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
               <div class="p-4 rounded-lg bg-amber-950/20 border border-amber-900/40 text-amber-300 text-xs flex gap-3 leading-relaxed">
                 <span class="text-base">⚠️</span>
                 <div>
-                  <h4 class="font-bold">Remaining Leftovers Detected</h4>
-                  <p class="mt-1 text-text-muted">The uninstaller completed, but some confidence-level remnants couldn't be auto-purged (or auto-purge was disabled). Review and select below to clean them permanently.</p>
+                  <h4 class="font-bold">{t("Remaining Leftovers Detected")}</h4>
+                  <p class="mt-1 text-text-muted">{t("The uninstaller completed, but some confidence-level remnants couldn't be auto-purged (or auto-purge was disabled). Review and select below to clean them permanently.")}</p>
                 </div>
               </div>
 
@@ -1607,7 +1611,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                     }}
                     class="text-accent hover:text-accent-hover font-semibold cursor-pointer"
                   >
-                    Select All
+                    {t("Select All")}
                   </button>
                   <span class="text-border-default">|</span>
                   <button
@@ -1616,11 +1620,11 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                     }}
                     class="text-text-secondary hover:text-text-primary font-semibold cursor-pointer"
                   >
-                    Deselect All
+                    {t("Deselect All")}
                   </button>
                 </div>
                 <span class="text-text-muted font-mono">
-                  {Object.values(selectedBulkRemnants).filter(Boolean).length} of {bulkRemnants.length} items selected
+                  {t("{selected} of {total} items selected", { selected: Object.values(selectedBulkRemnants).filter(Boolean).length, total: bulkRemnants.length })}
                 </span>
               </div>
 
@@ -1680,12 +1684,12 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                 <X class="w-8 h-8" />
               </div>
               <div>
-                <h4 class="text-base font-bold text-text-primary">Bulk Uninstall Failed</h4>
+                <h4 class="text-base font-bold text-text-primary">{t("Bulk Uninstall Failed")}</h4>
                 <p class="text-xs text-text-muted mt-2 max-w-sm leading-relaxed break-all">
-                  {bulkUninstallError || "The operation could not be completed."}
+                  {bulkUninstallError || t("The operation could not be completed.")}
                 </p>
                 <p class="text-[11px] text-text-muted mt-2">
-                  Some applications may have been processed before the error. The list was refreshed.
+                  {t("Some applications may have been processed before the error. The list was refreshed.")}
                 </p>
               </div>
             </div>
@@ -1698,9 +1702,9 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                 </svg>
               </div>
               <div>
-                <h4 class="text-base font-bold text-text-primary">All Applications Processed!</h4>
+                <h4 class="text-base font-bold text-text-primary">{t("All Applications Processed!")}</h4>
                 <p class="text-xs text-text-muted mt-2 max-w-sm leading-relaxed">
-                  Bulk uninstallation and leftovers cleaning completed successfully.
+                  {t("Bulk uninstallation and leftovers cleaning completed successfully.")}
                 </p>
               </div>
             </div>
@@ -1715,7 +1719,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                 onclick={() => bulkUninstallStep = "done"}
                 class="px-4 py-2 rounded-lg text-xs font-semibold bg-surface-bg border border-border-default hover:bg-elevated-bg text-text-secondary hover:text-text-primary transition-all cursor-pointer"
               >
-                Skip Cleaning
+                {t("Skip Cleaning")}
               </button>
               <button
                 onclick={performBulkRemnantsPurge}
@@ -1724,10 +1728,10 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
               >
                 {#if isPurging}
                   <RefreshCw class="w-3.5 h-3.5 animate-spin" />
-                  Purging leftovers...
+                  {t("Purging leftovers...")}
                 {:else}
                   <Trash2 class="w-3.5 h-3.5" />
-                  Clean Leftover Traces
+                  {t("Clean Leftover Traces")}
                 {/if}
               </button>
             {:else}
@@ -1735,7 +1739,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                 onclick={closeBulkModal}
                 class="px-6 py-2 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white transition-all active:scale-95 cursor-pointer"
               >
-                Done
+                {t("Done")}
               </button>
             {/if}
           </footer>

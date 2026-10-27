@@ -3,6 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { ShieldAlert, Trash2, CheckCircle2, ShieldCheck, RefreshCw, FolderSearch, CheckSquare, Square } from "@lucide/svelte";
   import { toast } from "../toast.svelte";
+  import { t } from "$lib/i18n.svelte";
 
   interface PathEntry {
     value: string;
@@ -33,7 +34,7 @@
         }
       });
     } catch (e) {
-      toast.show("Error loading PATH list!", "error");
+      toast.show(t("Error loading PATH list!"), "error");
     } finally {
       isLoading = false;
     }
@@ -47,10 +48,18 @@
     selectedIndices[idx] = !selectedIndices[idx];
   }
 
+  function localizedReason(reason: string): string {
+    if (reason === "Valid") return t("Valid");
+    if (reason === "Directory does not exist") return t("Directory does not exist");
+    const duplicate = reason.match(/^Duplicate of line #(\d+)$/);
+    if (duplicate) return t("Duplicate of line #{line}", { line: duplicate[1] });
+    return reason;
+  }
+
   async function cleanSelectedPaths() {
     const selectedCount = Object.keys(selectedIndices).filter((key) => selectedIndices[Number(key)]).length;
     if (selectedCount === 0) {
-      toast.show("Please select at least one path to clean.", "warning");
+      toast.show(t("Please select at least one path to clean."), "warning");
       return;
     }
 
@@ -69,11 +78,11 @@
     // Pre-flight check: If System PATH is being modified, ensure Admin and non-empty
     if (hasSystemRemoval) {
       if (!isAdmin) {
-        toast.show("Modifying System PATH requires Administrator privileges. Please run PurgeKit as Administrator.", "error");
+        toast.show(t("Modifying System PATH requires Administrator privileges. Please run PurgeKit as Administrator."), "error");
         return;
       }
       if (systemRemaining.length === 0) {
-        toast.show("Cannot clear all System PATH entries! Windows requires system PATH to function.", "error");
+        toast.show(t("Cannot clear all System PATH entries! Windows requires system PATH to function."), "error");
         return;
       }
     }
@@ -96,10 +105,10 @@
         });
       }
 
-      toast.show("Cleaned invalid/duplicate paths successfully!", "success");
+      toast.show(t("Cleaned invalid/duplicate paths successfully!"), "success");
       await loadPaths();
     } catch (e: any) {
-      toast.show(`Failed to clean: ${e.toString()}`, "error");
+      toast.show(t("Failed to clean: {error}", { error: e.toString() }), "error");
       await loadPaths();
     } finally {
       isSaving = false;
@@ -112,9 +121,9 @@
   <header class="p-6 border-b border-border-default flex items-center justify-between bg-sidebar-bg">
     <div>
       <h2 class="text-2xl font-bold font-sans text-text-primary">
-        PATH Environment Cleaner
+        {t("PATH Environment Cleaner")}
       </h2>
-      <p class="text-xs text-text-muted mt-1">Scan and clean broken, dead, or duplicate paths in your Windows PATH variables to avoid environment conflicts</p>
+      <p class="text-xs text-text-muted mt-1">{t("Scan and clean broken, dead, or duplicate paths in your Windows PATH variables to avoid environment conflicts")}</p>
     </div>
 
     <div class="flex items-center gap-2">
@@ -124,7 +133,7 @@
         class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-danger hover:bg-danger/80 disabled:opacity-50 active:scale-95 transition-all text-white shadow cursor-pointer"
       >
         <Trash2 class="w-3.5 h-3.5" />
-        Clean Selected Paths
+        {t("Clean Selected Paths")}
       </button>
 
       <button
@@ -133,7 +142,7 @@
         class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-bg border border-border-default hover:bg-elevated-bg active:scale-95 disabled:opacity-50 transition-all text-text-primary cursor-pointer"
       >
         <RefreshCw class="w-3.5 h-3.5 {isLoading ? 'animate-spin' : ''}" />
-        Scan PATH
+        {t("Scan PATH")}
       </button>
     </div>
   </header>
@@ -147,8 +156,8 @@
           <FolderSearch class="w-5 h-5 text-accent" />
         </div>
         <div>
-          <span class="block text-[10px] text-text-muted font-mono uppercase">Total Scanned</span>
-          <span class="text-lg font-bold text-text-primary">{envPaths.length} items</span>
+          <span class="block text-[10px] text-text-muted font-mono uppercase">{t("Total Scanned")}</span>
+          <span class="text-lg font-bold text-text-primary">{t("{count} items", { count: envPaths.length })}</span>
         </div>
       </div>
 
@@ -157,8 +166,8 @@
           <ShieldAlert class="w-5 h-5 text-danger" />
         </div>
         <div>
-          <span class="block text-[10px] text-text-muted font-mono uppercase">Issues Detected</span>
-          <span class="text-lg font-bold text-danger">{envPaths.filter(p => !p.is_valid || p.is_duplicate).length} errors</span>
+          <span class="block text-[10px] text-text-muted font-mono uppercase">{t("Issues Detected")}</span>
+          <span class="text-lg font-bold text-danger">{t("{count} errors", { count: envPaths.filter(p => !p.is_valid || p.is_duplicate).length })}</span>
         </div>
       </div>
 
@@ -167,24 +176,24 @@
           <CheckCircle2 class="w-5 h-5 text-success" />
         </div>
         <div>
-          <span class="block text-[10px] text-text-muted font-mono uppercase">Clean Entries</span>
-          <span class="text-lg font-bold text-success">{envPaths.filter(p => p.is_valid && !p.is_duplicate).length} items</span>
+          <span class="block text-[10px] text-text-muted font-mono uppercase">{t("Clean Entries")}</span>
+          <span class="text-lg font-bold text-success">{t("{count} items", { count: envPaths.filter(p => p.is_valid && !p.is_duplicate).length })}</span>
         </div>
       </div>
     </div>
 
     <!-- Active List -->
     <div class="space-y-4">
-      <h3 class="text-xs font-mono font-semibold uppercase text-text-muted tracking-wider">Path Variables</h3>
+      <h3 class="text-xs font-mono font-semibold uppercase text-text-muted tracking-wider">{t("Path Variables")}</h3>
       
       {#if isLoading}
         <div class="flex flex-col items-center justify-center py-12 gap-3">
           <RefreshCw class="w-7 h-7 text-accent animate-spin" />
-          <span class="text-xs text-text-muted font-mono">Scanning Windows PATH directories...</span>
+          <span class="text-xs text-text-muted font-mono">{t("Scanning Windows PATH directories...")}</span>
         </div>
       {:else if envPaths.length === 0}
         <div class="p-8 text-center border border-dashed border-border-default rounded-lg bg-surface-bg/30 flex flex-col items-center justify-center">
-          <span class="text-sm font-sans text-text-muted font-medium">No PATH values found!</span>
+          <span class="text-sm font-sans text-text-muted font-medium">{t("No PATH values found!")}</span>
         </div>
       {:else}
         <div class="border border-border-default rounded-lg overflow-hidden bg-surface-bg/50">
@@ -192,11 +201,11 @@
             <table class="w-full text-left border-collapse min-w-[720px]">
             <thead>
               <tr class="bg-sidebar-bg border-b border-border-default text-xs font-semibold text-text-secondary uppercase tracking-wider font-mono">
-                <th class="py-4 px-3 lg:px-5 w-10">Select</th>
-                <th class="py-4 px-3 lg:px-5">Variable Scope</th>
-                <th class="py-4 px-3 lg:px-5">Path Value</th>
-                <th class="py-4 px-3 lg:px-5">Status</th>
-                <th class="py-4 px-3 lg:px-5">Details / Reason</th>
+                <th class="py-4 px-3 lg:px-5 w-10">{t("Select")}</th>
+                <th class="py-4 px-3 lg:px-5">{t("Variable Scope")}</th>
+                <th class="py-4 px-3 lg:px-5">{t("Path Value")}</th>
+                <th class="py-4 px-3 lg:px-5">{t("Status")}</th>
+                <th class="py-4 px-3 lg:px-5">{t("Details / Reason")}</th>
               </tr>
             </thead>
             <tbody class="divide-y border-border-default text-sm">
@@ -220,7 +229,7 @@
                   <td class="py-4 px-3 lg:px-5 font-mono text-xs font-semibold">
                     <span class="px-2 py-0.5 rounded border
                       {p.scope === 'System' ? 'bg-surface-bg text-text-secondary border-border-default' : 'bg-brand-purple/10 text-brand-purple border-brand-purple/20'}">
-                      {p.scope}
+                      {p.scope === 'System' ? t("System") : t("User")}
                     </span>
                   </td>
                   
@@ -234,24 +243,24 @@
                     {#if !p.is_valid}
                       <span class="px-2 py-0.5 rounded bg-danger/10 text-danger border border-danger/20 flex items-center gap-1 w-max">
                         <ShieldAlert class="w-3.5 h-3.5" />
-                        Broken
+                        {t("Broken")}
                       </span>
                     {:else if p.is_duplicate}
                       <span class="px-2 py-0.5 rounded bg-amber-950/30 text-amber-400 border border-amber-800/40 flex items-center gap-1 w-max">
                         <ShieldAlert class="w-3.5 h-3.5" />
-                        Duplicate
+                        {t("Duplicate")}
                       </span>
                     {:else}
                       <span class="px-2 py-0.5 rounded bg-emerald-950/30 text-emerald-400 border border-emerald-800/40 flex items-center gap-1 w-max">
                         <CheckCircle2 class="w-3.5 h-3.5" />
-                        Valid
+                        {t("Valid")}
                       </span>
                     {/if}
                   </td>
                   
                   <!-- Reason -->
-                  <td class="py-4 px-3 lg:px-5 text-xs text-text-muted font-sans max-w-[200px] truncate" title={p.issue_reason}>
-                    {p.issue_reason}
+                  <td class="py-4 px-3 lg:px-5 text-xs text-text-muted font-sans max-w-[200px] truncate" title={localizedReason(p.issue_reason)}>
+                    {localizedReason(p.issue_reason)}
                   </td>
                 </tr>
               {/each}

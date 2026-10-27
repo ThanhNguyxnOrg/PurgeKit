@@ -4,6 +4,7 @@
   import { openPath } from "@tauri-apps/plugin-opener";
   import { Terminal, RefreshCw, Trash2, HardDrive, AlertCircle, CheckCircle, FolderOpen, X, Square, CheckSquare, Folder, Database, File, Cpu } from "@lucide/svelte";
   import { toast } from "../toast.svelte";
+  import { t } from "$lib/i18n.svelte";
 
   interface DevToolInfo {
     name: string;
@@ -106,7 +107,7 @@
       globalPackages.sort((a, b) => a.name.localeCompare(b.name));
     } catch (e) {
       console.error("Failed to load global packages:", e);
-      toast.show("Failed to load global CLI packages!", "error");
+      toast.show(t("Failed to load global CLI packages!"), "error");
     } finally {
       isPackagesLoading = false;
     }
@@ -119,7 +120,7 @@
       toolchains.sort((a, b) => b.size_bytes - a.size_bytes);
     } catch (e) {
       console.error("Failed to load toolchains:", e);
-      toast.show("Failed to load compiler toolchains!", "error");
+      toast.show(t("Failed to load compiler toolchains!"), "error");
     } finally {
       isToolchainsLoading = false;
     }
@@ -131,7 +132,7 @@
       extensions = await invoke<DevExtension[]>("get_dev_extensions");
     } catch (e) {
       console.error("Failed to load IDE extensions:", e);
-      toast.show("Failed to load IDE extensions!", "error");
+      toast.show(t("Failed to load IDE extensions!"), "error");
     } finally {
       isExtensionsLoading = false;
     }
@@ -145,13 +146,13 @@
   }
 
   async function uninstallPackage(pkg: GlobalCliPackage) {
-    if (!confirm(`Uninstall global package "${pkg.name}" from ${pkg.manager}?`)) {
+    if (!confirm(t("Uninstall global package \"{name}\" from {manager}?", { name: pkg.name, manager: pkg.manager }))) {
       return;
     }
 
     activePackage = pkg;
     uninstallStep = "uninstalling";
-    uninstallStatusText = `Uninstalling global package: ${pkg.name}...`;
+    uninstallStatusText = t("Uninstalling global package: {name}...", { name: pkg.name });
     remnants = [];
     selectedRemnants = {};
     purgeResult = null;
@@ -159,16 +160,16 @@
     
     try {
       // 1. Get binary names before we uninstall it and delete package.json
-      uninstallStatusText = `Analyzing binary files for ${pkg.name}...`;
+      uninstallStatusText = t("Analyzing binary files for {name}...", { name: pkg.name });
       const binNames = await invoke<string[]>("get_cli_package_bin_names", { packagePath: pkg.path });
       
       // 2. Perform official uninstallation
-      uninstallStatusText = `Running official uninstallation command for ${pkg.name}...`;
+      uninstallStatusText = t("Running official uninstallation command for {name}...", { name: pkg.name });
       await invoke("uninstall_global_cli_package", { name: pkg.name, manager: pkg.manager });
       
       // 3. Scan for leftovers
       uninstallStep = "scanning";
-      uninstallStatusText = `Searching system paths for remnants of ${pkg.name}...`;
+      uninstallStatusText = t("Searching system paths for remnants of {name}...", { name: pkg.name });
       
       // Allow a small delay for the OS to release file handles if any
       await new Promise(resolve => setTimeout(resolve, 500));
@@ -189,7 +190,7 @@
       uninstallStep = "remnants_list";
     } catch (err: any) {
       console.error(err);
-      toast.show(`Failed during uninstallation: ${err.toString()}`, "error");
+      toast.show(t("Failed during uninstallation: {error}", { error: err.toString() }), "error");
       closeRemnantsModal();
     }
   }
@@ -207,7 +208,7 @@
   async function performPurge() {
     const itemsToPurge = remnants.filter(r => selectedRemnants[r.path]);
     if (itemsToPurge.length === 0) {
-      toast.show("Please select at least one remnant item to clean.", "warning");
+      toast.show(t("Please select at least one remnant item to clean."), "warning");
       return;
     }
 
@@ -217,13 +218,13 @@
         items: itemsToPurge
       });
       purgeResult = result;
-      toast.show(`Purged ${result.success} items successfully!`, "success");
+      toast.show(t("Purged {count} items successfully!", { count: result.success }), "success");
       
       // Refresh global packages list
       await loadGlobalPackages();
     } catch (e: any) {
       console.error(e);
-      toast.show(`Failed to purge remnants: ${e.toString()}`, "error");
+      toast.show(t("Failed to purge remnants: {error}", { error: e.toString() }), "error");
     } finally {
       isPurging = false;
     }
@@ -246,7 +247,7 @@
 
   // Helper to format file size
   function formatSize(bytes: number | null): string {
-    if (bytes === null || bytes === undefined) return "N/A";
+    if (bytes === null || bytes === undefined) return t("N/A");
     if (bytes <= 0 || isNaN(bytes)) return "0 Bytes";
     const k = 1024;
     const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
@@ -259,11 +260,11 @@
     cleaningStates[name] = true;
     try {
       const freedBytes = await invoke<number>("clean_dev_tool_cache", { name });
-      toast.show(`Successfully cleaned cache for ${name}. Freed ${formatSize(freedBytes)}!`, "success");
+      toast.show(t("Successfully cleaned cache for {name}. Freed {size}!", { name, size: formatSize(freedBytes) }), "success");
       // Reload dev tools info to reflect changes
       await loadDevTools();
     } catch (err: any) {
-      toast.show(`Failed to clean ${name} cache: ${err.toString()}`, "error");
+      toast.show(t("Failed to clean {name} cache: {error}", { name, error: err.toString() }), "error");
     } finally {
       cleaningStates[name] = false;
     }
@@ -271,14 +272,14 @@
 
   // Clean all detected caches
   async function cleanAllCaches() {
-    const detectedTools = tools.filter(t => t.detected && t.cache_size && t.cache_size > 0);
+    const detectedTools = tools.filter(x => x.detected && x.cache_size && x.cache_size > 0);
     if (detectedTools.length === 0) {
-      toast.show("All caches are already clean!", "success");
+      toast.show(t("All caches are already clean!"), "success");
       return;
     }
 
     const totalSize = detectedTools.reduce((sum, tool) => sum + (tool.cache_size || 0), 0);
-    if (!confirm(`Clean caches for ${detectedTools.length} tools (${formatSize(totalSize)})?`)) {
+    if (!confirm(t("Clean caches for {count} tools ({size})?", { count: detectedTools.length, size: formatSize(totalSize) }))) {
       return;
     }
 
@@ -301,18 +302,18 @@
     await loadDevTools();
 
     if (failedTools.length > 0) {
-      toast.show(`Freed ${formatSize(totalFreed)} but failed on: ${failedTools.join(", ")}`, "error");
+      toast.show(t("Freed {size} but failed on: {tools}", { size: formatSize(totalFreed), tools: failedTools.join(", ") }), "error");
     } else {
-      toast.show(`Successfully cleaned all caches! Total freed: ${formatSize(totalFreed)}`, "success");
+      toast.show(t("Successfully cleaned all caches! Total freed: {size}", { size: formatSize(totalFreed) }), "success");
     }
   }
 
   let totalCacheSize = $derived(
-    tools.filter(t => t.detected).reduce((acc, curr) => acc + (curr.cache_size || 0), 0)
+    tools.filter(x => x.detected).reduce((acc, curr) => acc + (curr.cache_size || 0), 0)
   );
 
   let detectedToolsCount = $derived(
-    tools.filter(t => t.detected).length
+    tools.filter(x => x.detected).length
   );
 
   let totalToolchainsSize = $derived(
@@ -328,9 +329,9 @@
   );
 
   async function uninstallToolchain(tc: ToolchainVersion) {
-    let confirmMsg = `Are you sure you want to uninstall ${tc.manager} version: ${tc.version}?`;
+    let confirmMsg = t("Are you sure you want to uninstall {manager} version: {version}?", { manager: tc.manager, version: tc.version });
     if (tc.is_active) {
-      confirmMsg = `WARNING: The toolchain ${tc.version} is currently ACTIVE in your environment.\n\nUninstalling it might break your active developer projects until you configure another version.\n\nAre you sure you want to proceed?`;
+      confirmMsg = `${t("WARNING: The toolchain {version} is currently ACTIVE in your environment.", { version: tc.version })}\n\n${t("Uninstalling it might break your active developer projects until you configure another version.")}\n\n${t("Are you sure you want to proceed?")}`;
     }
     if (!confirm(confirmMsg)) {
       return;
@@ -338,16 +339,16 @@
 
     uninstallingToolchains[tc.path] = true;
     try {
-      toast.show(`Uninstalling ${tc.version}...`, "info");
+      toast.show(t("Uninstalling {version}...", { version: tc.version }), "info");
       await invoke("delete_toolchain_version", {
         manager: tc.manager,
         version: tc.version,
         path: tc.path
       });
-      toast.show(`Successfully uninstalled ${tc.version}!`, "success");
+      toast.show(t("Successfully uninstalled {version}!", { version: tc.version }), "success");
       await loadToolchains();
     } catch (err: any) {
-      toast.show(`Failed to uninstall toolchain: ${err.toString()}`, "error");
+      toast.show(t("Failed to uninstall toolchain: {error}", { error: err.toString() }), "error");
     } finally {
       uninstallingToolchains[tc.path] = false;
     }
@@ -359,20 +360,20 @@
   <header class="p-6 border-b border-border-default flex items-center justify-between bg-sidebar-bg">
     <div>
       <h2 class="text-2xl font-bold font-sans text-text-primary">
-        Dev Tools
+        {t("Dev Tools")}
       </h2>
-      <p class="text-xs text-text-muted mt-1">Free up storage by cleaning unused package caches, compiler versions & global packages</p>
+      <p class="text-xs text-text-muted mt-1">{t("Free up storage by cleaning unused package caches, compiler versions & global packages")}</p>
     </div>
 
     <div class="flex items-center gap-2">
       {#if activeSubTab === 'caches'}
         <button
           onclick={cleanAllCaches}
-          disabled={isLoading || tools.filter(t => t.detected && t.cache_size && t.cache_size > 0).length === 0}
+          disabled={isLoading || tools.filter(x => x.detected && x.cache_size && x.cache_size > 0).length === 0}
           class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white disabled:opacity-50 active:scale-95 transition-all shadow"
         >
           <Trash2 class="w-3.5 h-3.5" />
-          Purge All Caches
+          {t("Purge All Caches")}
         </button>
       {/if}
 
@@ -382,7 +383,7 @@
         class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-bg border border-border-default hover:bg-elevated-bg active:scale-95 disabled:opacity-50 transition-all text-text-primary"
       >
         <RefreshCw class="w-3.5 h-3.5 {isLoading || isPackagesLoading || isToolchainsLoading ? 'animate-spin' : ''}" />
-        Refresh
+        {t("Refresh")}
       </button>
     </div>
   </header>
@@ -395,28 +396,28 @@
         class="px-4 py-1.5 rounded-md text-xs font-semibold transition-all duration-150 cursor-pointer
           {activeSubTab === 'caches' ? 'bg-surface-bg border border-border-default text-accent shadow-sm' : 'text-text-secondary hover:text-text-primary border border-transparent'}"
       >
-        Developer Caches
+        {t("Developer Caches")}
       </button>
       <button
         onclick={() => activeSubTab = "packages"}
         class="px-4 py-1.5 rounded-md text-xs font-semibold transition-all duration-150 cursor-pointer
           {activeSubTab === 'packages' ? 'bg-surface-bg border border-border-default text-accent shadow-sm' : 'text-text-secondary hover:text-text-primary border border-transparent'}"
       >
-        Global CLI Packages
+        {t("Global CLI Packages")}
       </button>
       <button
         onclick={() => activeSubTab = "toolchains"}
         class="px-4 py-1.5 rounded-md text-xs font-semibold transition-all duration-150 cursor-pointer
           {activeSubTab === 'toolchains' ? 'bg-surface-bg border border-border-default text-accent shadow-sm' : 'text-text-secondary hover:text-text-primary border border-transparent'}"
       >
-        Toolchain Runtimes
+        {t("Toolchain Runtimes")}
       </button>
       <button
         onclick={() => activeSubTab = "extensions"}
         class="px-4 py-1.5 rounded-md text-xs font-semibold transition-all duration-150 cursor-pointer
           {activeSubTab === 'extensions' ? 'bg-surface-bg border border-border-default text-accent shadow-sm' : 'text-text-secondary hover:text-text-primary border border-transparent'}"
       >
-        IDE Extensions
+        {t("IDE Extensions")}
       </button>
     </div>
   </div>
@@ -429,7 +430,7 @@
       {#if isLoading}
         <div class="flex flex-col items-center justify-center h-64 gap-3">
           <RefreshCw class="w-8 h-8 text-accent animate-spin" />
-          <span class="text-sm text-text-muted font-mono">Analyzing local developer caches...</span>
+          <span class="text-sm text-text-muted font-mono">{t("Analyzing local developer caches...")}</span>
         </div>
       {:else}
         <!-- Stats Row -->
@@ -440,7 +441,7 @@
               <HardDrive class="w-5 h-5 text-accent" />
             </div>
             <div>
-              <span class="block text-[10px] text-text-muted font-mono uppercase tracking-wide">Total Cache</span>
+              <span class="block text-[10px] text-text-muted font-mono uppercase tracking-wide">{t("Total Cache")}</span>
               <span class="text-lg font-bold text-text-primary">{formatSize(totalCacheSize)}</span>
             </div>
           </div>
@@ -451,8 +452,8 @@
               <Terminal class="w-5 h-5 text-text-secondary" />
             </div>
             <div>
-              <span class="block text-[10px] text-text-muted font-mono uppercase tracking-wide">Tools Found</span>
-              <span class="text-lg font-bold text-text-primary">{detectedToolsCount} Detected</span>
+              <span class="block text-[10px] text-text-muted font-mono uppercase tracking-wide">{t("Tools Found")}</span>
+              <span class="text-lg font-bold text-text-primary">{t("{count} Detected", { count: detectedToolsCount })}</span>
             </div>
           </div>
 
@@ -462,22 +463,22 @@
               <AlertCircle class="w-5 h-5 text-danger" />
             </div>
             <div>
-              <span class="block text-[10px] text-text-muted font-mono uppercase tracking-wide">PATH Issues</span>
-              <span class="text-lg font-bold text-danger">{pathIssuesCount} Broken</span>
+              <span class="block text-[10px] text-text-muted font-mono uppercase tracking-wide">{t("PATH Issues")}</span>
+              <span class="text-lg font-bold text-danger">{t("{count} Broken", { count: pathIssuesCount })}</span>
             </div>
           </div>
         </div>
 
         <!-- Tools Grid -->
-        {#if tools.filter(t => t.detected).length === 0}
+        {#if tools.filter(x => x.detected).length === 0}
           <div class="p-8 text-center border border-dashed border-border-default rounded-lg bg-surface-bg/30 flex flex-col items-center justify-center py-16">
             <Terminal class="w-8 h-8 text-text-muted mb-3 animate-pulse" />
-            <span class="text-sm font-sans text-text-primary font-medium">No Developer Caches Detected</span>
-            <span class="text-xs text-text-muted mt-1 max-w-sm">We couldn't find any supported developer toolchains (like npm, cargo, docker, conda, etc.) in your system's PATH.</span>
+            <span class="text-sm font-sans text-text-primary font-medium">{t("No Developer Caches Detected")}</span>
+            <span class="text-xs text-text-muted mt-1 max-w-sm">{t("We couldn't find any supported developer toolchains (like npm, cargo, docker, conda, etc.) in your system's PATH.")}</span>
           </div>
         {:else}
           <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {#each tools.filter(t => t.detected) as tool}
+            {#each tools.filter(x => x.detected) as tool}
               <div class="border border-border-default hover:border-border-strong rounded-lg p-5 flex flex-col bg-surface-bg/50 transition-all duration-200 relative overflow-hidden group">
                 
                 <!-- Card Header -->
@@ -489,20 +490,20 @@
                     <div>
                       <h3 class="text-base font-bold font-sans capitalize text-text-primary">{tool.name}</h3>
                       <span class="text-[10px] font-mono text-success">
-                        Version {tool.version}
+                        {t("Version")} {tool.version}
                       </span>
                     </div>
                   </div>
                   
                   <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-success/10 text-success border border-success/20">
-                    Ready
+                    {t("Ready")}
                   </span>
                 </div>
 
                 <!-- Path details -->
                 <div class="mt-4 flex-1 space-y-2.5 text-xs">
                   <div class="space-y-1">
-                    <span class="text-text-muted font-mono text-[9px] uppercase tracking-wide">Cache Path</span>
+                    <span class="text-text-muted font-mono text-[9px] uppercase tracking-wide">{t("Cache Path")}</span>
                     <div class="flex items-center gap-1.5 text-text-secondary bg-app-bg p-2 rounded-lg border border-border-default font-mono text-[10px] select-all truncate" title={tool.cache_path}>
                       <FolderOpen class="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
                       <span class="truncate">{tool.cache_path}</span>
@@ -512,7 +513,7 @@
                   <div class="flex items-center justify-between bg-app-bg/50 p-3 rounded-lg border border-border-default">
                     <div class="flex items-center gap-2">
                       <HardDrive class="w-4 h-4 text-text-secondary" />
-                      <span class="text-text-secondary font-sans">Current Cache Size</span>
+                      <span class="text-text-secondary font-sans">{t("Current Cache Size")}</span>
                     </div>
                     <span class="text-sm font-bold font-mono text-accent">
                       {formatSize(tool.cache_size)}
@@ -529,10 +530,10 @@
                   >
                     {#if cleaningStates[tool.name]}
                       <RefreshCw class="w-3.5 h-3.5 animate-spin" />
-                      Cleaning...
+                      {t("Cleaning...")}
                     {:else}
                       <Trash2 class="w-3.5 h-3.5" />
-                      Purge Cache
+                      {t("Purge Cache")}
                     {/if}
                   </button>
                 </div>
@@ -549,24 +550,24 @@
           <div>
             <h3 class="text-sm font-bold text-text-primary flex items-center gap-2">
               <Terminal class="w-4 h-4 text-accent" />
-              Globally Installed CLI Packages
+              {t("Globally Installed CLI Packages")}
             </h3>
-            <span class="text-[10px] text-text-muted">Detected global packages across NPM, Yarn, PNPM, Bun registries</span>
+            <span class="text-[10px] text-text-muted">{t("Detected global packages across NPM, Yarn, PNPM, Bun registries")}</span>
           </div>
           
           <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-accent/10 text-accent border border-accent/20">
-            {globalPackages.length} Packages
+            {t("{count} Packages", { count: globalPackages.length })}
           </span>
         </div>
 
         {#if isPackagesLoading}
           <div class="flex items-center justify-center py-6 gap-2">
             <RefreshCw class="w-4 h-4 text-accent animate-spin" />
-            <span class="text-xs text-text-muted font-mono">Scanning global packages...</span>
+            <span class="text-xs text-text-muted font-mono">{t("Scanning global packages...")}</span>
           </div>
         {:else if globalPackages.length === 0}
           <p class="text-xs text-text-muted italic py-4 text-center font-sans">
-            No globally installed CLI packages detected in NPM, Yarn, PNPM, or Bun directories.
+            {t("No globally installed CLI packages detected in NPM, Yarn, PNPM, or Bun directories.")}
           </p>
         {:else}
           <div class="divide-y divide-border-default">
@@ -617,7 +618,7 @@
                     class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold bg-danger/10 hover:bg-danger text-danger hover:text-white transition-all duration-150 active:scale-95 border border-danger/20"
                   >
                     <Trash2 class="w-3 h-3" />
-                    Uninstall
+                    {t("Uninstall")}
                   </button>
                 </div>
               </div>
@@ -636,7 +637,7 @@
               <HardDrive class="w-5 h-5 text-accent" />
             </div>
             <div>
-              <span class="block text-[10px] text-text-muted font-mono uppercase tracking-wide">Total Runtime Space</span>
+              <span class="block text-[10px] text-text-muted font-mono uppercase tracking-wide">{t("Total Runtime Space")}</span>
               <span class="text-lg font-bold text-text-primary">{formatSize(totalToolchainsSize)}</span>
             </div>
           </div>
@@ -646,8 +647,8 @@
               <Cpu class="w-5 h-5 text-text-secondary" />
             </div>
             <div>
-              <span class="block text-[10px] text-text-muted font-mono uppercase tracking-wide">Runtimes Detected</span>
-              <span class="text-lg font-bold text-text-primary">{totalToolchainsCount} Versions</span>
+              <span class="block text-[10px] text-text-muted font-mono uppercase tracking-wide">{t("Runtimes Detected")}</span>
+              <span class="text-lg font-bold text-text-primary">{t("{count} Versions", { count: totalToolchainsCount })}</span>
             </div>
           </div>
         </div>
@@ -658,23 +659,23 @@
             <div>
               <h3 class="text-sm font-bold text-text-primary flex items-center gap-2">
                 <Cpu class="w-4 h-4 text-accent" />
-                Compiler & Runtime Versions
+                {t("Compiler & Runtime Versions")}
               </h3>
-              <span class="text-[10px] text-text-muted">Clean up old versions of Rustup, NVM, and FNM managers to free up storage</span>
+              <span class="text-[10px] text-text-muted">{t("Clean up old versions of Rustup, NVM, and FNM managers to free up storage")}</span>
             </div>
             <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-accent/10 text-accent border border-accent/20 font-mono">
-              {toolchains.length} Versions
+              {t("{count} Versions", { count: toolchains.length })}
             </span>
           </div>
 
           {#if isToolchainsLoading}
             <div class="flex items-center justify-center py-6 gap-2">
               <RefreshCw class="w-4 h-4 text-accent animate-spin" />
-              <span class="text-xs text-text-muted font-mono">Scanning toolchain runtimes...</span>
+              <span class="text-xs text-text-muted font-mono">{t("Scanning toolchain runtimes...")}</span>
             </div>
           {:else if toolchains.length === 0}
             <p class="text-xs text-text-muted italic py-4 text-center font-sans">
-              No installed compiler toolchains detected (Rustup, NVM, or FNM).
+              {t("No installed compiler toolchains detected (Rustup, NVM, or FNM).")}
             </p>
           {:else}
             <div class="divide-y divide-border-default">
@@ -698,7 +699,7 @@
                         
                         {#if tc.is_active}
                           <span class="text-[9px] bg-success/15 border border-success/35 text-success px-1.5 py-0.5 rounded font-mono font-semibold">
-                            Active
+                            {t("Active")}
                           </span>
                         {/if}
                       </div>
@@ -715,10 +716,10 @@
                     >
                       {#if uninstallingToolchains[tc.path]}
                         <RefreshCw class="w-3 h-3 animate-spin" />
-                        Uninstalling...
+                        {t("Uninstalling...")}
                       {:else}
                         <Trash2 class="w-3 h-3" />
-                        Uninstall
+                        {t("Uninstall")}
                       {/if}
                     </button>
                   </div>
@@ -735,21 +736,21 @@
           <div>
             <h3 class="text-sm font-bold text-text-primary flex items-center gap-2">
               <Terminal class="w-4 h-4 text-accent" />
-              IDE Extensions
+              {t("IDE Extensions")}
             </h3>
             <span class="text-[11px] text-text-muted">
-              VS Code, Cursor, Windsurf and JetBrains plugin inventories
+              {t("VS Code, Cursor, Windsurf and JetBrains plugin inventories")}
             </span>
           </div>
           <div class="flex items-center gap-3">
             <span class="text-xs font-mono text-text-secondary">
-              {extensions.length} extensions · {formatSize(totalExtensionsSize)}
+              {t("{count} extensions · {size}", { count: extensions.length, size: formatSize(totalExtensionsSize) })}
             </span>
             <button
               onclick={loadExtensions}
               disabled={isExtensionsLoading}
               class="p-1.5 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg transition-colors"
-              aria-label="Refresh IDE extensions"
+              aria-label={t("Refresh IDE extensions")}
             >
               <RefreshCw class="w-3.5 h-3.5 text-text-secondary {isExtensionsLoading ? 'animate-spin text-accent' : ''}" />
             </button>
@@ -759,11 +760,11 @@
         {#if isExtensionsLoading}
           <div class="flex items-center justify-center py-8 gap-2">
             <RefreshCw class="w-4 h-4 text-accent animate-spin" />
-            <span class="text-xs text-text-muted font-mono">Scanning IDE extension folders...</span>
+            <span class="text-xs text-text-muted font-mono">{t("Scanning IDE extension folders...")}</span>
           </div>
         {:else if extensions.length === 0}
           <div class="py-8 text-center text-xs text-text-muted border border-dashed border-border-default rounded-lg">
-            No IDE extensions detected in the common VS Code/JetBrains locations.
+            {t("No IDE extensions detected in the common VS Code/JetBrains locations.")}
           </div>
         {:else}
           <div class="divide-y divide-border-default max-h-[520px] overflow-y-auto pr-1">
@@ -783,9 +784,9 @@
                 <button
                   onclick={() => openPath(extension.path)}
                   class="px-2.5 py-1.5 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-text-secondary hover:text-text-primary text-[10px] font-semibold transition-colors"
-                  aria-label="Open {extension.name} folder"
+                  aria-label={t("Open {name} folder", { name: extension.name })}
                 >
-                  Open
+                  {t("Open")}
                 </button>
               </div>
             {/each}
@@ -805,9 +806,9 @@
       <header class="p-6 border-b border-border-default flex items-center justify-between">
         <div>
           <h3 class="text-base font-bold text-text-primary">
-            Deep Clean remnants for: <span class="text-accent">{activePackage.name}</span>
+            {t("Deep Clean remnants for:")} <span class="text-accent">{activePackage.name}</span>
           </h3>
-          <p class="text-xs text-text-muted mt-1">Review files, directories, and configuration settings to be permanently purged.</p>
+          <p class="text-xs text-text-muted mt-1">{t("Review files, directories, and configuration settings to be permanently purged.")}</p>
         </div>
         <button
           onclick={closeRemnantsModal}
@@ -825,7 +826,7 @@
               <Trash2 class="w-5 h-5 text-accent animate-pulse" />
             </div>
             <div>
-              <h4 class="text-sm font-bold text-text-primary">Official Uninstaller Running</h4>
+              <h4 class="text-sm font-bold text-text-primary">{t("Official Uninstaller Running")}</h4>
               <p class="text-xs text-text-muted mt-2 max-w-sm leading-relaxed font-sans">{uninstallStatusText}</p>
             </div>
           </div>
@@ -833,7 +834,7 @@
           <div class="flex flex-col items-center justify-center py-12 gap-4 text-center animate-fade-in">
             <RefreshCw class="w-8 h-8 text-accent animate-spin" />
             <div>
-              <h4 class="text-sm font-bold text-text-primary">Scanning Leftover Traces</h4>
+              <h4 class="text-sm font-bold text-text-primary">{t("Scanning Leftover Traces")}</h4>
               <p class="text-xs text-text-muted mt-2 max-w-sm leading-relaxed font-sans">{uninstallStatusText}</p>
             </div>
           </div>
@@ -844,11 +845,11 @@
                 <Trash2 class="w-5 h-5" />
               </div>
               <div>
-                <h4 class="text-sm font-bold text-text-primary">Purge Completed!</h4>
+                <h4 class="text-sm font-bold text-text-primary">{t("Purge Completed!")}</h4>
                 <p class="text-xs text-text-muted mt-1">
-                  Successfully removed <b class="text-success">{purgeResult.success}</b> remnants.
+                  {t("Successfully removed")} <b class="text-success">{purgeResult.success}</b> {t("remnants.")}
                   {#if purgeResult.fail > 0}
-                    <span class="text-danger">Failed to remove {purgeResult.fail} items (locked or permission issue).</span>
+                    <span class="text-danger">{t("Failed to remove {count} items (locked or permission issue).", { count: purgeResult.fail })}</span>
                   {/if}
                 </p>
               </div>
@@ -858,8 +859,8 @@
           {#if remnants.length === 0}
             {#if !purgeResult}
               <div class="p-8 text-center border border-dashed border-border-default rounded-lg bg-surface-bg/30 flex flex-col items-center justify-center">
-                <span class="text-sm font-sans text-text-primary font-medium">No Remnants Detected!</span>
-                <span class="text-xs text-text-muted mt-1">This package was successfully uninstalled without leaving residual traces.</span>
+                <span class="text-sm font-sans text-text-primary font-medium">{t("No Remnants Detected!")}</span>
+                <span class="text-xs text-text-muted mt-1">{t("This package was successfully uninstalled without leaving residual traces.")}</span>
               </div>
             {/if}
           {:else}
@@ -870,18 +871,18 @@
                   onclick={() => selectAll(true)}
                   class="text-accent hover:text-accent-hover font-semibold"
                 >
-                  Select All
+                  {t("Select All")}
                 </button>
                 <span class="text-border-default">|</span>
                 <button
                   onclick={() => selectAll(false)}
                   class="text-text-secondary hover:text-text-primary font-semibold"
                 >
-                  Deselect All
+                  {t("Deselect All")}
                 </button>
               </div>
               <span class="text-text-muted font-mono">
-                {remnants.filter(r => selectedRemnants[r.path]).length} of {remnants.length} items selected
+                {t("{selected} of {total} items selected", { selected: remnants.filter(r => selectedRemnants[r.path]).length, total: remnants.length })}
               </span>
             </div>
 
@@ -941,14 +942,14 @@
       {#if !purgeResult && remnants.length > 0}
         <footer class="p-6 border-t border-border-default flex justify-between items-center bg-sidebar-bg">
           <span class="text-xs font-mono text-text-secondary">
-            Total selected: <b class="text-accent">{formatSize(remnants.filter(r => selectedRemnants[r.path]).reduce((acc, curr) => acc + curr.size, 0))}</b>
+            {t("Total selected:")} <b class="text-accent">{formatSize(remnants.filter(r => selectedRemnants[r.path]).reduce((acc, curr) => acc + curr.size, 0))}</b>
           </span>
           <div class="flex gap-3">
             <button
               onclick={closeRemnantsModal}
               class="px-4 py-2 rounded-lg text-xs font-semibold bg-surface-bg border border-border-default hover:bg-elevated-bg text-text-secondary hover:text-text-primary transition-all"
             >
-              Cancel
+              {t("Cancel")}
             </button>
             <button
               onclick={performPurge}
@@ -957,10 +958,10 @@
             >
               {#if isPurging}
                 <RefreshCw class="w-3.5 h-3.5 animate-spin" />
-                Purging remnants...
+                {t("Purging remnants...")}
               {:else}
                 <Trash2 class="w-3.5 h-3.5" />
-                Purge Selected Remnants
+                {t("Purge Selected Remnants")}
               {/if}
             </button>
           </div>
@@ -971,7 +972,7 @@
             onclick={closeRemnantsModal}
             class="px-5 py-2 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white active:scale-95 transition-all shadow"
           >
-            Close
+            {t("Close")}
           </button>
         </footer>
       {/if}

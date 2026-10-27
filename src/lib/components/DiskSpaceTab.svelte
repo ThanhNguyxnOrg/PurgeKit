@@ -6,6 +6,7 @@
   import { FolderOpen, Play, Square, HardDrive, File, Folder, Search, X, ArrowUp, ArrowDown, Upload, Save, History } from "@lucide/svelte";
   import { toast } from "../toast.svelte";
   import { theme } from "../theme.svelte";
+  import { t } from "$lib/i18n.svelte";
 
   interface DiskTreeNode {
     name: string;
@@ -249,7 +250,7 @@
   );
 
   let fileSortLabel = $derived(
-    fileSort === "size" ? "size" : fileSort === "modified" ? "newest" : "name"
+    fileSort === "size" ? t("size") : fileSort === "modified" ? t("newest") : t("name")
   );
 
   let isSearchActive = $derived(
@@ -511,7 +512,7 @@
       .map((value) => value.trim())
       .filter(Boolean);
     if (targets.length === 0) {
-      toast.show("Enter a drive or folder path first.", "warning");
+      toast.show(t("Enter a drive or folder path first."), "warning");
       return;
     }
     saveDiskPreferences();
@@ -550,16 +551,19 @@
       focusNode = scanResult.root;
       activeView = "treemap";
       toast.show(
-        `Scanned ${scanResult.total_files.toLocaleString()} files in ${(scanResult.elapsed_ms / 1000).toFixed(1)}s.`,
+        t("Scanned {count} files in {seconds}s.", {
+          count: scanResult.total_files.toLocaleString(),
+          seconds: (scanResult.elapsed_ms / 1000).toFixed(1),
+        }),
         "success"
       );
     } catch (e: any) {
       const message = e.toString();
       if (message.toLowerCase().includes("cancelled")) {
-        errorMessage = "Scan cancelled.";
+        errorMessage = t("Scan cancelled.");
       } else {
         errorMessage = message;
-        toast.show(`Disk scan failed: ${message}`, "error");
+        toast.show(t("Disk scan failed: {message}", { message }), "error");
       }
     } finally {
       isScanning = false;
@@ -587,7 +591,7 @@
     input.value = "";
     if (!file) return;
     if (file.size > 256 * 1024 * 1024) {
-      toast.show("CSV is larger than 256 MB. Export a narrower subtree.", "warning");
+      toast.show(t("CSV is larger than 256 MB. Export a narrower subtree."), "warning");
       return;
     }
 
@@ -616,13 +620,16 @@
       pathInput = scanResult.root_path;
       saveDiskPreferences();
       toast.show(
-        `Imported ${scanResult.total_files.toLocaleString()} files from ${file.name}. This snapshot is read-only.`,
+        t("Imported {count} files from {name}. This snapshot is read-only.", {
+          count: scanResult.total_files.toLocaleString(),
+          name: file.name,
+        }),
         "success"
       );
     } catch (e: any) {
       const message = e.toString();
       errorMessage = message;
-      toast.show(`CSV import failed: ${message}`, "error");
+      toast.show(t("CSV import failed: {message}", { message }), "error");
     } finally {
       isImporting = false;
     }
@@ -663,18 +670,20 @@
   async function dumpMft() {
     if (isScanning || isImporting) return;
     if (scanTargets.length !== 1) {
-      toast.show("MFT dumps support one drive or folder at a time.", "warning");
+      toast.show(t("MFT dumps support one drive or folder at a time."), "warning");
       return;
     }
     if (!isAdmin) {
-      toast.show("Restart PurgeKit as Administrator to dump the MFT.", "warning");
+      toast.show(t("Restart PurgeKit as Administrator to dump the MFT."), "warning");
       return;
     }
     const target = scanTargets[0];
     const confirmed = confirm(
-      `Dump the $MFT for ${target}?\n\n` +
-      `This reads the live NTFS Master File Table, which can take a while on large volumes. ` +
-      `The dump is stored under %APPDATA%\\PurgeKit\\mft_dumps and can be loaded later without Administrator.`
+      t("Dump the $MFT for {target}?", { target }) +
+      "\n\n" +
+      t("This reads the live NTFS Master File Table, which can take a while on large volumes. The dump is stored under {path} and can be loaded later without Administrator.", {
+        path: "%APPDATA%\\PurgeKit\\mft_dumps",
+      })
     );
     if (!confirmed) return;
 
@@ -699,14 +708,17 @@
       activeView = "treemap";
       const dumpName = response.dump_path.split(/[\\/]/).pop() || response.dump_path;
       toast.show(
-        `Scanned ${scanResult.total_files.toLocaleString()} files and saved ${dumpName}.`,
+        t("Scanned {count} files and saved {name}.", {
+          count: scanResult.total_files.toLocaleString(),
+          name: dumpName,
+        }),
         "success"
       );
       await loadMftDumps();
     } catch (e: any) {
       const message = e.toString();
       errorMessage = message;
-      toast.show(`MFT dump failed: ${message}`, "error");
+      toast.show(t("MFT dump failed: {message}", { message }), "error");
     } finally {
       isScanning = false;
       isCancelling = false;
@@ -716,8 +728,9 @@
   async function loadSavedDump(dump: MftDumpInfo) {
     if (isScanning) return;
     const confirmed = confirm(
-      `Load ${dump.name}?\n\n` +
-      `This is a read-only snapshot. Quarantine and cleanup are disabled until you rescan the drive.`
+      t("Load {name}?", { name: dump.name }) +
+      "\n\n" +
+      t("This is a read-only snapshot. Quarantine and cleanup are disabled until you rescan the drive.")
     );
     if (!confirmed) return;
 
@@ -743,13 +756,16 @@
       showMftDumps = false;
       saveDiskPreferences();
       toast.show(
-        `Loaded ${scanResult.total_files.toLocaleString()} files from ${dump.name}. This snapshot is read-only.`,
+        t("Loaded {count} files from {name}. This snapshot is read-only.", {
+          count: scanResult.total_files.toLocaleString(),
+          name: dump.name,
+        }),
         "success"
       );
     } catch (e: any) {
       const message = e.toString();
       errorMessage = message;
-      toast.show(`Could not load MFT dump: ${message}`, "error");
+      toast.show(t("Could not load MFT dump: {message}", { message }), "error");
     } finally {
       isScanning = false;
       isCancelling = false;
@@ -762,7 +778,7 @@
       const directory = await invoke<string>("get_mft_dump_dir");
       await openPath(directory);
     } catch (e: any) {
-      toast.show(`Could not open the dump folder: ${e.toString()}`, "error");
+      toast.show(t("Could not open the dump folder: {message}", { message: e.toString() }), "error");
     }
   }
 
@@ -903,7 +919,7 @@
       context.fillStyle = "#8a94a3";
       context.font = "13px system-ui, Segoe UI, sans-serif";
       context.textAlign = "center";
-      context.fillText("No deeper detail for this folder.", width / 2, height / 2 - 8);
+      context.fillText(t("No deeper detail for this folder."), width / 2, height / 2 - 8);
       context.font = "11px ui-monospace, Consolas, monospace";
       context.fillText(node.path, width / 2, height / 2 + 14, width - 32);
       layoutRects = [];
@@ -1037,7 +1053,7 @@
 
   function exportTopFilesCsv() {
     if (!result || displayFiles.length === 0) {
-      toast.show("No files to export for this filter.", "warning");
+      toast.show(t("No files to export for this filter."), "warning");
       return;
     }
 
@@ -1094,12 +1110,15 @@
       URL.revokeObjectURL(url);
       toast.show(
         exported.truncated
-          ? `Exported ${exported.exported.toLocaleString()} of ${exported.total.toLocaleString()} files (100k cap).`
-          : `Exported ${exported.exported.toLocaleString()} files.`,
+          ? t("Exported {count} of {total} files (100k cap).", {
+              count: exported.exported.toLocaleString(),
+              total: exported.total.toLocaleString(),
+            })
+          : t("Exported {count} files.", { count: exported.exported.toLocaleString() }),
         exported.truncated ? "warning" : "success"
       );
     } catch (e: any) {
-      toast.show(`Export failed: ${e.toString()}`, "error");
+      toast.show(t("Export failed: {message}", { message: e.toString() }), "error");
     }
   }
 
@@ -1109,7 +1128,7 @@
 
   function toggleDuplicateFile(group: DuplicateGroup, file: DiskFile) {
     if (!duplicateSelection[file.path] && duplicatesSelectedInGroup(group) >= group.file_count - 1) {
-      toast.show("Keep at least one copy in each duplicate group.", "warning");
+      toast.show(t("Keep at least one copy in each duplicate group."), "warning");
       return;
     }
     duplicateSelection[file.path] = !duplicateSelection[file.path];
@@ -1128,7 +1147,7 @@
   async function quarantineSelectedDuplicates() {
     if (!result || selectedDuplicateCount === 0 || isQuarantining) return;
     if (isSnapshotView) {
-      toast.show("Snapshots are read-only. Rescan the drive to clean files.", "warning");
+      toast.show(t("Snapshots are read-only. Rescan the drive to clean files."), "warning");
       return;
     }
 
@@ -1140,9 +1159,12 @@
       0
     );
     const confirmed = confirm(
-      `Quarantine ${selected.length} duplicate copies (${formatBytes(bytes)} reclaimable)?\n\n` +
-      `Copies are moved to PurgeKit quarantine when backup is enabled; otherwise they are deleted permanently. ` +
-      `At least one copy of each group stays in place. The scan will refresh afterwards.`
+      t("Quarantine {count} duplicate copies ({size} reclaimable)?", {
+        count: selected.length,
+        size: formatBytes(bytes),
+      }) +
+      "\n\n" +
+      t("Copies are moved to PurgeKit quarantine when backup is enabled; otherwise they are deleted permanently. At least one copy of each group stays in place. The scan will refresh afterwards.")
     );
     if (!confirmed) return;
 
@@ -1168,8 +1190,11 @@
     isQuarantining = false;
     toast.show(
       failed > 0
-        ? `Quarantined ${selected.length - failed} copies; ${failed} failed. Refreshing scan…`
-        : `Quarantined ${selected.length} copies. Refreshing scan…`,
+        ? t("Quarantined {ok} copies; {failed} failed. Refreshing scan…", {
+            ok: selected.length - failed,
+            failed,
+          })
+        : t("Quarantined {count} copies. Refreshing scan…", { count: selected.length }),
       failed > 0 ? "warning" : "success"
     );
 
@@ -1181,22 +1206,23 @@
     const node = selectedNode;
     if (!node || !result) return;
     if (isSnapshotView) {
-      toast.show("Snapshots are read-only. Rescan the drive to clean files.", "warning");
+      toast.show(t("Snapshots are read-only. Rescan the drive to clean files."), "warning");
       return;
     }
     const protectedRoots = result.protected_roots?.length
       ? result.protected_roots
       : [result.root_path];
     if (protectedRoots.some((root) => root.toLowerCase() === node.path.toLowerCase())) {
-      toast.show("Select a child folder or file first; scan roots are protected.", "warning");
+      toast.show(t("Select a child folder or file first; scan roots are protected."), "warning");
       return;
     }
 
     const confirmed = confirm(
-      `Quarantine "${node.name}"?\n\n` +
-      `${node.path}\n\n` +
-      `The item is moved to PurgeKit quarantine and can be restored from Settings. ` +
-      `The scan result will be cleared.`
+      t('Quarantine "{name}"?', { name: node.name }) +
+      "\n\n" +
+      node.path +
+      "\n\n" +
+      t("The item is moved to PurgeKit quarantine and can be restored from Settings. The scan result will be cleared.")
     );
     if (!confirmed) return;
 
@@ -1213,13 +1239,15 @@
 
       if (response.fail > 0) {
         toast.show(
-          `Quarantine failed: ${response.errors?.[0] || "see logs"}`,
+          t("Quarantine failed: {message}", {
+            message: response.errors?.[0] || t("see logs"),
+          }),
           "error"
         );
         return;
       }
 
-      toast.show(`Quarantined ${node.name}.`, "success");
+      toast.show(t("Quarantined {name}.", { name: node.name }), "success");
       result = null;
       focusNode = null;
       focusStack = [];
@@ -1229,7 +1257,7 @@
       layoutRects = [];
       duplicateSelection = {};
     } catch (e: any) {
-      toast.show(`Quarantine failed: ${e.toString()}`, "error");
+      toast.show(t("Quarantine failed: {message}", { message: e.toString() }), "error");
     } finally {
       isQuarantining = false;
     }
@@ -1245,7 +1273,7 @@
     const node = selectedNode || focusNode;
     if (!node) return;
     if (node.path.startsWith("::")) {
-      toast.show("Select one of the scanned roots to open it in Explorer.", "warning");
+      toast.show(t("Select one of the scanned roots to open it in Explorer."), "warning");
       return;
     }
     const folder = node.is_dir
@@ -1254,7 +1282,7 @@
     try {
       await openPath(folder);
     } catch (e: any) {
-      toast.show(`Could not open folder: ${e.toString()}`, "error");
+      toast.show(t("Could not open folder: {message}", { message: e.toString() }), "error");
     }
   }
 
@@ -1263,7 +1291,7 @@
     try {
       await openPath(folder);
     } catch (e: any) {
-      toast.show(`Could not open folder: ${e.toString()}`, "error");
+      toast.show(t("Could not open folder: {message}", { message: e.toString() }), "error");
     }
   }
 
@@ -1331,10 +1359,10 @@
       <div>
         <h2 class="text-2xl font-bold font-sans text-text-primary flex items-center gap-2">
           <HardDrive class="w-6 h-6 text-accent" />
-          Disk Space
+          {t("Disk Space")}
         </h2>
         <p class="text-xs text-text-muted mt-1">
-          Fast folder scan with allocated size, tree map, largest files and file types.
+          {t("Fast folder scan with allocated size, tree map, largest files and file types.")}
         </p>
       </div>
       <div class="flex items-center gap-2">
@@ -1353,17 +1381,17 @@
             class="px-3 py-2 rounded-lg bg-danger/10 hover:bg-danger text-danger hover:text-white border border-danger/20 text-xs font-semibold transition-all disabled:opacity-40"
           >
             <Square class="w-3.5 h-3.5 inline mr-1" />
-            {isCancelling ? "Stopping…" : "Cancel"}
+            {isCancelling ? t("Stopping…") : t("Cancel")}
           </button>
         {:else}
           <button
             onclick={openCsvPicker}
             disabled={isImporting}
-            title="Load a PurgeKit or WizTree CSV export as a read-only tree"
+            title={t("Load a PurgeKit or WizTree CSV export as a read-only tree")}
             class="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-text-secondary hover:text-text-primary text-xs font-semibold transition-colors disabled:opacity-40"
           >
             <Upload class="w-3.5 h-3.5" />
-            {isImporting ? "Importing…" : "Import CSV"}
+            {isImporting ? t("Importing…") : t("Import CSV")}
           </button>
           <button
             onclick={scanDisk}
@@ -1371,7 +1399,9 @@
             class="flex items-center gap-2 px-4 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-xs font-semibold transition-all active:scale-95 disabled:opacity-40"
           >
             <Play class="w-3.5 h-3.5" />
-            {scanTargets.length > 1 ? `Scan ${scanTargets.length} paths` : "Scan"}
+            {scanTargets.length > 1
+              ? t("Scan {count} paths", { count: scanTargets.length })
+              : t("Scan")}
           </button>
         {/if}
       </div>
@@ -1382,8 +1412,8 @@
         <input
           bind:value={pathInput}
           onkeydown={(event) => event.key === "Enter" && !isScanning && scanDisk()}
-          placeholder="C:\ or D:\Code; E:\Games"
-          aria-label="Drives or folders to scan, separated by semicolons"
+          placeholder={t("C:\\ or D:\\Code; E:\\Games")}
+          aria-label={t("Drives or folders to scan, separated by semicolons")}
           class="w-full px-3 py-2 rounded-lg bg-surface-bg border border-border-default focus:border-accent/50 focus:ring-1 focus:ring-accent/30 outline-none text-sm font-mono text-text-primary placeholder:text-text-muted"
         />
       </div>
@@ -1392,13 +1422,17 @@
           <button
             onclick={() => { pathInput = `${drive.letter}:\\`; scanDisk(); }}
             disabled={isScanning || isImporting}
-            title="{drive.label || 'Local Disk'} · {formatBytes(drive.free_bytes)} free of {formatBytes(drive.total_bytes)}"
-            aria-label="Scan drive {drive.letter}:"
+            title={t("{label} · {free} free of {total}", {
+              label: drive.label || t("Local Disk"),
+              free: formatBytes(drive.free_bytes),
+              total: formatBytes(drive.total_bytes),
+            })}
+            aria-label={t("Scan drive {letter}:", { letter: drive.letter })}
             class="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-[11px] font-semibold text-text-secondary disabled:opacity-40 transition-colors"
           >
             <HardDrive class="w-3.5 h-3.5 text-text-muted" aria-hidden="true" />
             <span class="font-mono text-text-primary">{drive.letter}:</span>
-            <span class="font-mono text-text-muted">{formatBytes(drive.free_bytes)} free</span>
+            <span class="font-mono text-text-muted">{t("{size} free", { size: formatBytes(drive.free_bytes) })}</span>
           </button>
         {:else}
           <button
@@ -1410,17 +1444,17 @@
           </button>
         {/each}
         <label class="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-bg border border-border-default text-xs font-semibold text-text-secondary">
-          Duplicates
+          {t("Duplicates")}
           <select
             bind:value={duplicateMode}
             onchange={saveDiskPreferences}
             disabled={isScanning || isImporting}
-            aria-label="Duplicate comparison mode"
+            aria-label={t("Duplicate comparison mode")}
             class="bg-transparent text-[11px] font-mono text-text-primary outline-none cursor-pointer disabled:opacity-40"
           >
-            <option value="off">Off</option>
-            <option value="name_size">Name + size</option>
-            <option value="name_size_date">Name + size + date</option>
+            <option value="off">{t("Off")}</option>
+            <option value="name_size">{t("Name + size")}</option>
+            <option value="name_size_date">{t("Name + size + date")}</option>
           </select>
         </label>
         <div class="flex items-center gap-2 sm:ml-auto">
@@ -1428,12 +1462,12 @@
             onclick={dumpMft}
             disabled={isScanning || isImporting || !isAdmin}
             title={isAdmin
-              ? "Dump the live NTFS Master File Table for this target"
-              : "Restart PurgeKit as Administrator to dump the MFT"}
+              ? t("Dump the live NTFS Master File Table for this target")
+              : t("Restart PurgeKit as Administrator to dump the MFT")}
             class="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-[11px] font-semibold text-text-secondary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             <Save class="w-3.5 h-3.5" />
-            Dump MFT
+            {t("Dump MFT")}
           </button>
           <button
             onclick={toggleMftDumps}
@@ -1441,7 +1475,7 @@
             class="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-[11px] font-semibold text-text-secondary disabled:opacity-40 transition-colors"
           >
             <History class="w-3.5 h-3.5" />
-            Load dump
+            {t("Load dump")}
             {#if mftDumps.length > 0}
               <span class="font-mono text-text-muted">({mftDumps.length})</span>
             {/if}
@@ -1453,14 +1487,14 @@
     {#if showMftDumps}
       <div class="p-3 rounded-lg border border-border-default bg-surface-bg/40 space-y-2">
         <div class="flex items-center justify-between gap-2">
-          <span class="text-[11px] font-mono uppercase tracking-wider text-text-muted">Saved MFT dumps</span>
+          <span class="text-[11px] font-mono uppercase tracking-wider text-text-muted">{t("Saved MFT dumps")}</span>
           <div class="flex items-center gap-1.5">
             <button
               onclick={loadMftDumps}
               disabled={isLoadingMftDumps}
               class="p-1.5 rounded-md bg-surface-bg border border-border-default hover:bg-elevated-bg text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
-              title="Refresh dump list"
-              aria-label="Refresh MFT dump list"
+              title={t("Refresh dump list")}
+              aria-label={t("Refresh MFT dump list")}
             >
               <History class="w-3.5 h-3.5 {isLoadingMftDumps ? 'animate-pulse text-accent' : ''}" />
             </button>
@@ -1468,13 +1502,13 @@
               onclick={openMftDumpFolder}
               class="px-2 py-1.5 rounded-md bg-surface-bg border border-border-default hover:bg-elevated-bg text-[10px] font-semibold text-text-muted hover:text-text-primary transition-colors"
             >
-              Open folder
+              {t("Open folder")}
             </button>
             <button
               onclick={() => showMftDumps = false}
               class="p-1.5 rounded-md text-text-muted hover:text-text-primary transition-colors"
-              title="Hide dump list"
-              aria-label="Hide MFT dump list"
+              title={t("Hide dump list")}
+              aria-label={t("Hide MFT dump list")}
             >
               <X class="w-3.5 h-3.5" />
             </button>
@@ -1482,7 +1516,7 @@
         </div>
         {#if mftDumps.length === 0}
           <p class="text-[11px] text-text-muted py-1">
-            No dumps yet. Run as Administrator and select a single drive or folder, then choose Dump MFT.
+            {t("No dumps yet. Run as Administrator and select a single drive or folder, then choose Dump MFT.")}
           </p>
         {:else}
           <div class="space-y-1 max-h-48 overflow-y-auto">
@@ -1491,7 +1525,7 @@
                 <div class="flex flex-col min-w-0">
                   <span class="text-[11px] font-mono text-text-primary truncate" title={dump.path}>{dump.name}</span>
                   <span class="text-[10px] text-text-muted font-mono">
-                    {formatBytes(dump.size_bytes)} · {dump.modified_epoch_ms ? formatModified(dump.modified_epoch_ms) : "unknown date"}
+                    {formatBytes(dump.size_bytes)} · {dump.modified_epoch_ms ? formatModified(dump.modified_epoch_ms) : t("unknown date")}
                   </span>
                 </div>
                 <button
@@ -1499,7 +1533,7 @@
                   disabled={isScanning || loadingDumpPath === dump.path}
                   class="px-2.5 py-1.5 rounded-md bg-accent/10 hover:bg-accent hover:text-white border border-accent/20 text-accent text-[10px] font-semibold transition-colors disabled:opacity-40"
                 >
-                  {loadingDumpPath === dump.path ? "Loading…" : "Load"}
+                  {loadingDumpPath === dump.path ? t("Loading…") : t("Load")}
                 </button>
               </div>
             {/each}
@@ -1511,9 +1545,15 @@
     {#if isScanning}
       <div class="p-3 rounded-lg bg-accent/5 border border-accent/15 text-xs">
         <div class="flex items-center justify-between gap-3">
-          <span class="text-text-secondary">Scanning…</span>
+          <span class="text-text-secondary">{t("Scanning…")}</span>
           <span class="font-mono text-accent">
-            {progress ? `${progress.files.toLocaleString()} files · ${progress.dirs.toLocaleString()} dirs · ${formatBytes(progress.bytes)}` : "starting"}
+            {progress
+              ? t("{files} files · {dirs} dirs · {size}", {
+                  files: progress.files.toLocaleString(),
+                  dirs: progress.dirs.toLocaleString(),
+                  size: formatBytes(progress.bytes),
+                })
+              : t("starting")}
           </span>
         </div>
         <div class="h-1 bg-border-default rounded-full overflow-hidden mt-2">
@@ -1536,15 +1576,15 @@
     {#if result}
       <div class="instrument-panel grid grid-cols-2 lg:grid-cols-5 divide-x divide-y lg:divide-y-0 divide-border-default overflow-hidden">
         <div class="px-4 py-3.5">
-          <span class="readout-label">Allocated</span>
+          <span class="readout-label">{t("Allocated")}</span>
           <p class="readout text-2xl font-semibold text-data-cyan mt-1">{formatBytes(result.total_allocated)}</p>
         </div>
         <div class="px-4 py-3.5">
-          <span class="readout-label">Logical</span>
+          <span class="readout-label">{t("Logical")}</span>
           <p class="readout text-2xl font-semibold text-text-primary mt-1">{formatBytes(result.total_size)}</p>
         </div>
         <div class="px-4 py-3.5">
-          <span class="readout-label">Files / folders</span>
+          <span class="readout-label">{t("Files / folders")}</span>
           <p class="readout text-2xl font-semibold text-text-primary mt-1">
             {result.total_files.toLocaleString()}
             <span class="text-base text-text-muted"> / {result.total_dirs.toLocaleString()}</span>
@@ -1552,19 +1592,19 @@
         </div>
         <div class="px-4 py-3.5">
           <span class="readout-label">
-            {result.engine === "csv" ? "Import time" : result.engine === "mft-dump" ? "Load time" : "Scan time"}
+            {result.engine === "csv" ? t("Import time") : result.engine === "mft-dump" ? t("Load time") : t("Scan time")}
           </span>
           <p class="readout text-2xl font-semibold text-text-primary mt-1">
             {(result.elapsed_ms / 1000).toFixed(2)}<span class="text-base text-text-muted">s</span>
           </p>
           {#if result.errors > 0}
-            <p class="text-[11px] text-warning mt-1">{result.errors} entries skipped</p>
+            <p class="text-[11px] text-warning mt-1">{t("{count} entries skipped", { count: result.errors })}</p>
           {/if}
         </div>
         <div class="px-4 py-3.5">
-          <span class="readout-label">Volume free</span>
+          <span class="readout-label">{t("Volume free")}</span>
           <p class="readout text-2xl font-semibold text-data-green mt-1">{formatBytes(result.volume_free_bytes)}</p>
-          <p class="text-[11px] text-text-muted mt-1">of {formatBytes(result.volume_total_bytes)}</p>
+          <p class="text-[11px] text-text-muted mt-1">{t("of {size}", { size: formatBytes(result.volume_total_bytes) })}</p>
         </div>
       </div>
 
@@ -1578,26 +1618,26 @@
                 ? 'bg-accent/10 text-accent border-accent/30'
                 : 'bg-surface-bg text-text-muted border-border-default'}">
           {result.engine === "mft"
-            ? "MFT FAST SCAN"
+            ? t("MFT FAST SCAN")
             : result.engine === "csv"
-              ? "CSV IMPORT"
+              ? t("CSV IMPORT")
               : result.engine === "mft-dump"
-                ? "MFT DUMP"
+                ? t("MFT DUMP")
                 : result.engine === "multi"
-                  ? "MULTI-ROOT"
-                  : "TRAVERSAL FALLBACK"}
+                  ? t("MULTI-ROOT")
+                  : t("TRAVERSAL FALLBACK")}
         </span>
         {#if isSnapshotView}
           <span class="text-text-muted">
-            Read-only snapshot. Quarantine and cleanup are disabled until you rescan the drive.
+            {t("Read-only snapshot. Quarantine and cleanup are disabled until you rescan the drive.")}
           </span>
         {:else if result.engine === "traversal" && isDriveRoot(primaryScanTarget)}
           <span class="text-warning">
-            MFT unavailable for this drive/session. Run as Administrator on local NTFS for the fast path.
+            {t("MFT unavailable for this drive/session. Run as Administrator on local NTFS for the fast path.")}
           </span>
         {/if}
         {#if result.truncated}
-          <span class="text-text-muted">Tree truncated; top files/types still cover the full scan.</span>
+          <span class="text-text-muted">{t("Tree truncated; top files/types still cover the full scan.")}</span>
         {/if}
       </div>
 
@@ -1606,25 +1646,25 @@
           onclick={() => activeView = "treemap"}
           class="px-3 py-2 text-xs font-semibold border-b-2 transition-colors {activeView === 'treemap' ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-primary'}"
         >
-          Treemap
+          {t("Treemap")}
         </button>
         <button
           onclick={() => activeView = "files"}
           class="px-3 py-2 text-xs font-semibold border-b-2 transition-colors {activeView === 'files' ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-primary'}"
         >
-          Largest files
+          {t("Largest files")}
         </button>
         <button
           onclick={() => activeView = "types"}
           class="px-3 py-2 text-xs font-semibold border-b-2 transition-colors {activeView === 'types' ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-primary'}"
         >
-          File types
+          {t("File types")}
         </button>
         <button
           onclick={() => activeView = "duplicates"}
           class="px-3 py-2 text-xs font-semibold border-b-2 transition-colors {activeView === 'duplicates' ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-primary'}"
         >
-          Duplicates
+          {t("Duplicates")}
           {#if duplicateMode !== "off"}
             <span class="ml-1 font-mono text-[10px] text-text-muted">({result.duplicate_groups.length})</span>
           {/if}
@@ -1635,7 +1675,7 @@
             onclick={exportTreemapPng}
             class="px-3 py-2 text-xs font-semibold text-text-secondary hover:text-text-primary"
           >
-            Save PNG
+            {t("Save PNG")}
           </button>
         {/if}
         <button
@@ -1643,7 +1683,7 @@
           class="px-3 py-2 text-xs font-semibold text-text-secondary hover:text-text-primary flex items-center gap-1.5"
         >
           <FolderOpen class="w-3.5 h-3.5" />
-          Open in Explorer
+          {t("Open in Explorer")}
         </button>
       </div>
 
@@ -1665,7 +1705,9 @@
         <div
           class="disk-treemap relative w-full border border-border-default rounded-lg overflow-hidden bg-app-bg"
           role="img"
-          aria-label="Treemap of {nodeDisplayPath(focusNode ?? result.root)}. Use the Largest files tab for a keyboard-accessible list."
+          aria-label={t("Treemap of {path}. Use the Largest files tab for a keyboard-accessible list.", {
+            path: nodeDisplayPath(focusNode ?? result.root),
+          })}
         >
           <canvas
             bind:this={canvasEl}
@@ -1684,12 +1726,16 @@
               <span class="block text-[11px] font-semibold text-text-primary break-all">{tooltip.node.name}</span>
               <span class="block text-[10px] font-mono text-text-muted mt-0.5 break-all">{nodeDisplayPath(tooltip.node)}</span>
               <span class="block text-[10px] font-mono text-data-cyan mt-1">
-                {formatBytes(nodeWeight(tooltip.node))} · {percentOfFocusedNode(tooltip.node)}% · {tooltip.node.file_count.toLocaleString()} files
-                {#if tooltip.node.is_dir}· click to zoom{:else}· click to select{/if}
+                {t("{size} · {percent}% · {files} files", {
+                  size: formatBytes(nodeWeight(tooltip.node)),
+                  percent: percentOfFocusedNode(tooltip.node),
+                  files: tooltip.node.file_count.toLocaleString(),
+                })}
+                {#if tooltip.node.is_dir}{t("· click to zoom")}{:else}{t("· click to select")}{/if}
               </span>
               {#if !tooltip.node.is_dir && tooltip.node.modified_epoch_ms}
                 <span class="block text-[10px] font-mono text-text-muted mt-1">
-                  Modified {formatModified(tooltip.node.modified_epoch_ms)}
+                  {t("Modified {date}", { date: formatModified(tooltip.node.modified_epoch_ms) })}
                 </span>
               {/if}
             </div>
@@ -1704,28 +1750,31 @@
           <div class="flex items-center gap-2">
             {#if selectedNode}
               <span class="font-mono text-text-secondary">
-                {formatBytes(nodeWeight(selectedNode))} · {selectedNode.file_count.toLocaleString()} files
+                {t("{size} · {files} files", {
+                  size: formatBytes(nodeWeight(selectedNode)),
+                  files: selectedNode.file_count.toLocaleString(),
+                })}
               </span>
               <button
                 onclick={quarantineSelected}
                 disabled={isQuarantining || isSnapshotView}
-                title={isSnapshotView ? "Snapshots are read-only" : "Move this item to quarantine"}
+                title={isSnapshotView ? t("Snapshots are read-only") : t("Move this item to quarantine")}
                 class="px-2.5 py-1.5 rounded-md bg-danger/10 hover:bg-danger text-danger hover:text-white border border-danger/20 text-[11px] font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                {isQuarantining ? "Quarantining…" : "Quarantine"}
+                {isQuarantining ? t("Quarantining…") : t("Quarantine")}
               </button>
             {/if}
           </div>
         </div>
 
         <div class="flex flex-wrap items-center gap-3 text-[11px] text-text-muted">
-          <span class="font-mono">Click to zoom or select · hover for details</span>
+          <span class="font-mono">{t("Click to zoom or select · hover for details")}</span>
           <span class="text-border-strong">/</span>
-          <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-sm" style="background: {activeDirColors[0]}"></span>folder</span>
+          <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-sm" style="background: {activeDirColors[0]}"></span>{t("folder")}</span>
           {#each result.file_types.slice(0, 6) as type}
             <span class="flex items-center gap-1.5">
               <span class="w-2 h-2 rounded-sm" style="background: {colorForExtension(type.extension)}"></span>
-              {type.extension || "(none)"}
+              {type.extension || t("(none)")}
             </span>
           {/each}
         </div>
@@ -1736,8 +1785,8 @@
             <input
               bind:value={fileQuery}
               oninput={scheduleFileSearch}
-              placeholder={fileFilterMode === "path" ? "Search entire file paths…" : "Search file names…"}
-              aria-label="Search all scanned files"
+              placeholder={fileFilterMode === "path" ? t("Search entire file paths…") : t("Search file names…")}
+              aria-label={t("Search all scanned files")}
               class="w-full pl-9 pr-3 py-2 rounded-lg bg-surface-bg border border-border-default focus:border-accent/50 focus:ring-1 focus:ring-accent/30 outline-none text-xs text-text-primary placeholder:text-text-muted"
             />
           </div>
@@ -1745,19 +1794,19 @@
             <button
               onclick={clearExtensionFilter}
               class="px-2.5 py-2 rounded-lg bg-accent-subtle border border-accent/30 text-[11px] font-mono text-accent flex items-center gap-1.5 hover:bg-accent/20 transition-colors"
-              title="Clear extension filter"
+              title={t("Clear extension filter")}
             >
               .{fileExtensionFilter}
               <X class="w-3 h-3" aria-hidden="true" />
             </button>
           {/if}
-          <div class="flex items-center rounded-lg border border-border-default overflow-hidden" role="group" aria-label="File search scope">
+          <div class="flex items-center rounded-lg border border-border-default overflow-hidden" role="group" aria-label={t("File search scope")}>
             <button
               onclick={() => setFileScope("all")}
               aria-pressed={fileScope === "all"}
               class="px-2.5 py-2 text-[11px] font-semibold transition-colors {fileScope === 'all' ? 'bg-accent-subtle text-accent' : 'bg-surface-bg text-text-muted hover:text-text-primary'}"
             >
-              Whole scan
+              {t("Whole scan")}
             </button>
             <button
               onclick={() => setFileScope("folder")}
@@ -1765,38 +1814,38 @@
               disabled={!focusNode || focusNode.path.startsWith("::")}
               title={focusNode
                 ? focusNode.path.startsWith("::")
-                  ? "Open one of the scanned roots in the treemap first"
-                  : `Limit to ${focusNode.path}`
-                : "Open a folder in the treemap first"}
+                  ? t("Open one of the scanned roots in the treemap first")
+                  : t("Limit to {path}", { path: focusNode.path })
+                : t("Open a folder in the treemap first")}
               class="px-2.5 py-2 text-[11px] font-semibold border-l border-border-default transition-colors disabled:opacity-40 {fileScope === 'folder' ? 'bg-accent-subtle text-accent' : 'bg-surface-bg text-text-muted hover:text-text-primary'}"
             >
-              This folder
+              {t("This folder")}
             </button>
           </div>
-          <div class="flex items-center rounded-lg border border-border-default overflow-hidden" role="group" aria-label="File search matching">
+          <div class="flex items-center rounded-lg border border-border-default overflow-hidden" role="group" aria-label={t("File search matching")}>
             <button
               onclick={() => setFileFilterMode("name")}
               aria-pressed={fileFilterMode === "name"}
-              title="Match file names only; fastest"
+              title={t("Match file names only; fastest")}
               class="px-2.5 py-2 text-[11px] font-semibold transition-colors {fileFilterMode === 'name' ? 'bg-accent-subtle text-accent' : 'bg-surface-bg text-text-muted hover:text-text-primary'}"
             >
-              Name
+              {t("Name")}
             </button>
             <button
               onclick={() => setFileFilterMode("path")}
               aria-pressed={fileFilterMode === "path"}
-              title="Match the entire path; slower on large scans"
+              title={t("Match the entire path; slower on large scans")}
               class="px-2.5 py-2 text-[11px] font-semibold border-l border-border-default transition-colors {fileFilterMode === 'path' ? 'bg-accent-subtle text-accent' : 'bg-surface-bg text-text-muted hover:text-text-primary'}"
             >
-              Path
+              {t("Path")}
             </button>
           </div>
           <label class="flex items-center gap-1.5 text-[11px] font-mono text-text-muted">
-            Max
+            {t("Max")}
             <select
               bind:value={fileLimit}
               onchange={() => { scheduleFileSearch(); saveDiskPreferences(); }}
-              aria-label="Maximum files to display"
+              aria-label={t("Maximum files to display")}
               class="px-2 py-2 rounded-lg bg-surface-bg border border-border-default text-[11px] font-mono text-text-secondary outline-none cursor-pointer"
             >
               <option value={100}>100</option>
@@ -1808,40 +1857,46 @@
           <button
             onclick={exportTopFilesCsv}
             class="px-3 py-2 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-xs font-semibold text-text-secondary hover:text-text-primary transition-colors"
-            title="Export the files currently shown"
+            title={t("Export the files currently shown")}
           >
-            Export view
+            {t("Export view")}
           </button>
           <button
             onclick={exportAllFilesCsv}
             class="px-3 py-2 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-xs font-semibold text-text-secondary hover:text-text-primary transition-colors"
-            title="Export every indexed file matching the current filters"
+            title={t("Export every indexed file matching the current filters")}
           >
-            Export all
+            {t("Export all")}
           </button>
           <span class="text-[11px] font-mono text-text-muted self-center" aria-live="polite">
             {#if isSearching}
-              Searching…
+              {t("Searching…")}
             {:else if isSearchActive && searchResult}
-              {searchResult.total_matches.toLocaleString()} matches · {searchResult.indexed_files.toLocaleString()} indexed{searchResult.index_complete ? "" : " (capped)"}
+              {t("{matches} matches · {indexed} indexed", {
+                matches: searchResult.total_matches.toLocaleString(),
+                indexed: searchResult.indexed_files.toLocaleString(),
+              })}{searchResult.index_complete ? "" : ` ${t("(capped)")}`}
               {#if searchResult.total_matches > searchResult.files.length}
-                · top {searchResult.files.length} by {fileSortLabel}
+                · {t("top {count} by {sort}", {
+                  count: searchResult.files.length,
+                  sort: fileSortLabel,
+                })}
               {/if}
             {:else}
-              Top {displayFiles.length} files · search covers all scanned files
+              {t("Top {count} files · search covers all scanned files", { count: displayFiles.length })}
             {/if}
           </span>
         </div>
 
         <div class="flex flex-col lg:flex-row lg:items-center gap-2">
-          <span class="text-[11px] font-mono uppercase tracking-wider text-text-muted shrink-0">Path filters</span>
+          <span class="text-[11px] font-mono uppercase tracking-wider text-text-muted shrink-0">{t("Path filters")}</span>
           <label class="relative flex-1 min-w-0">
             <span class="absolute left-3 top-1/2 -translate-y-1/2 font-mono text-xs font-bold text-success" aria-hidden="true">+</span>
             <input
               value={fileInclude}
               oninput={(event) => { fileInclude = event.currentTarget.value; updatePathFilters(); }}
-              placeholder="Include paths containing…"
-              aria-label="Include only file paths containing"
+              placeholder={t("Include paths containing…")}
+              aria-label={t("Include only file paths containing")}
               class="w-full pl-8 pr-8 py-2 rounded-lg bg-surface-bg border border-border-default focus:border-success/50 focus:ring-1 focus:ring-success/30 outline-none text-xs text-text-primary placeholder:text-text-muted"
             />
             {#if fileInclude}
@@ -1849,8 +1904,8 @@
                 type="button"
                 onclick={() => { fileInclude = ""; updatePathFilters(); }}
                 class="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-text-muted hover:text-text-primary transition-colors"
-                title="Clear include filter"
-                aria-label="Clear include filter"
+                title={t("Clear include filter")}
+                aria-label={t("Clear include filter")}
               >
                 <X class="w-3 h-3" aria-hidden="true" />
               </button>
@@ -1861,8 +1916,8 @@
             <input
               value={fileExclude}
               oninput={(event) => { fileExclude = event.currentTarget.value; updatePathFilters(); }}
-              placeholder="Exclude paths containing…"
-              aria-label="Exclude file paths containing"
+              placeholder={t("Exclude paths containing…")}
+              aria-label={t("Exclude file paths containing")}
               class="w-full pl-8 pr-8 py-2 rounded-lg bg-surface-bg border border-border-default focus:border-danger/50 focus:ring-1 focus:ring-danger/30 outline-none text-xs text-text-primary placeholder:text-text-muted"
             />
             {#if fileExclude}
@@ -1870,8 +1925,8 @@
                 type="button"
                 onclick={() => { fileExclude = ""; updatePathFilters(); }}
                 class="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-text-muted hover:text-text-primary transition-colors"
-                title="Clear exclude filter"
-                aria-label="Clear exclude filter"
+                title={t("Clear exclude filter")}
+                aria-label={t("Clear exclude filter")}
               >
                 <X class="w-3 h-3" aria-hidden="true" />
               </button>
@@ -1883,10 +1938,10 @@
               onclick={clearPathFilters}
               class="px-3 py-2 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-[11px] font-semibold text-text-secondary hover:text-text-primary transition-colors shrink-0"
             >
-              Clear filters
+              {t("Clear filters")}
             </button>
           {/if}
-          <span class="text-[10px] font-mono text-text-muted shrink-0">case-insensitive substring · full path</span>
+          <span class="text-[10px] font-mono text-text-muted shrink-0">{t("case-insensitive substring · full path")}</span>
         </div>
 
         <div class="border border-border-default rounded-lg overflow-hidden">
@@ -1898,42 +1953,42 @@
                     <button
                       type="button"
                       onclick={() => setFileSort("name")}
-                      title="Sort by file name"
+                      title={t("Sort by file name")}
                       class="inline-flex items-center gap-1 uppercase hover:text-text-primary transition-colors"
                     >
-                      File
+                      {t("File")}
                       {#if fileSort === "name"}<ArrowUp class="w-3 h-3 text-accent" aria-hidden="true" />{/if}
                     </button>
                   </th>
-                  <th class="px-4 py-3">Extension</th>
+                  <th class="px-4 py-3">{t("Extension")}</th>
                   <th class="px-4 py-3" aria-sort={fileSort === "modified" ? "descending" : "none"}>
                     <button
                       type="button"
                       onclick={() => setFileSort("modified")}
-                      title="Sort by last modified, newest first"
+                      title={t("Sort by last modified, newest first")}
                       class="inline-flex items-center gap-1 uppercase hover:text-text-primary transition-colors"
                     >
-                      Modified
+                      {t("Modified")}
                       {#if fileSort === "modified"}<ArrowDown class="w-3 h-3 text-accent" aria-hidden="true" />{/if}
                     </button>
                   </th>
-                  <th class="px-4 py-3">Attributes</th>
-                  <th class="px-4 py-3 text-right">Share</th>
+                  <th class="px-4 py-3">{t("Attributes")}</th>
+                  <th class="px-4 py-3 text-right">{t("Share")}</th>
                   <th class="px-4 py-3 text-right" aria-sort={fileSort === "size" ? "descending" : "none"}>
                     <button
                       type="button"
                       onclick={() => setFileSort("size")}
-                      title="Sort by allocated size, largest first"
+                      title={t("Sort by allocated size, largest first")}
                       class="inline-flex items-center gap-1 uppercase hover:text-text-primary transition-colors"
                     >
-                      Allocated
+                      {t("Allocated")}
                       {#if fileSort === "size"}<ArrowDown class="w-3 h-3 text-accent" aria-hidden="true" />{/if}
                     </button>
                   </th>
-                  <th class="px-4 py-3 text-right">Logical</th>
+                  <th class="px-4 py-3 text-right">{t("Logical")}</th>
                   {#if result.duplicate_mode !== "off"}
-                    <th class="px-4 py-3 text-right">Dup Count</th>
-                    <th class="px-4 py-3 text-right">Dup Waste</th>
+                    <th class="px-4 py-3 text-right">{t("Dup Count")}</th>
+                    <th class="px-4 py-3 text-right">{t("Dup Waste")}</th>
                   {/if}
                 </tr>
               </thead>
@@ -1945,8 +2000,8 @@
                         type="button"
                         onclick={(event) => { event.stopPropagation(); openFileFolder(file); }}
                         class="block w-full text-left rounded focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-                        title="Open containing folder"
-                        aria-label="Open folder containing {file.name}"
+                        title={t("Open containing folder")}
+                        aria-label={t("Open folder containing {name}", { name: file.name })}
                       >
                         <span class="text-text-primary font-mono break-all">{file.name}</span>
                         <span class="block text-[11px] text-text-muted font-mono truncate max-w-[420px]" title={file.path}>{file.path}</span>
@@ -1954,7 +2009,7 @@
                     </td>
                     <td class="px-4 py-2.5 font-mono text-text-secondary">{file.extension}</td>
                     <td class="px-4 py-2.5 font-mono text-text-muted whitespace-nowrap">{formatModified(file.modified_epoch_ms)}</td>
-                    <td class="px-4 py-2.5 font-mono text-text-muted whitespace-nowrap" title="Read-only, Hidden, System, Directory, Archive, Temporary, Sparse, Compressed, Offline, Encrypted, Integrity, Not-indexed">{attributesLabel(file.attributes)}</td>
+                    <td class="px-4 py-2.5 font-mono text-text-muted whitespace-nowrap" title={t("Read-only, Hidden, System, Directory, Archive, Temporary, Sparse, Compressed, Offline, Encrypted, Integrity, Not-indexed")}>{attributesLabel(file.attributes)}</td>
                     <td class="px-4 py-2.5 text-right font-mono text-data-cyan">{fileSharePercent(file)}%</td>
                     <td class="px-4 py-2.5 text-right font-mono text-text-primary">{formatBytes(file.allocated_bytes)}</td>
                     <td class="px-4 py-2.5 text-right font-mono text-text-muted">{formatBytes(file.size_bytes)}</td>
@@ -1970,7 +2025,11 @@
                 {:else}
                   <tr>
                     <td colspan={result.duplicate_mode !== "off" ? 9 : 7} class="px-4 py-8 text-center text-text-muted">
-                      {isSearching ? "Searching indexed files…" : isSearchActive ? "No scanned files match this search." : "No top files match this filter."}
+                      {isSearching
+                        ? t("Searching indexed files…")
+                        : isSearchActive
+                          ? t("No scanned files match this search.")
+                          : t("No top files match this filter.")}
                     </td>
                   </tr>
                 {/each}
@@ -1984,16 +2043,21 @@
             <button
               type="button"
               onclick={() => showFilesByExtension(type.extension)}
-              title="Show all .{type.extension || '(none)'} files by size"
+              title={type.extension
+                ? t("Show all .{ext} files by size", { ext: type.extension })
+                : t("Show all files with no extension by size")}
               class="w-full text-left p-2 rounded-md hover:bg-elevated-bg/70 focus-visible:bg-elevated-bg/70 transition-colors"
             >
               <div class="flex items-center justify-between text-xs font-mono gap-3">
                 <span class="flex items-center gap-2 text-text-primary">
                   <span class="w-2.5 h-2.5 rounded-sm" style="background: {colorForExtension(type.extension)}"></span>
-                  {type.extension || "(none)"}
+                  {type.extension || t("(none)")}
                 </span>
                 <span class="text-text-muted">
-                  {formatBytes(type.size_bytes)} · {type.file_count.toLocaleString()} files ·
+                  {t("{size} · {count} files", {
+                    size: formatBytes(type.size_bytes),
+                    count: type.file_count.toLocaleString(),
+                  })} ·
                   {result.total_allocated > 0 ? ((type.size_bytes / result.total_allocated) * 100).toFixed(1) : "0.0"}%
                 </span>
               </div>
@@ -2009,19 +2073,26 @@
       {:else}
         {#if !lastScanHadDuplicates}
           <div class="p-6 border border-dashed border-border-default rounded-lg bg-surface-bg/20 text-center text-xs text-text-muted">
-            Enable <b class="text-text-secondary">Duplicates</b> and scan again to compare by name + size or name + size + date.
+            {t("Enable")} <b class="text-text-secondary">{t("Duplicates")}</b> {t("and scan again to compare by name + size or name + size + date.")}
           </div>
         {:else if result.duplicate_groups.length === 0}
           <div class="p-6 border border-dashed border-border-default rounded-lg bg-surface-bg/20 text-center text-xs text-text-muted">
-            No duplicate groups found ({result.duplicate_mode === "name_size_date" ? "same name, size and modified date" : "same name and size"}).
+            {t("No duplicate groups found ({criteria}).", {
+              criteria: result.duplicate_mode === "name_size_date"
+                ? t("same name, size and modified date")
+                : t("same name and size"),
+            })}
           </div>
         {:else}
           <div class="flex flex-wrap items-center justify-between gap-3 instrument-panel px-3.5 py-2.5">
             <span class="text-[11px] font-mono text-text-muted" aria-live="polite">
               {#if isSnapshotView}
-                Read-only snapshot · rescan the drive to clean duplicates
+                {t("Read-only snapshot · rescan the drive to clean duplicates")}
               {:else}
-                {selectedDuplicateCount} selected · {formatBytes(selectedDuplicateBytes)} reclaimable
+                {t("{count} selected · {size} reclaimable", {
+                  count: selectedDuplicateCount,
+                  size: formatBytes(selectedDuplicateBytes),
+                })}
               {/if}
             </span>
             {#if !isSnapshotView}
@@ -2031,14 +2102,14 @@
                   disabled={selectedDuplicateCount === 0 || isQuarantining}
                   class="px-2.5 py-1.5 rounded-md bg-surface-bg border border-border-default hover:bg-elevated-bg text-[11px] font-semibold text-text-secondary disabled:opacity-40 transition-colors"
                 >
-                  Clear
+                  {t("Clear")}
                 </button>
                 <button
                   onclick={quarantineSelectedDuplicates}
                   disabled={selectedDuplicateCount === 0 || isQuarantining}
                   class="px-2.5 py-1.5 rounded-md bg-danger/10 hover:bg-danger text-danger hover:text-white border border-danger/20 text-[11px] font-semibold disabled:opacity-40 transition-colors"
                 >
-                  {isQuarantining ? "Quarantining…" : `Quarantine ${selectedDuplicateCount}`}
+                  {isQuarantining ? t("Quarantining…") : t("Quarantine {count}", { count: selectedDuplicateCount })}
                 </button>
               </div>
             {/if}
@@ -2050,20 +2121,23 @@
                   <div class="flex items-center gap-2 min-w-0">
                     <File class="w-4 h-4 text-text-muted flex-shrink-0" />
                     <span class="text-sm font-semibold text-text-primary truncate" title={group.name}>{group.name}</span>
-                    <span class="text-[10px] font-mono text-text-muted">{group.file_count} copies</span>
+                    <span class="text-[10px] font-mono text-text-muted">{t("{count} copies", { count: group.file_count })}</span>
                     {#if group.files.length > 1}
                       <button
                         onclick={() => selectAllButFirst(group)}
                         disabled={isQuarantining || isSnapshotView}
                         class="text-[10px] font-mono text-text-muted hover:text-accent disabled:opacity-40 transition-colors"
-                        title="Select every listed copy except the first"
+                        title={t("Select every listed copy except the first")}
                       >
-                        Select rest
+                        {t("Select rest")}
                       </button>
                     {/if}
                   </div>
                   <span class="readout text-xs text-data-cyan">
-                    {formatBytes(group.size_bytes)} each · {formatBytes(group.size_bytes * (group.file_count - 1))} waste
+                    {t("{size} each · {waste} waste", {
+                      size: formatBytes(group.size_bytes),
+                      waste: formatBytes(group.size_bytes * (group.file_count - 1)),
+                    })}
                   </span>
                 </div>
                 <div class="space-y-1">
@@ -2074,8 +2148,8 @@
                         checked={!!duplicateSelection[file.path]}
                         disabled={isSnapshotView || isQuarantining || (!duplicateSelection[file.path] && duplicatesSelectedInGroup(group) >= group.file_count - 1)}
                         onchange={() => toggleDuplicateFile(group, file)}
-                        aria-label="Select duplicate copy at {file.path}"
-                        title={duplicateSelection[file.path] ? "Do not quarantine this copy" : "Quarantine this copy"}
+                        aria-label={t("Select duplicate copy at {path}", { path: file.path })}
+                        title={duplicateSelection[file.path] ? t("Do not quarantine this copy") : t("Quarantine this copy")}
                         class="rounded border-border-default text-accent focus:ring-accent bg-surface-bg cursor-pointer w-3.5 h-3.5 flex-shrink-0 disabled:opacity-30 disabled:cursor-not-allowed"
                       />
                       <button
@@ -2088,7 +2162,7 @@
                     </div>
                   {/each}
                   {#if group.file_count > group.files.length}
-                    <span class="block text-[10px] text-text-muted px-2">+{group.file_count - group.files.length} more copies</span>
+                    <span class="block text-[10px] text-text-muted px-2">{t("+{count} more copies", { count: group.file_count - group.files.length })}</span>
                   {/if}
                 </div>
               </div>
@@ -2100,16 +2174,15 @@
       <div class="flex flex-col items-center justify-center h-80 border border-dashed border-border-default rounded-xl bg-surface-bg/20 text-center gap-3">
         <HardDrive class="w-10 h-10 text-text-muted/60" />
         <div>
-          <h3 class="text-sm font-bold text-text-primary">Scan a drive or folder</h3>
+          <h3 class="text-sm font-bold text-text-primary">{t("Scan a drive or folder")}</h3>
           <p class="text-xs text-text-muted mt-1 max-w-md leading-relaxed">
-            PurgeKit reads the selected tree once, shows allocated size (sparse/compressed aware),
-            and lets you drill into the largest folders and files. Symbols, junctions and reparse points are skipped.
+            {t("PurgeKit reads the selected tree once, shows allocated size (sparse/compressed aware), and lets you drill into the largest folders and files. Symbols, junctions and reparse points are skipped.")}
           </p>
         </div>
         <div class="flex items-center gap-2 text-[10px] text-text-muted font-mono">
-          <File class="w-3.5 h-3.5" /> top files
-          <Folder class="w-3.5 h-3.5" /> treemap
-          <HardDrive class="w-3.5 h-3.5" /> allocated size
+          <File class="w-3.5 h-3.5" /> {t("top files")}
+          <Folder class="w-3.5 h-3.5" /> {t("treemap")}
+          <HardDrive class="w-3.5 h-3.5" /> {t("allocated size")}
         </div>
       </div>
     {/if}
