@@ -1184,8 +1184,16 @@
                 {#each displayFiles as file}
                   <tr class="hover:bg-elevated-bg/50 cursor-pointer" onclick={() => openFileFolder(file)}>
                     <td class="px-4 py-2.5">
-                      <span class="text-text-primary font-mono break-all">{file.name}</span>
-                      <span class="block text-[11px] text-text-muted font-mono truncate max-w-[560px]" title={file.path}>{file.path}</span>
+                      <button
+                        type="button"
+                        onclick={(event) => { event.stopPropagation(); openFileFolder(file); }}
+                        class="block w-full text-left rounded focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                        title="Open containing folder"
+                        aria-label="Open folder containing {file.name}"
+                      >
+                        <span class="text-text-primary font-mono break-all">{file.name}</span>
+                        <span class="block text-[11px] text-text-muted font-mono truncate max-w-[560px]" title={file.path}>{file.path}</span>
+                      </button>
                     </td>
                     <td class="px-4 py-2.5 font-mono text-text-secondary">{file.extension}</td>
                     <td class="px-4 py-2.5 text-right font-mono text-text-primary">{formatBytes(file.allocated_bytes)}</td>
