@@ -111,6 +111,34 @@
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
   let searchSequence = 0;
   let isQuarantining = $state(false);
+  let duplicateSelection = $state<Record<string, boolean>>({});
+
+  let selectedDuplicateCount = $derived(
+    result
+      ? result.duplicate_groups.reduce(
+          (count, group) =>
+            count + group.files.filter((file) => duplicateSelection[file.path]).length,
+          0
+        )
+      : 0
+  );
+
+  let selectedDuplicateBytes = $derived(
+    result
+      ? result.duplicate_groups.reduce(
+          (sum, group) =>
+            sum +
+            group.files.reduce(
+              (groupSum, file) =>
+                duplicateSelection[file.path]
+                  ? groupSum + Math.max(file.allocated_bytes, file.size_bytes)
+                  : groupSum,
+              0
+            ),
+          0
+        )
+      : 0
+  );
 
   let filteredTopFiles = $derived(
     result
@@ -265,6 +293,7 @@
     fileQuery = "";
     fileExtensionFilter = null;
     fileScope = "all";
+    duplicateSelection = {};
     clearFileSearch();
 
     try {
@@ -604,6 +633,78 @@
     URL.revokeObjectURL(url);
   }
 
+  function duplicatesSelectedInGroup(group: DuplicateGroup): number {
+    return group.files.filter((file) => duplicateSelection[file.path]).length;
+  }
+
+  function toggleDuplicateFile(group: DuplicateGroup, file: DiskFile) {
+    if (!duplicateSelection[file.path] && duplicatesSelectedInGroup(group) >= group.file_count - 1) {
+      toast.show("Keep at least one copy in each duplicate group.", "warning");
+      return;
+    }
+    duplicateSelection[file.path] = !duplicateSelection[file.path];
+  }
+
+  function selectAllButFirst(group: DuplicateGroup) {
+    for (let index = 1; index < group.files.length; index++) {
+      duplicateSelection[group.files[index].path] = true;
+    }
+  }
+
+  function clearDuplicateSelection() {
+    duplicateSelection = {};
+  }
+
+  async function quarantineSelectedDuplicates() {
+    if (!result || selectedDuplicateCount === 0 || isQuarantining) return;
+
+    const root = result.root_path;
+    const selected = result.duplicate_groups.flatMap((group) =>
+      group.files.filter((file) => duplicateSelection[file.path])
+    );
+    const bytes = selected.reduce(
+      (sum, file) => sum + Math.max(file.allocated_bytes, file.size_bytes),
+      0
+    );
+    const confirmed = confirm(
+      `Quarantine ${selected.length} duplicate copies (${formatBytes(bytes)} reclaimable)?\n\n` +
+      `Copies are moved to PurgeKit quarantine when backup is enabled; otherwise they are deleted permanently. ` +
+      `At least one copy of each group stays in place. The scan will refresh afterwards.`
+    );
+    if (!confirmed) return;
+
+    isQuarantining = true;
+    let failed = 0;
+    for (const file of selected) {
+      try {
+        const response = await invoke<{ success: number; fail: number; errors?: string[] }>(
+          "force_remove_app",
+          {
+            installLocation: file.path,
+            registryPath: null,
+            hive: null,
+          }
+        );
+        if (response.fail > 0) failed += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+
+    duplicateSelection = {};
+    isQuarantining = false;
+    toast.show(
+      failed > 0
+        ? `Quarantined ${selected.length - failed} copies; ${failed} failed. Refreshing scan…`
+        : `Quarantined ${selected.length} copies. Refreshing scan…`,
+      failed > 0 ? "warning" : "success"
+    );
+
+    pathInput = root;
+    await scanDisk();
+    if (findDuplicates && result) activeView = "duplicates";
+  }
+
   async function quarantineSelected() {
     const node = selectedNode;
     if (!node || !result) return;
@@ -647,6 +748,7 @@
       hoverPath = null;
       tooltip = null;
       layoutRects = [];
+      duplicateSelection = {};
     } catch (e: any) {
       toast.show(`Quarantine failed: ${e.toString()}`, "error");
     } finally {
@@ -1138,6 +1240,27 @@
             No duplicate groups found (same name + size).
           </div>
         {:else}
+          <div class="flex flex-wrap items-center justify-between gap-3 instrument-panel px-3.5 py-2.5">
+            <span class="text-[11px] font-mono text-text-muted" aria-live="polite">
+              {selectedDuplicateCount} selected · {formatBytes(selectedDuplicateBytes)} reclaimable
+            </span>
+            <div class="flex items-center gap-2">
+              <button
+                onclick={clearDuplicateSelection}
+                disabled={selectedDuplicateCount === 0 || isQuarantining}
+                class="px-2.5 py-1.5 rounded-md bg-surface-bg border border-border-default hover:bg-elevated-bg text-[11px] font-semibold text-text-secondary disabled:opacity-40 transition-colors"
+              >
+                Clear
+              </button>
+              <button
+                onclick={quarantineSelectedDuplicates}
+                disabled={selectedDuplicateCount === 0 || isQuarantining}
+                class="px-2.5 py-1.5 rounded-md bg-danger/10 hover:bg-danger text-danger hover:text-white border border-danger/20 text-[11px] font-semibold disabled:opacity-40 transition-colors"
+              >
+                {isQuarantining ? "Quarantining…" : `Quarantine ${selectedDuplicateCount}`}
+              </button>
+            </div>
+          </div>
           <div class="space-y-3">
             {#each result.duplicate_groups as group}
               <div class="instrument-panel p-3.5 space-y-2">
@@ -1146,6 +1269,16 @@
                     <File class="w-4 h-4 text-text-muted flex-shrink-0" />
                     <span class="text-sm font-semibold text-text-primary truncate" title={group.name}>{group.name}</span>
                     <span class="text-[10px] font-mono text-text-muted">{group.file_count} copies</span>
+                    {#if group.files.length > 1}
+                      <button
+                        onclick={() => selectAllButFirst(group)}
+                        disabled={isQuarantining}
+                        class="text-[10px] font-mono text-text-muted hover:text-accent disabled:opacity-40 transition-colors"
+                        title="Select every listed copy except the first"
+                      >
+                        Select rest
+                      </button>
+                    {/if}
                   </div>
                   <span class="readout text-xs text-data-cyan">
                     {formatBytes(group.size_bytes)} each · {formatBytes(group.size_bytes * (group.file_count - 1))} waste
@@ -1153,13 +1286,24 @@
                 </div>
                 <div class="space-y-1">
                   {#each group.files as file}
-                    <button
-                      onclick={() => openFileFolder(file)}
-                      class="w-full text-left px-2 py-1.5 rounded bg-app-bg/60 hover:bg-elevated-bg text-[11px] font-mono text-text-muted hover:text-text-primary transition-colors break-all"
-                      title={file.path}
-                    >
-                      {file.path}
-                    </button>
+                    <div class="flex items-center gap-2 px-2 py-1 rounded bg-app-bg/60 hover:bg-elevated-bg transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={!!duplicateSelection[file.path]}
+                        disabled={isQuarantining || (!duplicateSelection[file.path] && duplicatesSelectedInGroup(group) >= group.file_count - 1)}
+                        onchange={() => toggleDuplicateFile(group, file)}
+                        aria-label="Select duplicate copy at {file.path}"
+                        title={duplicateSelection[file.path] ? "Do not quarantine this copy" : "Quarantine this copy"}
+                        class="rounded border-border-default text-accent focus:ring-accent bg-surface-bg cursor-pointer w-3.5 h-3.5 flex-shrink-0 disabled:opacity-30 disabled:cursor-not-allowed"
+                      />
+                      <button
+                        onclick={() => openFileFolder(file)}
+                        class="flex-1 text-left text-[11px] font-mono text-text-muted hover:text-text-primary transition-colors break-all"
+                        title={file.path}
+                      >
+                        {file.path}
+                      </button>
+                    </div>
                   {/each}
                   {#if group.file_count > group.files.length}
                     <span class="block text-[10px] text-text-muted px-2">+{group.file_count - group.files.length} more copies</span>
