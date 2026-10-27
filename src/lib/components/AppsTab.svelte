@@ -1183,6 +1183,18 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
             </div>
           </div>
 
+          {#if preflightApp.requires_admin && !isAdmin}
+            <div class="p-3 rounded-lg bg-danger/10 border border-danger/20 text-xs text-danger flex flex-col gap-2">
+              <span>{t("Administrator rights are required. Restart PurgeKit as Administrator to continue.")}</span>
+              <button
+                onclick={restartAsAdmin}
+                class="self-start px-2.5 py-1.5 rounded-lg bg-accent hover:bg-accent-hover text-white text-[11px] font-semibold transition-colors"
+              >
+                {t("Restart as Administrator")}
+              </button>
+            </div>
+          {/if}
+
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
             <div class="p-3 rounded-lg bg-app-bg border border-border-default">
               <span class="block text-[10px] uppercase tracking-wider text-text-muted font-mono">{t("Publisher")}</span>
@@ -1222,18 +1234,8 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
             {:else}
               <p class="text-text-primary break-all">{t("Run the registered uninstaller:")} <span class="font-mono">{preflightApp.uninstall_string || t("no uninstall string")}</span></p>
             {/if}
-            {#if preflightApp.requires_admin}
-              {#if isAdmin}
-                <p class="text-amber-300">{t("Administrator rights are required for this operation.")}</p>
-              {:else}
-                <p class="text-danger">{t("Administrator rights are required. Restart PurgeKit as Administrator to continue.")}</p>
-                <button
-                  onclick={restartAsAdmin}
-                  class="mt-1 px-2.5 py-1.5 rounded-lg bg-accent hover:bg-accent-hover text-white text-[11px] font-semibold transition-colors"
-                >
-                  {t("Restart as Administrator")}
-                </button>
-              {/if}
+            {#if preflightApp.requires_admin && isAdmin}
+              <p class="text-amber-300">{t("Administrator rights are required for this operation.")}</p>
             {/if}
             {#if preflightApp.is_active}
               <p class="text-amber-300">{t("WARNING: this toolchain is currently ACTIVE. Removing it can break existing projects.")}</p>

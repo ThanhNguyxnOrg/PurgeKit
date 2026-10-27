@@ -1,0 +1,51 @@
+# PurgeKit bug audit driven by Geek Uninstaller 1.6 and WizTree 4.33 REA
+
+**Date:** 2026-10-27 · **Method:** read-only code audit of PurgeKit plus the REA artifacts produced on 2026-10-26 (Ghidra 12.1.4 pseudocode, string/xref evidence, runtime `cache.dat`/`WinTree3.ini`). No closed-source binary was executed for this audit.
+
+## 1. What the two targets teach
+
+**Geek Uninstaller**
+
+- The process is `requireAdministrator`; uninstall and cleanup run with full rights, which is why it can wait on an uninstaller process tree and clean Program Files/registry entries.
+- `0x42fc55` icon finder order: DisplayIcon → Start Menu shortcut → InstallLocation → UninstallString → Windows Installer, with icon results cached (`cache.dat`, empty-icon sentinel).
+- `InstallLocationFinder` rejects false-positive install locations; install-location inference is deliberately conservative because a wrong location becomes a deletion target.
+- The uninstaller wait tracks the process and its children; PurgeKit mirrors this with a Windows Job Object.
+
+**WizTree**
+
+- Duplicate detection is **name + size**, optionally **+ modified date**. WizTree does not compare file contents; grouping is a fast candidate search, not a hash comparison.
+- The MFT engine reads `$MFT` directly, needs Administrator for live dumps, and can scan a folder subtree through the same engine.
+- File view distinguishes Percent of Parent, Percent of Drive, Items, Folders, Allocated and Dup Count/Dup Size, and offers free-space/allocated treemap options.
+- CSV and TSV imports are recognized by `.csv`/`.tsv` and report the failing line when import fails.
+
+## 2. Findings fixed in this pass
+
+| # | Severity | Area | Bug | Fix |
+|---|---|---|---|---|
+| 1 | High | Store uninstall | Elevated scans emit `Remove-AppxPackage -AllUsers -Package …`, but both single and bulk uninstall only recognized the variant without `-AllUsers`; elevated Store removal failed and could fall through to the shell-wrapper rejection. | Shared `parse_uwp_uninstall_command` accepts both forms and the command runs in the Job Object. |
+| 2 | High | Elevated uninstallers | A user-writable uninstaller outside `%USERPROFILE%` (for example `C:\Temp\payload.exe` or `C:\Users\Public\…`) could run elevated without a signature check. | Absolute-path uninstallers must live under Windows/Program Files or carry a valid signature when PurgeKit is elevated. |
+| 3 | High | Remnant scans | The recursive remnant walk followed junctions/symlinks, so a matching name could resolve outside the intended tree. | Reparse points and symlinks are skipped for both matching and recursion. |
+| 4 | High | Failed uninstall | After an uninstaller failed or was cancelled, leftovers were still scanned, auto-selected and (in bulk mode) auto-purged while the app could still be installed. | Leftovers are not pre-selected or auto-purged when the uninstaller did not complete; the UI requires an explicit review. |
+| 5 | High | Restore quarantine | Restoring onto an existing path silently overwrote files through the copy fallback. | Restore is refused when the original path already exists; the rollback path in `backup.rs` uses the same rule. |
+| 6 | High | Scheduled tasks | Windows servicing tasks under `\Microsoft\Windows\` were listed as deletable startup items. | They are filtered from the list and rejected by status/delete commands. |
+| 7 | Med-High | Dev cache cleaner | Dynamic cache commands (`npm config get cache`, …) were trusted and `remove_dir_all`-ed anywhere safe-to-delete, and freed bytes were over-reported when nothing was removed. | Dynamic paths must stay under the rule's template roots, removal errors propagate, and freed bytes are measured. |
+| 8 | Med | File search after MFT | MFT roots keep a trailing separator, while search/export canonicalized the lookup without it, so folder MFT scans and `.pkmft` dumps returned “Scan this path before searching”. | Cache keys normalize trailing separators on both store and lookup. |
+| 9 | Med | Install tracking | `stop_install_tracking` removed the baseline before writing the snapshot; a write/DB error lost it. | The session is cloned and cleared only after the snapshot is durable. |
+| 10 | Med | Shortcut matching | `matches_target` still matched a target by app name when an install location was set, so force-removing short names (for example “Code”) could delete other Start-Menu shortcuts. | When a location is present only location-bound targets match. |
+| 11 | Med | Admin detection | Remnant admin checks and quarantine restore used `contains("WINDOWS")`/`contains("PROGRAM FILES")`, blocking normal user paths such as `…\Windows Themes`. | Boundary-aware path checks are shared by both flows. |
+| 12 | Med | Store identity | Store rows showed package-derived names (`10511Claudia Wey inknotespro`) and publisher IDs. | Localized Start-menu names and `PublisherDisplayName` are used when available. |
+| 13 | Med | Snapshot hygiene | Snapshots scanned `%APPDATA%\PurgeKit` and `%LOCALAPPDATA%\PurgeKit`, so they contained their own JSON files and quarantine/backup data. | PurgeKit data folders are excluded and reparse points are skipped. |
+
+## 3. Deliberately deferred
+
+- **Content hashing for duplicates.** WizTree groups by name/size/date and does not read file contents; hashing would change performance and semantics. Instead the UI now states clearly that contents are not compared and asks the user to verify before purging.
+- **Percent of Parent / Percent of Drive / Items / Folders columns, free-space treemap, MFT/CSV schema compatibility.** These are WizTree features, not correctness bugs. PurgeKit’s current equivalents are Share %, file counts, allocated size, CSV import/export and `.pkmft` dump/load.
+- **Provisioned Store packages** remain out of scope: enumerating or removing them can affect other users and servicing.
+- **Live elevated validation** of folder-MFT, MFT dump and multi-process uninstall waits still requires an Administrator session.
+
+## 4. Verification
+
+- `cargo test --lib`: **108 passed, 4 ignored** (host smoke tests only).
+- `cargo check --bins`, `npm run check`, `npm run build`: clean.
+- Host icon coverage: 132/133 inventory rows have a logo; `vs_CoreEditorFonts` is a font component without an application icon.
+- UI verified through WebView2 CDP at 900×600 and 1500×1000, including English/Vietnamese switching, CSV import, multi-root scanning and MFT dump reload.
