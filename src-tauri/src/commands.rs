@@ -952,9 +952,38 @@ pub async fn start_install_tracking(
     let state_clone = state.0.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let sys_drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".to_string());
-        let drive_char = sys_drive.chars().next().unwrap_or('C').to_ascii_uppercase();
-        let current_usn = crate::tracker::query_current_usn(drive_char)?;
-        
+        let system_letter = sys_drive
+            .chars()
+            .next()
+            .unwrap_or('C')
+            .to_ascii_uppercase();
+
+        // Track every ready local volume, not just the system drive, so tools
+        // installed on a secondary SSD are captured too. Volumes without a USN
+        // journal (FAT/exFAT/network) are skipped.
+        let mut start_usns = Vec::new();
+        for drive in crate::winutil::list_ready_drives() {
+            let Some(letter) = drive.letter.chars().next() else {
+                continue;
+            };
+            let letter = letter.to_ascii_uppercase();
+            match crate::tracker::query_current_usn(letter) {
+                Ok(usn) => start_usns.push((letter, usn)),
+                Err(error) => {
+                    if letter == system_letter {
+                        return Err(error);
+                    }
+                }
+            }
+        }
+        if start_usns.is_empty() {
+            start_usns.push((
+                system_letter,
+                crate::tracker::query_current_usn(system_letter)?,
+            ));
+        }
+        start_usns.sort_unstable();
+
         // Take registry baseline
         let mut reg_baseline = Vec::new();
         let _ = crate::snapshot_engine::scan_registry_keys_recursive(
@@ -967,7 +996,7 @@ pub async fn start_install_tracking(
 
         let mut active = state_clone.lock().map_err(|e| e.to_string())?;
         *active = Some(crate::tracker::TrackingSession {
-            start_usn: current_usn,
+            start_usns,
             name,
             reg_baseline,
             reg_value_baseline,
@@ -989,9 +1018,12 @@ pub async fn stop_install_tracking(
             active.take().ok_or_else(|| "No active installation tracking session is running".to_string())?
         };
 
-        let sys_drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".to_string());
-        let drive_char = sys_drive.chars().next().unwrap_or('C').to_ascii_uppercase();
-        let usn_changes = crate::tracker::read_usn_changes(drive_char, session.start_usn)?;
+        let mut usn_changes = Vec::new();
+        for (drive, start_usn) in &session.start_usns {
+            if let Ok(mut paths) = crate::tracker::read_usn_changes(*drive, *start_usn) {
+                usn_changes.append(&mut paths);
+            }
+        }
         
         // Scan registry after installation
         let mut current_reg = Vec::new();

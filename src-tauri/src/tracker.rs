@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use usn_journal_rs::prelude::{JournalIterOptions, Usn, UsnReason, Volume};
 
 pub struct TrackingSession {
-    pub start_usn: u64,
+    pub start_usns: Vec<(char, u64)>,
     pub name: String,
     pub reg_baseline: Vec<String>,
     pub reg_value_baseline: Vec<String>,

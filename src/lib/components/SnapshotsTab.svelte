@@ -523,7 +523,7 @@
           Real-time Install Monitor
         </h3>
         <p class="text-xs text-text-muted mt-1">
-          PurgeKit will record a baseline and monitor file creations (using NTFS USN Journal) and registry entries in real-time.
+          PurgeKit will record a baseline and monitor file creations (using the NTFS USN Journal) on every ready NTFS volume, plus registry entries, in real-time.
         </p>
         
         <div class="mt-4 space-y-2">
