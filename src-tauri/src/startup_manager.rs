@@ -147,6 +147,15 @@ fn is_in_tasks_dir(path_str: &str) -> bool {
     false
 }
 
+/// Windows servicing/update tasks live under \Microsoft\Windows. They are
+/// not user startup programs and deleting them can break the OS.
+pub fn is_protected_task_name(task_name: &str) -> bool {
+    task_name
+        .trim()
+        .to_lowercase()
+        .starts_with(r"\microsoft\windows\")
+}
+
 pub(crate) fn is_task_file_path(path_str: &str) -> bool {
     is_in_tasks_dir(path_str) && Path::new(path_str).is_file()
 }
@@ -204,6 +213,12 @@ fn scan_tasks_directory(dir: &Path, items: &mut Vec<StartupItem>) {
             let has_boot = find_case_insensitive(&xml_content, "<boottrigger>").is_some();
             
             if has_logon || has_boot {
+                if let Some(task_name) = get_task_name_from_path(&path) {
+                    if is_protected_task_name(&task_name) {
+                        continue;
+                    }
+                }
+
                 let trigger_type = if has_logon && has_boot {
                     "Scheduled Task (Logon/Boot)"
                 } else if has_logon {
@@ -256,14 +271,10 @@ pub fn list_startup_items() -> Result<Vec<StartupItem>, String> {
         ("HKCU", r"SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce"),
         ("HKCU", r"SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Run"),
         ("HKCU", r"SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\RunOnce"),
-        ("HKCU", r"SOFTWARE\Microsoft\Windows\CurrentVersion\RunServices"),
-        ("HKCU", r"SOFTWARE\Microsoft\Windows\CurrentVersion\RunServicesOnce"),
         ("HKLM", r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"),
         ("HKLM", r"SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce"),
         ("HKLM", r"SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Run"),
         ("HKLM", r"SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\RunOnce"),
-        ("HKLM", r"SOFTWARE\Microsoft\Windows\CurrentVersion\RunServices"),
-        ("HKLM", r"SOFTWARE\Microsoft\Windows\CurrentVersion\RunServicesOnce"),
     ];
 
     for (hive_name, subpath) in run_locations {
@@ -489,6 +500,9 @@ pub fn set_startup_item_status(id: String, enabled: bool) -> Result<(), String> 
         let path = Path::new(file_path_str);
         let task_name = get_task_name_from_path(path)
             .ok_or_else(|| "Failed to resolve scheduled task name".to_string())?;
+        if is_protected_task_name(&task_name) {
+            return Err("Access Denied: Windows servicing tasks under \\Microsoft\\Windows are protected.".to_string());
+        }
 
         let change_arg = if enabled { "/Enable" } else { "/Disable" };
         let secure_path = crate::winutil::get_secure_system_path();
@@ -579,6 +593,9 @@ pub fn delete_startup_item(id: String) -> Result<(), String> {
         let path = Path::new(file_path_str);
         let task_name = get_task_name_from_path(path)
             .ok_or_else(|| "Failed to resolve scheduled task name".to_string())?;
+        if is_protected_task_name(&task_name) {
+            return Err("Access Denied: Windows servicing tasks under \\Microsoft\\Windows are protected.".to_string());
+        }
 
         let secure_path = crate::winutil::get_secure_system_path();
         let output = std::process::Command::new("schtasks")
@@ -620,6 +637,14 @@ mod tests {
 
         assert!(parse_registry_startup_id(r"reg|HKCU|Environment|Path").is_err());
         assert!(parse_registry_startup_id(r"reg|HKLM|SOFTWARE\Microsoft\Windows\CurrentVersion\Run|").is_err());
+    }
+
+    #[test]
+    fn test_windows_servicing_tasks_are_protected() {
+        assert!(is_protected_task_name(r"\Microsoft\Windows\Data Integrity Scan"));
+        assert!(is_protected_task_name(r"\Microsoft\Windows\AppxDeploymentClient\Pre-staged app cleanup"));
+        assert!(!is_protected_task_name(r"\Vendor\My App Updater"));
+        assert!(!is_protected_task_name("My App"));
     }
 
     #[test]

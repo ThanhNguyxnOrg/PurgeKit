@@ -244,9 +244,18 @@ pub fn find_icon_source_for_name(display_name: &str) -> Option<String> {
 fn matches_target(target: &str, app_name: Option<&str>, install_location: Option<&str>) -> bool {
     let target = target.to_lowercase();
     if let Some(location) = install_location {
-        let location = location.trim().to_lowercase();
-        if !location.is_empty() && target.starts_with(&location) {
-            return true;
+        let location = location
+            .trim()
+            .trim_end_matches(['\\', '/'])
+            .to_lowercase();
+        if !location.is_empty() {
+            // Location wins over name matching: a shortcut that merely mentions
+            // the app name must not be treated as owned by an installed app.
+            let windows_prefix = format!("{}\\", location);
+            let unix_prefix = format!("{}/", location);
+            return target == location
+                || target.starts_with(&windows_prefix)
+                || target.starts_with(&unix_prefix);
         }
     }
     if let Some(name) = app_name {
@@ -310,6 +319,17 @@ mod tests {
         ));
         assert!(!matches_target(
             r"C:\Program Files\Other\Other.exe",
+            Some("MyApp"),
+            Some(r"C:\Program Files\MyApp")
+        ));
+        assert!(!matches_target(
+            r"C:\Program Files\MyApp2\MyApp.exe",
+            Some("MyApp"),
+            Some(r"C:\Program Files\MyApp")
+        ));
+        // With a location set, a name-only match outside it must not count.
+        assert!(!matches_target(
+            r"D:\Tools\MyApp\MyApp.exe",
             Some("MyApp"),
             Some(r"C:\Program Files\MyApp")
         ));

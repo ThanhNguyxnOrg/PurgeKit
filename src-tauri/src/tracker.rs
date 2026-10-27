@@ -3,6 +3,7 @@ use std::sync::Mutex;
 
 use usn_journal_rs::prelude::{JournalIterOptions, Usn, UsnReason, Volume};
 
+#[derive(Clone)]
 pub struct TrackingSession {
     pub start_usns: Vec<(char, u64)>,
     pub name: String,

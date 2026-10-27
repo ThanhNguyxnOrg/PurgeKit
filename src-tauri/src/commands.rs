@@ -92,6 +92,18 @@ pub async fn get_dev_tools(app: AppHandle) -> Result<Vec<DevToolInfo>, String> {
     }).await.map_err(|e| e.to_string())?
 }
 
+fn is_path_within(path: &std::path::Path, root: &std::path::Path) -> bool {
+    let path = crate::winutil::canonicalize_path_safety(&path.to_string_lossy())
+        .to_string_lossy()
+        .trim_end_matches(['\\', '/'])
+        .to_lowercase();
+    let root = crate::winutil::canonicalize_path_safety(&root.to_string_lossy())
+        .to_string_lossy()
+        .trim_end_matches(['\\', '/'])
+        .to_lowercase();
+    !root.is_empty() && (path == root || path.starts_with(&(root + "\\")))
+}
+
 #[tauri::command]
 pub async fn clean_dev_tool_cache(app: AppHandle, name: String) -> Result<u64, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -127,20 +139,31 @@ pub async fn clean_dev_tool_cache(app: AppHandle, name: String) -> Result<u64, S
         let rule = rules.iter().find(|r| r.name == name)
             .ok_or_else(|| format!("Rule configuration not found for '{}'", name))?;
 
+        let template_roots: Vec<std::path::PathBuf> = rule
+            .cache_path_templates
+            .iter()
+            .flatten()
+            .filter_map(|template| scanner::cli_dev::resolve_template_path(template))
+            .collect();
+
         let mut resolved_paths = Vec::new();
         if let Some(ref dyn_cmd) = rule.dynamic_cache_cmd {
             if let Some(dyn_path) = scanner::cli_dev::get_single_dynamic_cache_path(&name, dyn_cmd) {
-                resolved_paths.push(dyn_path);
+                // A project-level config can point a cache command at an
+                // arbitrary folder. Only trust it when it stays inside one of
+                // the rule's declared template roots.
+                if template_roots
+                    .iter()
+                    .any(|root| is_path_within(&dyn_path, root))
+                {
+                    resolved_paths.push(dyn_path);
+                }
             }
         }
         if resolved_paths.is_empty() {
-            if let Some(ref templates) = rule.cache_path_templates {
-                for temp in templates {
-                    if let Some(p) = scanner::cli_dev::resolve_template_path(temp) {
-                        if p.exists() {
-                            resolved_paths.push(p);
-                        }
-                    }
+            for root in &template_roots {
+                if root.exists() {
+                    resolved_paths.push(root.clone());
                 }
             }
         }
@@ -169,9 +192,12 @@ pub async fn clean_dev_tool_cache(app: AppHandle, name: String) -> Result<u64, S
         if !cleaned_via_cmd {
             for p in &resolved_paths {
                 if p.exists() {
-                    crate::winutil::is_safe_to_delete(&p.to_string_lossy()).map_err(|e| e.to_string())?;
-                    let _ = fs::remove_dir_all(p);
-                    let _ = fs::create_dir_all(p);
+                    crate::winutil::is_safe_to_delete(&p.to_string_lossy())
+                        .map_err(|e| e.to_string())?;
+                    fs::remove_dir_all(p)
+                        .map_err(|e| format!("Failed to remove cache directory: {}", e))?;
+                    fs::create_dir_all(p)
+                        .map_err(|e| format!("Failed to recreate cache directory: {}", e))?;
                 }
             }
         }
@@ -181,11 +207,7 @@ pub async fn clean_dev_tool_cache(app: AppHandle, name: String) -> Result<u64, S
         let updated_tool = updated_tools.iter().find(|t| t.name == name);
         let final_size = updated_tool.and_then(|t| t.cache_size).unwrap_or(0);
 
-        let freed = if initial_size > final_size {
-            initial_size - final_size
-        } else {
-            initial_size
-        };
+        let freed = initial_size.saturating_sub(final_size);
 
         let _ = app.emit("clean-progress", ProgressPayload {
             phase: "completed".into(),
@@ -785,11 +807,16 @@ pub fn clear_derived_cache() -> Result<usize, String> {
 fn disk_cache_key(path: &str) -> String {
     let trimmed = path.trim();
     if trimmed.starts_with("::") {
-        trimmed.to_ascii_lowercase()
+        return trimmed.to_ascii_lowercase();
+    }
+    let canonical = crate::winutil::canonicalize_path_safety(path)
+        .to_string_lossy()
+        .to_lowercase();
+    let without_trailing = canonical.trim_end_matches(['\\', '/']);
+    if without_trailing.is_empty() {
+        canonical
     } else {
-        crate::winutil::canonicalize_path_safety(path)
-            .to_string_lossy()
-            .to_lowercase()
+        without_trailing.to_string()
     }
 }
 
@@ -880,7 +907,7 @@ fn store_disk_index(
     result: &mut scanner::DiskScanResult,
 ) {
     if let Some(index) = result.file_index.take() {
-        let key = index.root_path.to_lowercase();
+        let key = disk_cache_key(&index.root_path);
         if let Ok(mut indexes) = cache.lock() {
             // The UI searches one scan at a time; dropping older indexes keeps
             // memory bounded on multi-hundred-thousand-file volumes.
@@ -1167,45 +1194,93 @@ pub async fn save_path_entries(remaining_values: Vec<String>, scope: String) -> 
     }).await.map_err(|e| e.to_string())?
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct UwpUninstall {
+    package_full: String,
+    all_users: bool,
+}
+
+fn parse_uwp_uninstall_command(value: &str) -> Option<UwpUninstall> {
+    const PREFIXES: [(&str, bool); 2] = [
+        (
+            "powershell -NoProfile -Command \"Remove-AppxPackage -AllUsers -Package ",
+            true,
+        ),
+        (
+            "powershell -NoProfile -Command \"Remove-AppxPackage -Package ",
+            false,
+        ),
+    ];
+
+    for (prefix, all_users) in PREFIXES {
+        if let Some(package_full) = value
+            .strip_prefix(prefix)
+            .and_then(|rest| rest.strip_suffix('"'))
+        {
+            let package_full = package_full.trim();
+            if package_full.is_empty()
+                || !package_full
+                    .chars()
+                    .all(|character| {
+                        character.is_alphanumeric()
+                            || character == '.'
+                            || character == '_'
+                            || character == '-'
+                    })
+            {
+                return None;
+            }
+            return Some(UwpUninstall {
+                package_full: package_full.to_string(),
+                all_users,
+            });
+        }
+    }
+    None
+}
+
+fn run_uwp_uninstall(
+    package_full: &str,
+    all_users: bool,
+    secure_path: &str,
+) -> Result<(), String> {
+    let script = if all_users {
+        format!("Remove-AppxPackage -AllUsers -Package {}", package_full)
+    } else {
+        format!("Remove-AppxPackage -Package {}", package_full)
+    };
+    let mut command = Command::new("powershell");
+    command
+        .creation_flags(CREATE_NO_WINDOW)
+        .env("PATH", secure_path)
+        .args(["-NoProfile", "-Command", &script]);
+    let status = crate::process::run_command_in_job(&mut command)
+        .map_err(|error| format!("Failed to spawn powershell: {}", error))?;
+    if !status.success() {
+        return Err(format!(
+            "PowerShell Remove-AppxPackage failed with exit code: {:?}",
+            status.code()
+        ));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn run_uninstall_command(uninstall_string: String) -> Result<(), String> {
     if uninstall_string.trim().is_empty() {
         return Err("Uninstall command is empty".to_string());
     }
-    
-    // Check if it is a UWP uninstall command
-    let is_uwp = uninstall_string.starts_with("powershell -NoProfile -Command \"Remove-AppxPackage -Package ") 
-        && uninstall_string.ends_with('"');
-        
+
     let secure_path = crate::winutil::get_secure_system_path();
 
-    if is_uwp {
-        let prefix = "powershell -NoProfile -Command \"Remove-AppxPackage -Package ";
-        let package_full = uninstall_string
-            .strip_prefix(prefix)
-            .and_then(|s| s.strip_suffix('"'))
-            .ok_or_else(|| "Malformed UWP uninstall string".to_string())?
-            .to_string();
-        if !package_full.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '_' || c == '-') {
-            return Err("Invalid UWP package name or contains unsafe characters".to_string());
-        }
-        
-        let path_clone = secure_path.clone();
+    if let Some(uwp) = parse_uwp_uninstall_command(&uninstall_string) {
         return tauri::async_runtime::spawn_blocking(move || {
-            let mut command = Command::new("powershell");
-            command
-                .creation_flags(CREATE_NO_WINDOW)
-                .env("PATH", &path_clone)
-                .args(&["-NoProfile", "-Command", &format!("Remove-AppxPackage -Package {}", package_full)]);
-            let status = crate::process::run_command_in_job(&mut command)
-                .map_err(|e| format!("Failed to spawn powershell: {}", e))?;
-            if !status.success() {
-                return Err(format!("PowerShell Remove-AppxPackage failed with exit code: {:?}", status.code()));
-            }
-            Ok(())
-        }).await.map_err(|e| e.to_string())?;
+            run_uwp_uninstall(&uwp.package_full, uwp.all_users, &secure_path)
+        })
+        .await
+        .map_err(|error| error.to_string())?;
     }
-    
+
     if let Err(e) = validate_uninstall_command_safety(&uninstall_string) {
         return Err(e);
     }
@@ -1374,9 +1449,14 @@ pub async fn stop_install_tracking(
 ) -> Result<SnapshotRecord, String> {
     let state_clone = state.0.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        // Clone instead of consuming: a failed snapshot write must not lose the
+        // tracking baseline before the user can retry.
         let session = {
-            let mut active = state_clone.lock().map_err(|e| e.to_string())?;
-            active.take().ok_or_else(|| "No active installation tracking session is running".to_string())?
+            let active = state_clone.lock().map_err(|e| e.to_string())?;
+            active
+                .as_ref()
+                .cloned()
+                .ok_or_else(|| "No active installation tracking session is running".to_string())?
         };
 
         let usn_changes =
@@ -1462,6 +1542,11 @@ pub async fn stop_install_tracking(
                 file_count
             ],
         ).map_err(|e| e.to_string())?;
+
+        // The snapshot is durable now; only then drop the tracking baseline.
+        if let Ok(mut active) = state_clone.lock() {
+            *active = None;
+        }
 
         Ok(SnapshotRecord {
             id,
@@ -1553,21 +1638,32 @@ fn validate_uninstall_command_safety(cmd_str: &str) -> Result<(), String> {
         }
     }
 
-    let user_profile = std::env::var("USERPROFILE").unwrap_or_default().to_lowercase();
-    if !user_profile.is_empty() && exe_lower.starts_with(&user_profile) {
+    // A bare executable name (for example MsiExec.exe) resolves through the
+    // secure system PATH; an absolute path must exist and be an executable.
+    let has_separator = exe_path.contains('\\') || exe_path.contains('/');
+    if has_separator {
         let path = std::path::Path::new(&exe_path);
         if !path.exists() {
             return Err(format!("Uninstaller executable does not exist: {}", exe_path));
         }
-        
-        let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+
+        let ext = path
+            .extension()
+            .map(|extension| extension.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
         if ext != "exe" {
-            return Err(format!("Execution blocked: Uninstaller uses a non-executable script/file ({}) from a user-writable folder.", ext));
+            return Err(format!(
+                "Execution blocked: Uninstaller uses a non-executable script/file ({}) from an absolute path.",
+                ext
+            ));
         }
 
-        if is_elevated::is_elevated() && !crate::winutil::verify_file_signature(&exe_path) {
+        if is_elevated::is_elevated()
+            && !is_trusted_executable_location(&exe_path)
+            && !crate::winutil::verify_file_signature(&exe_path)
+        {
             return Err(format!(
-                "Security Block: The uninstaller executable '{}' resides in a user-writable folder and is UNSIGNED. Running this elevated poses a Local Privilege Escalation risk.",
+                "Security Block: The elevated uninstaller '{}' is outside Program Files/Windows and is UNSIGNED. Running it elevated poses a Local Privilege Escalation risk.",
                 exe_path
             ));
         }
@@ -1576,15 +1672,30 @@ fn validate_uninstall_command_safety(cmd_str: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn is_trusted_executable_location(path: &str) -> bool {
+    let target = crate::winutil::canonicalize_path_safety(path)
+        .to_string_lossy()
+        .to_lowercase();
+    ["SystemRoot", "ProgramFiles", "ProgramFiles(x86)"]
+        .into_iter()
+        .filter_map(|key| std::env::var_os(key))
+        .map(|value| {
+            crate::winutil::canonicalize_path_safety(&value.to_string_lossy())
+                .to_string_lossy()
+                .trim_end_matches(['\\', '/'])
+                .to_lowercase()
+        })
+        .any(|root| {
+            !root.is_empty() && (target == root || target.starts_with(&(root + "\\")))
+        })
+}
+
 fn remnant_requires_admin(item: &RemnantItem) -> bool {
     if item.item_type == "RegistryKey" || item.item_type == "RegistryValue" {
         return item.path.to_uppercase().starts_with("HKLM");
     }
     if item.item_type == "File" || item.item_type == "Directory" {
-        let path_upper = item.path.to_uppercase();
-        return path_upper.contains("PROGRAM FILES") 
-            || path_upper.contains("WINDOWS") 
-            || path_upper.starts_with("C:\\PROGRAMDATA");
+        return path_requires_admin(&item.path);
     }
     false
 }
@@ -1695,6 +1806,35 @@ pub async fn list_quarantine_items() -> Result<Vec<QuarantineItem>, String> {
     }).await.map_err(|e| e.to_string())?
 }
 
+fn ensure_restore_destination_available(path: &std::path::Path) -> Result<(), String> {
+    if path.symlink_metadata().is_ok() {
+        return Err(format!(
+            "Cannot restore: the original path already exists ({}). Move or delete it first.",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn path_requires_admin(path: &str) -> bool {
+    let target = crate::winutil::canonicalize_path_safety(path)
+        .to_string_lossy()
+        .to_lowercase();
+    ["SystemRoot", "ProgramFiles", "ProgramFiles(x86)", "ProgramData"]
+        .into_iter()
+        .filter_map(|key| std::env::var_os(key))
+        .map(|value| {
+            crate::winutil::canonicalize_path_safety(&value.to_string_lossy())
+                .to_string_lossy()
+                .trim_end_matches(['\\', '/'])
+                .to_lowercase()
+        })
+        .any(|root| {
+            !root.is_empty()
+                && (target == root || target.starts_with(&(root + "\\")))
+        })
+}
+
 #[tauri::command]
 pub async fn restore_quarantine_item(id: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -1732,14 +1872,9 @@ pub async fn restore_quarantine_item(id: String) -> Result<(), String> {
         if let Err(e) = crate::winutil::is_safe_to_delete(&item.original_path) {
             return Err(format!("Restoration blocked: {}", e));
         }
-        
-        // Admin pre-check if restoring to protected system folders
-        let dest_upper = item.original_path.to_uppercase();
-        let is_system = dest_upper.contains("PROGRAM FILES") 
-            || dest_upper.contains("WINDOWS") 
-            || dest_upper.starts_with("C:\\PROGRAMDATA");
-            
-        if is_system && !crate::settings::check_is_admin() {
+        ensure_restore_destination_available(dest_path)?;
+
+        if path_requires_admin(&item.original_path) && !crate::settings::check_is_admin() {
             return Err("Restoring system files requires Administrator privileges. Please restart the application as Administrator.".to_string());
         }
 
@@ -1937,25 +2072,14 @@ pub async fn run_bulk_silent_uninstall(
 
             let secure_path = crate::winutil::get_secure_system_path();
             let mut uninstall_success = if target_app.is_uwp {
-                if let Some(ref uninst_str) = target_app.uninstall_string {
-                    let prefix = "powershell -NoProfile -Command \"Remove-AppxPackage -Package ";
-                    if let Some(package_full) = uninst_str.strip_prefix(prefix).and_then(|s| s.strip_suffix('"')) {
-                        if package_full.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '_' || c == '-') {
-                            let status = Command::new("powershell")
-                                .creation_flags(CREATE_NO_WINDOW)
-                                .env("PATH", &secure_path)
-                                .args(&["-NoProfile", "-Command", &format!("Remove-AppxPackage -Package {}", package_full)])
-                                .status();
-                            status.map(|s| s.success()).unwrap_or(false)
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
+                target_app
+                    .uninstall_string
+                    .as_deref()
+                    .and_then(parse_uwp_uninstall_command)
+                    .map(|uwp| {
+                        run_uwp_uninstall(&uwp.package_full, uwp.all_users, &secure_path).is_ok()
+                    })
+                    .unwrap_or(false)
             } else if let Some(silent_cmd) = get_silent_uninstall_command(target_app) {
                 validate_uninstall_command_safety(&silent_cmd).is_ok()
                     && run_parsed_uninstall_command(&silent_cmd, &secure_path)
@@ -2037,7 +2161,9 @@ pub async fn run_bulk_silent_uninstall(
                 target_app.install_location.as_deref(),
             );
 
-            if auto_purge {
+            // Never auto-purge leftovers for an app whose uninstaller did not
+            // complete: the files may still belong to a live installation.
+            if auto_purge && uninstall_success {
                 let mut success = 0;
                 let mut fail = 0;
                 let mut remaining = Vec::new();
@@ -2077,7 +2203,14 @@ pub async fn run_bulk_silent_uninstall(
                     phase: "completed".into(),
                     current,
                     total,
-                    message: format!("Uninstalled and collected remnants for {}.", app_name),
+                    message: if uninstall_success {
+                        format!("Uninstalled and collected remnants for {}.", app_name)
+                    } else {
+                        format!(
+                            "Uninstaller did not complete for {}; leftovers were collected but not purged.",
+                            app_name
+                        )
+                    },
                 });
             }
         }
@@ -2239,6 +2372,28 @@ mod tests {
     }
 
     #[test]
+    fn test_restore_destination_must_be_vacant() {
+        let path = std::env::temp_dir().join("purgekit_restore_destination_test");
+        let _ = std::fs::remove_file(&path);
+        assert!(ensure_restore_destination_available(&path).is_ok());
+        std::fs::write(&path, b"occupied").unwrap();
+        assert!(ensure_restore_destination_available(&path).is_err());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_path_admin_check_uses_path_boundaries() {
+        let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
+        assert!(path_requires_admin(&format!(
+            r"{}\System32\notepad.exe",
+            system_root
+        )));
+        assert!(!path_requires_admin(
+            r"C:\Users\Public\Documents\Windows Themes"
+        ));
+    }
+
+    #[test]
     fn test_normalize_scan_targets_removes_duplicates_and_nested_paths() {
         let base = std::env::temp_dir().join("purgekit_scan_targets_test");
         let first = base.join("first");
@@ -2296,6 +2451,81 @@ mod tests {
             r"Software\Microsoft\Windows\CurrentVersion\Uninstall"
         )
         .is_err());
+    }
+
+    #[test]
+fn test_dynamic_cache_path_must_stay_under_template_root() {
+        let root = std::env::temp_dir().join("purgekit_cache_root_test");
+        let child = root.join("cache");
+        let outside = std::env::temp_dir().join("purgekit_cache_outside_test");
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
+        std::fs::create_dir_all(&child).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        assert!(is_path_within(&child, &root));
+        assert!(!is_path_within(&outside, &root));
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn test_disk_cache_keys_ignore_trailing_separators() {
+        assert_eq!(disk_cache_key("C:\\"), "c:");
+        assert_eq!(disk_cache_key("C:\\Folder\\"), "c:\\folder");
+        assert_eq!(disk_cache_key("C:\\Folder"), "c:\\folder");
+        assert_eq!(disk_cache_key("::multi::2"), "::multi::2");
+    }
+
+    #[test]
+    fn test_trusted_executable_location_boundaries() {
+        let program_files =
+            std::env::var("ProgramFiles").unwrap_or_else(|_| r"C:\Program Files".to_string());
+        assert!(is_trusted_executable_location(&format!(
+            r"{}\Vendor\uninstall.exe",
+            program_files
+        )));
+        assert!(!is_trusted_executable_location(r"C:\Temp\payload.exe"));
+    }
+
+    #[test]
+    fn test_uninstall_validation_rejects_non_executable_absolute_paths() {
+        let path = std::env::temp_dir().join("purgekit_uninstall_validation_test.txt");
+        std::fs::write(&path, b"not an exe").unwrap();
+        let command = format!("\"{}\" /S", path.to_string_lossy());
+        let error = validate_uninstall_command_safety(&command).unwrap_err();
+        assert!(error.contains("non-executable"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_parse_uwp_uninstall_commands_with_and_without_all_users() {
+        let package = "Microsoft.WindowsCalculator_11.2210.0.0_x64__8wekyb3d8bbwe";
+        let single = format!(
+            "powershell -NoProfile -Command \"Remove-AppxPackage -Package {}\"",
+            package
+        );
+        let all_users = format!(
+            "powershell -NoProfile -Command \"Remove-AppxPackage -AllUsers -Package {}\"",
+            package
+        );
+        assert_eq!(
+            parse_uwp_uninstall_command(&single),
+            Some(UwpUninstall {
+                package_full: package.to_string(),
+                all_users: false,
+            })
+        );
+        assert_eq!(
+            parse_uwp_uninstall_command(&all_users),
+            Some(UwpUninstall {
+                package_full: package.to_string(),
+                all_users: true,
+            })
+        );
+        assert!(parse_uwp_uninstall_command(
+            "powershell -NoProfile -Command \"Remove-AppxPackage -Package calc;calc\""
+        )
+        .is_none());
     }
 
     #[test]

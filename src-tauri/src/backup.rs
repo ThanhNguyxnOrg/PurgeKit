@@ -103,6 +103,12 @@ pub fn copy_dir_all(src: impl AsRef<std::path::Path>, dst: impl AsRef<std::path:
 }
 
 fn restore_quarantined_item(src_path: &Path, dest_path: &Path) -> Result<(), String> {
+    if src_path.symlink_metadata().is_ok() {
+        return Err(format!(
+            "Cannot restore: the original path already exists ({})",
+            src_path.display()
+        ));
+    }
     if let Some(parent) = src_path.parent() {
         let _ = fs::create_dir_all(parent);
     }
@@ -210,6 +216,29 @@ pub fn quarantine_file_or_directory(path_str: &str) -> Result<PathBuf, String> {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn test_restore_refuses_to_overwrite_an_existing_path() {
+        let root = std::env::temp_dir().join("purgekit_restore_overwrite_test");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let original = root.join("original.txt");
+        let quarantined = root.join("quarantined.txt");
+        fs::write(&original, b"new file").unwrap();
+        fs::write(&quarantined, b"old file").unwrap();
+
+        let error = restore_quarantined_item(&original, &quarantined).unwrap_err();
+        assert!(error.contains("already exists"));
+        assert_eq!(fs::read(&original).unwrap(), b"new file");
+        assert_eq!(fs::read(&quarantined).unwrap(), b"old file");
+
+        fs::remove_file(&original).unwrap();
+        restore_quarantined_item(&original, &quarantined).unwrap();
+        assert_eq!(fs::read(&original).unwrap(), b"old file");
+        assert!(!quarantined.exists());
+
+        let _ = fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn test_quarantine_file() {

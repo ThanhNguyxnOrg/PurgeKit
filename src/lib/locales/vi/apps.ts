@@ -245,6 +245,22 @@ const apps: Record<string, string> = {
   "Purge completed! Removed {count} leftover items.":
     "Đã dọn xong! Đã xoá {count} mục còn sót.",
   "Error purging leftovers: {error}": "Lỗi khi dọn phần còn sót: {error}",
+  "Restart PurgeKit as Administrator? The current window will close.":
+    "Khởi động lại PurgeKit bằng quyền Quản trị? Cửa sổ hiện tại sẽ đóng.",
+  "Could not restart as Administrator: {error}":
+    "Không thể khởi động lại bằng quyền Quản trị: {error}",
+  "Some selected applications require Administrator privileges. Restart PurgeKit as Administrator and try again.":
+    "Một số ứng dụng đã chọn cần quyền Quản trị. Hãy khởi động lại PurgeKit bằng quyền Quản trị rồi thử lại.",
+  "Administrator rights are required. Restart PurgeKit as Administrator to continue.":
+    "Cần quyền Quản trị. Hãy khởi động lại PurgeKit bằng quyền Quản trị để tiếp tục.",
+  "Restart as Administrator": "Khởi động lại bằng quyền Quản trị",
+  "Uninstaller did not complete": "Trình gỡ cài đặt chưa hoàn tất",
+  "No leftovers were detected, but the uninstaller reported an error. Verify the app is gone before retrying.":
+    "Không phát hiện phần còn sót, nhưng trình gỡ cài đặt báo lỗi. Hãy kiểm tra ứng dụng đã biến mất trước khi thử lại.",
+  "The uninstaller did not complete. Leftovers are shown for review but are not pre-selected; only purge items you are sure about.":
+    "Trình gỡ cài đặt chưa hoàn tất. Các phần còn sót được hiển thị để xem nhưng không được chọn sẵn; chỉ dọn những mục bạn chắc chắn.",
+  "Some leftovers were not auto-purged, or an uninstaller did not complete. Review each item below before cleaning it permanently.":
+    "Một số phần còn sót chưa được tự động dọn, hoặc trình gỡ cài đặt chưa hoàn tất. Hãy xem từng mục bên dưới trước khi xoá vĩnh viễn.",
 };
 
 export default apps;

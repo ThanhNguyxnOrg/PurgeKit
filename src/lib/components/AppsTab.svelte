@@ -54,6 +54,7 @@
   let categoryFilter = $state("all");
   let sortBy = $state<"name" | "size" | "source">("name");
   let isLoading = $state(true);
+  let isAdmin = $state(false);
   let statusMessage = $state(t("Scanning applications, Store packages & developer tools..."));
 
   // Uninstall preflight: confirm exactly what will run and what is backed up.
@@ -138,6 +139,9 @@
 
   onMount(() => {
     loadApps();
+    invoke<boolean>("check_is_admin")
+      .then((value) => { isAdmin = value; })
+      .catch(() => {});
 
     const unlistenScan = listen<{ phase: string; current: number; total: number; message: string }>(
       "scan-progress",
@@ -290,6 +294,7 @@
 
   let uninstallStep = $state("idle");
   let uninstallStatusText = $state("");
+  let remnantsUninstallFailed = $state(false);
 
   // Handle standard uninstall and leftovers scanning flow
   async function startUninstallFlow(app: InstalledApp) {
@@ -297,6 +302,7 @@
     remnants = [];
     selectedRemnants = {};
     purgeResult = null;
+    remnantsUninstallFailed = false;
     isScanningRemnants = false;
     
     // Step 1: Run official uninstaller (if present)
@@ -307,6 +313,7 @@
         await invoke("run_uninstall_command", { uninstallString: app.uninstall_string });
       } catch (e: any) {
         console.error("Official uninstaller failed or was closed:", e);
+        remnantsUninstallFailed = true;
         toast.show(t("The official uninstaller returned an error or was closed."), "warning");
       }
     }
@@ -324,10 +331,11 @@
         appId: app.is_uwp ? app.id : null,
       });
 
-      // Only auto-select the strongest evidence. High/Medium/Low items remain
-      // visible but require an explicit user choice.
+      // Only auto-select the strongest evidence. If the uninstaller did not
+      // complete, nothing is pre-selected: the app may still be installed.
       remnants.forEach((item) => {
-        selectedRemnants[item.path] = item.confidence === "VeryHigh";
+        selectedRemnants[item.path] =
+          !remnantsUninstallFailed && item.confidence === "VeryHigh";
       });
     } catch (e) {
       console.error("Failed to scan remnants:", e);
@@ -429,6 +437,15 @@
       console.error("Failed to load uninstall settings:", e);
     } finally {
       isPreflightLoading = false;
+    }
+  }
+
+  async function restartAsAdmin() {
+    if (!confirm(t("Restart PurgeKit as Administrator? The current window will close."))) return;
+    try {
+      await invoke("restart_as_admin");
+    } catch (error: any) {
+      toast.show(t("Could not restart as Administrator: {error}", { error: error.toString() }), "error");
     }
   }
 
@@ -589,6 +606,7 @@
     remnants = [];
     selectedRemnants = {};
     purgeResult = null;
+    remnantsUninstallFailed = false;
     uninstallStep = "idle";
     // The app may have been removed by the official uninstaller even if the
     // user closes the leftover review without purging anything.
@@ -693,6 +711,15 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
       .filter(([id, val]) => val && visibleIds.has(id))
       .map(([id]) => id);
     if (selectedIds.length === 0) return;
+
+    const selectedAppsList = filteredApps.filter((app) => selectedIds.includes(app.id));
+    if (!isAdmin && selectedAppsList.some((app) => app.requires_admin)) {
+      toast.show(
+        t("Some selected applications require Administrator privileges. Restart PurgeKit as Administrator and try again."),
+        "error"
+      );
+      return;
+    }
 
     isBulkUninstalling = true;
     bulkUninstallStep = "running";
@@ -1196,7 +1223,17 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
               <p class="text-text-primary break-all">{t("Run the registered uninstaller:")} <span class="font-mono">{preflightApp.uninstall_string || t("no uninstall string")}</span></p>
             {/if}
             {#if preflightApp.requires_admin}
-              <p class="text-amber-300">{t("Administrator rights are required for this operation.")}</p>
+              {#if isAdmin}
+                <p class="text-amber-300">{t("Administrator rights are required for this operation.")}</p>
+              {:else}
+                <p class="text-danger">{t("Administrator rights are required. Restart PurgeKit as Administrator to continue.")}</p>
+                <button
+                  onclick={restartAsAdmin}
+                  class="mt-1 px-2.5 py-1.5 rounded-lg bg-accent hover:bg-accent-hover text-white text-[11px] font-semibold transition-colors"
+                >
+                  {t("Restart as Administrator")}
+                </button>
+              {/if}
             {/if}
             {#if preflightApp.is_active}
               <p class="text-amber-300">{t("WARNING: this toolchain is currently ACTIVE. Removing it can break existing projects.")}</p>
@@ -1226,7 +1263,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
               </p>
               <button
                 onclick={() => forceRemovePreflight()}
-                disabled={isForceRemoving}
+                disabled={isForceRemoving || (preflightApp.requires_admin && !isAdmin)}
                 class="px-3 py-1.5 rounded-lg bg-danger/10 hover:bg-danger text-danger hover:text-white border border-danger/20 text-xs font-semibold transition-all disabled:opacity-40"
               >
                 {isForceRemoving ? t("Force removing…") : t("Force Remove")}
@@ -1245,7 +1282,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
           </button>
           <button
             onclick={confirmPreflight}
-            disabled={isForceRemoving || isPreflightLoading}
+            disabled={isForceRemoving || isPreflightLoading || (preflightApp.requires_admin && !isAdmin)}
             class="flex items-center gap-1.5 px-5 py-2 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white transition-all active:scale-95 disabled:opacity-50"
           >
             <Trash2 class="w-3.5 h-3.5" />
@@ -1324,11 +1361,22 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
             {#if remnants.length === 0}
               {#if !purgeResult}
                 <div class="p-8 text-center border border-dashed border-border-default rounded-lg bg-surface-bg/30 flex flex-col items-center justify-center">
-                  <span class="text-sm font-sans text-text-primary font-medium">{t("No Remnants Detected!")}</span>
-                  <span class="text-xs text-text-muted mt-1">{t("This application was successfully uninstalled without leaving residual traces.")}</span>
+                  <span class="text-sm font-sans text-text-primary font-medium">
+                    {remnantsUninstallFailed ? t("Uninstaller did not complete") : t("No Remnants Detected!")}
+                  </span>
+                  <span class="text-xs text-text-muted mt-1">
+                    {remnantsUninstallFailed
+                      ? t("No leftovers were detected, but the uninstaller reported an error. Verify the app is gone before retrying.")
+                      : t("This application was successfully uninstalled without leaving residual traces.")}
+                  </span>
                 </div>
               {/if}
             {:else}
+              {#if remnantsUninstallFailed && !purgeResult}
+                <div class="p-3 rounded-lg bg-warning/10 border border-warning/20 text-xs text-warning">
+                  {t("The uninstaller did not complete. Leftovers are shown for review but are not pre-selected; only purge items you are sure about.")}
+                </div>
+              {/if}
               <!-- Toolbar selection -->
               <div class="flex items-center justify-between pb-2 text-xs border-b border-border-default">
                 <div class="flex gap-2">
@@ -1598,7 +1646,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                 <span class="text-base">⚠️</span>
                 <div>
                   <h4 class="font-bold">{t("Remaining Leftovers Detected")}</h4>
-                  <p class="mt-1 text-text-muted">{t("The uninstaller completed, but some confidence-level remnants couldn't be auto-purged (or auto-purge was disabled). Review and select below to clean them permanently.")}</p>
+                  <p class="mt-1 text-text-muted">{t("Some leftovers were not auto-purged, or an uninstaller did not complete. Review each item below before cleaning it permanently.")}</p>
                 </div>
               </div>
 

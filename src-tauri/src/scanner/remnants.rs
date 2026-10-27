@@ -578,6 +578,17 @@ fn scan_directory_remnants_recursive_impl(
             None => continue,
         };
 
+        // Never follow junctions or symlinks: a matching name must not let a
+        // purge escape into a folder outside the scanned tree.
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(_) => continue,
+        };
+        if metadata.file_type().is_symlink() || crate::winutil::is_reparse_point(&metadata) {
+            continue;
+        }
+        let is_dir = metadata.is_dir();
+
         let mut matches = is_remnant_match(name, token, strict);
         if matches && name.starts_with('.') && strict {
             let user_profile = env::var("USERPROFILE").unwrap_or_default().to_lowercase();
@@ -591,11 +602,11 @@ fn scan_directory_remnants_recursive_impl(
         }
 
         if matches {
-            let item_type = if path.is_dir() { "Directory" } else { "File" };
-            let size = if path.is_dir() {
+            let item_type = if is_dir { "Directory" } else { "File" };
+            let size = if is_dir {
                 super::cli_dev::calculate_dir_size(&path)
             } else {
-                entry.metadata().map(|m| m.len()).unwrap_or(0)
+                metadata.len()
             };
 
             remnants.push(RemnantItem {
@@ -605,7 +616,7 @@ fn scan_directory_remnants_recursive_impl(
                 confidence: "Medium".to_string(),
                 score: base_score,
             });
-        } else if path.is_dir() {
+        } else if is_dir {
             let new_strict = is_sensitive_directory(&path);
             scan_directory_remnants_recursive_impl(&path, token, base_score, remnants, depth + 1, max_depth, new_strict);
         }
