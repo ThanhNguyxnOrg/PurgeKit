@@ -162,6 +162,21 @@
 
   let scanRootWeight = $derived(result ? nodeWeight(result.root) : 0);
 
+  let duplicateStats = $derived(
+    buildDuplicateStats(result?.duplicate_groups ?? [])
+  );
+
+  function buildDuplicateStats(groups: DuplicateGroup[]): Map<string, { count: number; waste: number }> {
+    const stats = new Map<string, { count: number; waste: number }>();
+    for (const group of groups) {
+      const waste = group.size_bytes * (group.file_count - 1);
+      for (const file of group.files) {
+        stats.set(file.path, { count: group.file_count, waste });
+      }
+    }
+    return stats;
+  }
+
   function fileSharePercent(file: DiskFile): string {
     if (scanRootWeight <= 0) return "0.0";
     return ((Math.max(file.allocated_bytes, file.size_bytes) / scanRootWeight) * 100).toFixed(1);
@@ -684,8 +699,9 @@
     }
 
     const escapeCsv = (value: string) => `"${value.replace(/"/g, '""')}"`;
+    const duplicateColumns = result.duplicate_mode !== "off";
     const rows = [
-      ["Name", "Path", "Extension", "Modified", "Attributes", "SharePercent", "LogicalBytes", "AllocatedBytes"],
+      ["Name", "Path", "Extension", "Modified", "Attributes", "SharePercent", "LogicalBytes", "AllocatedBytes", ...(duplicateColumns ? ["DupCount", "DupWasteBytes"] : [])],
       ...displayFiles.map((file) => [
         file.name,
         file.path,
@@ -695,6 +711,7 @@
         fileSharePercent(file),
         String(file.size_bytes),
         String(file.allocated_bytes),
+        ...(duplicateColumns ? [String(duplicateStats.get(file.path)?.count ?? 0), String(duplicateStats.get(file.path)?.waste ?? 0)] : []),
       ]),
     ];
     const csv = "\uFEFF" + rows.map((row) => row.map(escapeCsv).join(",")).join("\n");
@@ -1331,6 +1348,10 @@
                     </button>
                   </th>
                   <th class="px-4 py-3 text-right">Logical</th>
+                  {#if result.duplicate_mode !== "off"}
+                    <th class="px-4 py-3 text-right">Dup Count</th>
+                    <th class="px-4 py-3 text-right">Dup Waste</th>
+                  {/if}
                 </tr>
               </thead>
               <tbody class="divide-y divide-border-default">
@@ -1354,10 +1375,18 @@
                     <td class="px-4 py-2.5 text-right font-mono text-data-cyan">{fileSharePercent(file)}%</td>
                     <td class="px-4 py-2.5 text-right font-mono text-text-primary">{formatBytes(file.allocated_bytes)}</td>
                     <td class="px-4 py-2.5 text-right font-mono text-text-muted">{formatBytes(file.size_bytes)}</td>
+                    {#if result.duplicate_mode !== "off"}
+                      <td class="px-4 py-2.5 text-right font-mono text-text-muted">
+                        {duplicateStats.get(file.path)?.count ?? "—"}
+                      </td>
+                      <td class="px-4 py-2.5 text-right font-mono text-text-muted">
+                        {duplicateStats.get(file.path) ? formatBytes(duplicateStats.get(file.path)!.waste) : "—"}
+                      </td>
+                    {/if}
                   </tr>
                 {:else}
                   <tr>
-                    <td colspan="7" class="px-4 py-8 text-center text-text-muted">
+                    <td colspan={result.duplicate_mode !== "off" ? 9 : 7} class="px-4 py-8 text-center text-text-muted">
                       {isSearching ? "Searching indexed files…" : isSearchActive ? "No scanned files match this search." : "No top files match this filter."}
                     </td>
                   </tr>
