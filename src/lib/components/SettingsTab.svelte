@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Shield, HardDrive, Info, Heart, RefreshCw, Bug, ExternalLink, CheckCircle, Trash2, Lightbulb } from "@lucide/svelte";
+  import { Shield, HardDrive, Info, Heart, RefreshCw, Bug, ExternalLink, CheckCircle, Trash2, Lightbulb, Database } from "@lucide/svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { invoke } from "@tauri-apps/api/core";
   import { getVersion } from "@tauri-apps/api/app";
@@ -35,6 +35,21 @@
   let pendingRebootItems = $state<PendingRebootItem[]>([]);
   let isLoadingPendingReboot = $state(false);
 
+  interface DerivedCacheSummary {
+    entries: number;
+    bytes: number;
+  }
+
+  let cacheSummary = $state<DerivedCacheSummary | null>(null);
+  let isClearingCache = $state(false);
+
+  function formatBytes(bytes: number): string {
+    if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+    const units = ["B", "KB", "MB", "GB"];
+    const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+    return `${(bytes / Math.pow(1024, index)).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+  }
+
   async function loadPendingReboot() {
     isLoadingPendingReboot = true;
     try {
@@ -43,6 +58,30 @@
       console.error("Failed to load pending reboot items:", e);
     } finally {
       isLoadingPendingReboot = false;
+    }
+  }
+
+  async function loadCacheSummary() {
+    try {
+      cacheSummary = await invoke<DerivedCacheSummary>("get_derived_cache_summary");
+    } catch (e) {
+      console.error("Failed to load app cache summary:", e);
+    }
+  }
+
+  async function clearDerivedCache() {
+    if (!confirm("Clear cached install locations, icons and sizes? The next app refresh will rebuild them.")) {
+      return;
+    }
+    isClearingCache = true;
+    try {
+      const removed = await invoke<number>("clear_derived_cache");
+      toast.show(`Cleared ${removed.toLocaleString()} cached app records.`, "success");
+      await loadCacheSummary();
+    } catch (e: any) {
+      toast.show(`Could not clear the app cache: ${e.toString()}`, "error");
+    } finally {
+      isClearingCache = false;
     }
   }
 
@@ -214,6 +253,7 @@
     loadQuarantine();
     loadPendingReboot();
     loadAppVersion();
+    loadCacheSummary();
   });
 </script>
 
@@ -330,6 +370,37 @@
           </button>
         </div>
       {/if}
+    </section>
+
+    <!-- App inventory cache -->
+    <section class="border border-border-default rounded-lg bg-surface-bg/30 p-5 space-y-4">
+      <h3 class="text-sm font-bold text-text-primary flex items-center gap-2">
+        <Database class="w-4 h-4 text-accent" />
+        App Inventory Cache
+      </h3>
+      <p class="text-xs text-text-muted font-sans leading-relaxed">
+        Caches resolved install locations, icons and sizes so refreshing the app list skips
+        expensive folder scans. Registry changes invalidate entries, and cached paths are
+        checked again before use.
+      </p>
+      <div class="flex items-center justify-between gap-3 p-3.5 rounded-lg bg-app-bg border border-border-default">
+        <div class="flex flex-col">
+          <span class="text-xs font-bold text-text-primary">
+            {cacheSummary ? `${cacheSummary.entries.toLocaleString()} apps cached` : "Cache not loaded"}
+          </span>
+          <span class="text-[10px] text-text-muted font-mono mt-0.5">
+            {cacheSummary ? `${formatBytes(cacheSummary.bytes)} on disk` : "—"}
+          </span>
+        </div>
+        <button
+          onclick={clearDerivedCache}
+          disabled={isClearingCache || !cacheSummary || cacheSummary.entries === 0}
+          class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-danger/10 hover:bg-danger text-danger hover:text-white border border-danger/20 text-[11px] font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <Trash2 class="w-3.5 h-3.5" />
+          {isClearingCache ? "Clearing…" : "Clear cache"}
+        </button>
+      </div>
     </section>
 
     <!-- Quarantine Manager Section -->

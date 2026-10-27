@@ -675,6 +675,16 @@ fn collect_pending_reboot_operations(
     }
 }
 
+#[tauri::command]
+pub fn get_derived_cache_summary() -> scanner::derived_cache::DerivedCacheSummary {
+    scanner::derived_cache::summary()
+}
+
+#[tauri::command]
+pub fn clear_derived_cache() -> Result<usize, String> {
+    scanner::derived_cache::clear_cache()
+}
+
 fn disk_cache_key(path: &str) -> String {
     let trimmed = path.trim();
     if trimmed.starts_with("::") {

@@ -37,6 +37,8 @@ pub fn run() {
             commands::delete_snapshot,
             commands::compare_snapshots,
             commands::get_pending_reboot_items,
+            commands::get_derived_cache_summary,
+            commands::clear_derived_cache,
             commands::scan_disk_space,
             commands::scan_disk_space_multi,
             commands::cancel_disk_scan,

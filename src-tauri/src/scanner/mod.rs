@@ -15,6 +15,7 @@ pub mod portable_apps;
 pub mod disk_scan;
 pub mod csv_scan;
 pub mod mft_scan;
+pub mod derived_cache;
 pub mod dev_extensions;
 pub mod shortcuts;
 

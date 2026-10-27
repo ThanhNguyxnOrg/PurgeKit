@@ -79,6 +79,7 @@ pub fn scan_registry() -> Vec<InstalledApp> {
     );
 
     deduplicate_apps(&mut apps);
+    super::derived_cache::finish_scan();
 
     apps
 }
@@ -159,6 +160,61 @@ fn scan_uninstall_key(
         let mut install_location: Option<String> = subkey.get_value("InstallLocation").ok();
         let install_date: Option<String> = subkey.get_value("InstallDate").ok();
         let mut display_icon: Option<String> = subkey.get_value("DisplayIcon").ok();
+
+        // EstimatedSize: Windows stores KiB -> multiply by 1024 to get bytes
+        let estimated_size: Option<u64> = subkey
+            .get_value("EstimatedSize")
+            .map(|val: u32| (val as u64) * 1024)
+            .ok();
+
+        let registry_path = format!(r"{}\{}", subpath, name);
+
+        // Filter system components / hidden components (SystemComponent = 1)
+        let system_component: u32 = subkey.get_value("SystemComponent").unwrap_or(0);
+        if system_component == 1 {
+            continue;
+        }
+
+        let fingerprint = derived_fingerprint(
+            display_name,
+            display_version.as_deref(),
+            uninstall_string.as_deref(),
+            display_icon.as_deref(),
+            install_location.as_deref(),
+            install_date.as_deref(),
+            estimated_size,
+        );
+        let cache_key = format!("{}|{}", hive_name, registry_path).to_lowercase();
+
+        // Cached location/icon/size values skip MSI property queries, folder
+        // scans and icon extraction. The fingerprint invalidates the entry when
+        // registry values change; stale paths are discarded before display.
+        if let Some(cached) = super::derived_cache::lookup(&cache_key, &fingerprint) {
+            let cached_install = cached
+                .install_location
+                .filter(|location| Path::new(location.trim().trim_matches('"')).is_dir());
+            let cached_icon = cached.display_icon.or(display_icon);
+            apps.push(InstalledApp {
+                id: name,
+                display_name: display_name.to_string(),
+                display_version,
+                publisher,
+                uninstall_string,
+                quiet_uninstall_string,
+                modify_path,
+                release_type,
+                install_location: cached_install,
+                install_date,
+                display_icon: cached_icon,
+                icon_base64: cached.icon_base64,
+                estimated_size: cached.estimated_size.or(estimated_size),
+                registry_path,
+                hive: hive_name.to_string(),
+                is_uwp: false,
+                is_verified: cached.is_verified,
+            });
+            continue;
+        }
 
         let is_msi = name.starts_with('{') && name.ends_with('}') && name.len() == 38;
         if is_msi {
@@ -331,53 +387,26 @@ fn scan_uninstall_key(
             }
         }
         
-        // EstimatedSize: Windows stores KiB -> multiply by 1024 to get bytes
-        let estimated_size: Option<u64> = subkey.get_value("EstimatedSize")
-            .map(|val: u32| (val as u64) * 1024)
-            .ok();
-
-        let registry_path = format!(r"{}\{}", subpath, name);
-
-        // Filter system components / hidden components (SystemComponent = 1)
-        let system_component: u32 = subkey.get_value("SystemComponent").unwrap_or(0);
-        if system_component == 1 {
-            continue;
-        }
-
         // Entries without UninstallString are still useful: they may be
         // orphaned registrations or components that can be removed with the
         // "Remove Entry" action.
 
-        // Verify signature of the uninstaller or display icon
-        let mut is_verified = None;
-        if let Some(ref uninst) = uninstall_string {
-            if let Some(exe_path) = get_executable_from_uninstall_string(uninst) {
-                if crate::winutil::verify_file_signature(&exe_path) {
-                    is_verified = Some(true);
-                } else {
-                    is_verified = Some(false);
-                }
-            }
-        }
-        
-        if is_verified != Some(true) {
-            if let Some(ref icon_path) = display_icon {
-                let clean_icon = icon_path.trim().trim_matches('"');
-                let clean_icon = if let Some(comma_pos) = clean_icon.rfind(',') {
-                    let suffix = &clean_icon[comma_pos + 1..];
-                    if suffix.chars().all(|c| c.is_ascii_digit()) {
-                        &clean_icon[..comma_pos]
-                    } else {
-                        clean_icon
-                    }
-                } else {
-                    clean_icon
-                };
-                if !clean_icon.is_empty() && crate::winutil::verify_file_signature(clean_icon) {
-                    is_verified = Some(true);
-                }
-            }
-        }
+        let is_verified = detect_is_verified(
+            uninstall_string.as_deref(),
+            display_icon.as_deref(),
+        );
+
+        super::derived_cache::store(
+            cache_key,
+            super::derived_cache::CachedDerived {
+                fingerprint,
+                install_location: install_location.clone(),
+                display_icon: display_icon.clone(),
+                icon_base64: icon_base64.clone(),
+                estimated_size,
+                is_verified,
+            },
+        );
 
         apps.push(InstalledApp {
             id: name,
@@ -399,6 +428,84 @@ fn scan_uninstall_key(
             is_verified,
         });
     }
+}
+
+fn derived_fingerprint(
+    display_name: &str,
+    display_version: Option<&str>,
+    uninstall_string: Option<&str>,
+    display_icon: Option<&str>,
+    install_location: Option<&str>,
+    install_date: Option<&str>,
+    estimated_size: Option<u64>,
+) -> String {
+    format!(
+        "v2\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}",
+        display_name,
+        display_version.unwrap_or_default(),
+        uninstall_string.unwrap_or_default(),
+        display_icon.unwrap_or_default(),
+        install_location.unwrap_or_default(),
+        install_date.unwrap_or_default(),
+        estimated_size.unwrap_or(0),
+        verification_stamp(uninstall_string, display_icon),
+    )
+}
+
+fn file_stamp(path: &str) -> String {
+    let path = path.trim().trim_matches('"');
+    if path.is_empty() {
+        return "empty;".to_string();
+    }
+    match std::fs::metadata(path) {
+        Ok(metadata) => {
+            let modified = metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|duration| duration.as_secs())
+                .unwrap_or(0);
+            format!("{}:{}:{};", path.to_lowercase(), metadata.len(), modified)
+        }
+        Err(_) => format!("{}:missing;", path.to_lowercase()),
+    }
+}
+
+fn verification_stamp(
+    uninstall_string: Option<&str>,
+    display_icon: Option<&str>,
+) -> String {
+    let mut stamp = String::new();
+    if let Some(uninstall) = uninstall_string {
+        if let Some(executable) = get_executable_from_uninstall_string(uninstall) {
+            stamp.push_str(&file_stamp(&executable));
+        }
+    }
+    if let Some(icon) = display_icon {
+        stamp.push_str(&file_stamp(&clean_icon_path(icon)));
+    }
+    stamp
+}
+
+fn detect_is_verified(
+    uninstall_string: Option<&str>,
+    display_icon: Option<&str>,
+) -> Option<bool> {
+    let mut is_verified = None;
+    if let Some(uninst) = uninstall_string {
+        if let Some(exe_path) = get_executable_from_uninstall_string(uninst) {
+            is_verified = Some(crate::winutil::verify_file_signature(&exe_path));
+        }
+    }
+    if is_verified != Some(true) {
+        if let Some(icon_path) = display_icon {
+            let clean_icon = clean_icon_path(icon_path);
+            if !clean_icon.is_empty() && crate::winutil::verify_file_signature(&clean_icon) {
+                is_verified = Some(true);
+            }
+        }
+    }
+    is_verified
 }
 
 fn clean_icon_path(icon: &str) -> String {
@@ -588,6 +695,29 @@ mod tests {
         assert!(inferred.unwrap().to_lowercase().contains("my app"));
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    #[ignore = "manual smoke test scans the host registry twice"]
+    fn scan_registry_cache_smoke() {
+        let first_start = std::time::Instant::now();
+        let first = scan_registry();
+        let first_elapsed = first_start.elapsed();
+        let summary = super::super::derived_cache::summary();
+        assert!(summary.entries > 0, "first scan should populate the cache");
+
+        let second_start = std::time::Instant::now();
+        let second = scan_registry();
+        let second_elapsed = second_start.elapsed();
+        assert_eq!(first.len(), second.len());
+
+        eprintln!(
+            "registry cache smoke: {} apps, first {:?}, cached {:?}, {} cache entries",
+            second.len(),
+            first_elapsed,
+            second_elapsed,
+            summary.entries
+        );
     }
 
     #[test]
