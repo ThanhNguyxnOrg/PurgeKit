@@ -2114,6 +2114,9 @@
               </div>
             {/if}
           </div>
+          <div class="p-3 rounded-lg bg-warning/10 border border-warning/20 text-[11px] text-warning">
+            {t("Groups match by file name and size (plus modified date if enabled). File contents are not compared; verify the files before purging.")}
+          </div>
           <div class="space-y-3">
             {#each result.duplicate_groups as group}
               <div class="instrument-panel p-3.5 space-y-2">

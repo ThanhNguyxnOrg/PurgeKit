@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::process::Command;
 use std::os::windows::process::CommandExt;
 use std::fs;
@@ -10,11 +11,29 @@ use base64::{Engine as _, engine::general_purpose};
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+struct UwpStartApp {
+    #[serde(rename = "Name")]
+    name: String,
+    #[serde(rename = "AppID")]
+    app_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+struct UwpScanOutput {
+    #[serde(default)]
+    packages: Vec<UwpRawApp>,
+    #[serde(default, rename = "startApps")]
+    start_apps: Vec<UwpStartApp>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct UwpRawApp {
     #[serde(rename = "Name")]
     name: String,
     #[serde(rename = "PublisherId")]
     publisher_id: Option<String>,
+    #[serde(rename = "PublisherDisplayName", default)]
+    publisher_display_name: Option<String>,
     #[serde(rename = "Version")]
     version: Option<String>,
     #[serde(rename = "InstallLocation")]
@@ -31,7 +50,11 @@ pub fn scan_uwp_apps() -> Vec<InstalledApp> {
     // Run PowerShell command to get appx packages. We filter out framework packages to keep the list clean.
     // Framework packages like VCLibs, .NET, etc. are not uninstallable by typical users.
     // We try to query all users (-AllUsers) if running as admin, else fall back to the current user.
-    let script = r#"$apps = try { Get-AppxPackage -AllUsers -ErrorAction Stop } catch { Get-AppxPackage }; $apps | Where-Object { -not $_.IsFramework -and $_.NonRemovable -ne $true } | Select-Object Name, PublisherId, Version, InstallLocation, PackageFamilyName, PackageFullName | ConvertTo-Json -Compress"#;
+    let script = r#"$apps = try { Get-AppxPackage -AllUsers -ErrorAction Stop } catch { Get-AppxPackage };
+$packages = @($apps | Where-Object { -not $_.IsFramework -and $_.NonRemovable -ne $true } | Select-Object Name, PublisherId, PublisherDisplayName, Version, InstallLocation, PackageFamilyName, PackageFullName);
+$startApps = @();
+try { $startApps = @(Get-StartApps | Select-Object Name, AppID) } catch {};
+[pscustomobject]@{ packages = $packages; startApps = $startApps } | ConvertTo-Json -Compress -Depth 4"#;
     
     let windir = std::env::var("SystemRoot").or_else(|_| std::env::var("windir")).unwrap_or_else(|_| "C:\\Windows".to_string());
     let powershell_path = Path::new(&windir).join("System32").join("WindowsPowerShell").join("v1.0").join("powershell.exe");
@@ -56,18 +79,21 @@ pub fn scan_uwp_apps() -> Vec<InstalledApp> {
         return apps;
     }
 
-    // ConvertTo-Json returns a single object if there's only 1 item, or an array if there are multiple.
-    // We try to parse it as an array first, then as a single object if that fails.
-    let raw_apps: Vec<UwpRawApp> = if stdout_str.starts_with('[') {
-        serde_json::from_str(stdout_str).unwrap_or_default()
-    } else {
-        match serde_json::from_str::<UwpRawApp>(stdout_str) {
-            Ok(app) => vec![app],
-            Err(_) => Vec::new(),
+    let scan: UwpScanOutput = serde_json::from_str(stdout_str).unwrap_or_default();
+    let mut start_names: HashMap<String, String> = HashMap::new();
+    for start_app in scan.start_apps {
+        let name = start_app.name.trim();
+        if name.is_empty() || name.to_lowercase().starts_with("ms-resource:") {
+            continue;
         }
-    };
+        if let Some((family, _)) = start_app.app_id.split_once('!') {
+            start_names
+                .entry(family.to_lowercase())
+                .or_insert_with(|| name.to_string());
+        }
+    }
 
-    for raw in raw_apps {
+    for raw in scan.packages {
         let name = raw.name;
         let package_family = match raw.package_family_name {
             Some(pf) => pf,
@@ -90,8 +116,12 @@ pub fn scan_uwp_apps() -> Vec<InstalledApp> {
             _ => continue,
         };
 
-        // Clean up the name for user display (e.g. "Microsoft.WindowsCalculator" -> "WindowsCalculator")
-        let display_name = clean_uwp_display_name(&name);
+        // Prefer the localized Start menu name; package identifiers are only
+        // a fallback for background packages without a Start entry.
+        let display_name = start_names
+            .get(&package_family.to_lowercase())
+            .cloned()
+            .unwrap_or_else(|| clean_uwp_display_name(&name));
 
         // UWP Uninstall command: Remove-AppxPackage -Package <PackageFullName>.
         // When elevated we queried every user, so remove every registration too;
@@ -112,7 +142,14 @@ pub fn scan_uwp_apps() -> Vec<InstalledApp> {
             id: package_family.clone(),
             display_name,
             display_version: raw.version.clone(),
-            publisher: raw.publisher_id.clone(),
+            publisher: raw
+                .publisher_display_name
+                .clone()
+                .filter(|name| {
+                    let name = name.trim();
+                    !name.is_empty() && !name.to_lowercase().starts_with("ms-resource:")
+                })
+                .or_else(|| raw.publisher_id.clone()),
             uninstall_string: Some(uninstall_string.clone()),
             quiet_uninstall_string: Some(uninstall_string),
             modify_path: None,

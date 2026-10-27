@@ -1,4 +1,6 @@
 const disk: Record<string, string> = {
+  "Groups match by file name and size (plus modified date if enabled). File contents are not compared; verify the files before purging.":
+    "Các nhóm được ghép theo tên tệp và dung lượng (kèm ngày sửa đổi nếu bật). Nội dung tệp không được so sánh; hãy kiểm tra kỹ trước khi dọn.",
   "Disk Space": "Dung lượng ổ đĩa",
   "Fast folder scan with allocated size, tree map, largest files and file types.":
     "Quét thư mục nhanh với dung lượng đã cấp phát, bản đồ cây, tệp lớn nhất và loại tệp.",

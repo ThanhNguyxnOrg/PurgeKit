@@ -51,8 +51,23 @@ pub fn create_snapshot(name: &str) -> Result<SnapshotRecord, String> {
         env::var_os("LOCALAPPDATA").map(PathBuf::from),
         env::var_os("ProgramData").map(PathBuf::from),
     ];
+    let excluded: Vec<String> = [
+        env::var_os("APPDATA").map(|path| PathBuf::from(path).join("PurgeKit")),
+        env::var_os("LOCALAPPDATA").map(|path| PathBuf::from(path).join("PurgeKit")),
+    ]
+    .into_iter()
+    .flatten()
+    .map(|path| {
+        format!(
+            "{}\\",
+            path.to_string_lossy()
+                .trim_end_matches(['\\', '/'])
+                .to_lowercase()
+        )
+    })
+    .collect();
     for dir in dirs.into_iter().flatten() {
-        scan_files_recursive(&dir, 3, &mut files);
+        scan_files_recursive(&dir, 3, &mut files, &excluded);
     }
 
     let registry_values = scan_tracking_registry_values();
@@ -268,13 +283,33 @@ pub fn scan_registry_keys_recursive(
     Ok(())
 }
 
-fn scan_files_recursive(dir: &Path, max_depth: usize, files: &mut Vec<String>) {
-    // Walkdir with depth limit
-    for entry in WalkDir::new(dir)
+fn scan_files_recursive(
+    dir: &Path,
+    max_depth: usize,
+    files: &mut Vec<String>,
+    excluded: &[String],
+) {
+    let walker = WalkDir::new(dir)
         .max_depth(max_depth)
         .into_iter()
-        .filter_map(|e| e.ok())
-    {
+        .filter_entry(|entry| {
+            if entry.depth() == 0 {
+                return true;
+            }
+            let path = entry.path();
+            let path_lower = path.to_string_lossy().to_lowercase();
+            if excluded.iter().any(|prefix| path_lower.starts_with(prefix)) {
+                return false;
+            }
+            fs::symlink_metadata(path)
+                .map(|metadata| {
+                    !metadata.file_type().is_symlink()
+                        && !crate::winutil::is_reparse_point(&metadata)
+                })
+                .unwrap_or(false)
+        });
+
+    for entry in walker.filter_map(|entry| entry.ok()) {
         files.push(entry.path().to_string_lossy().to_string());
     }
 }
@@ -282,6 +317,25 @@ fn scan_files_recursive(dir: &Path, max_depth: usize, files: &mut Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snapshot_walk_skips_excluded_data_and_reparse_entries() {
+        let root = std::env::temp_dir().join("purgekit_snapshot_exclusion_test");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("PurgeKit").join("snapshots")).unwrap();
+        fs::create_dir_all(root.join("AppData")).unwrap();
+        fs::write(root.join("PurgeKit").join("snapshots").join("self.json"), b"{}").unwrap();
+        fs::write(root.join("AppData").join("keep.txt"), b"keep").unwrap();
+        let excluded = vec![format!(
+            "{}\\",
+            root.join("PurgeKit").to_string_lossy().to_lowercase()
+        )];
+        let mut files = Vec::new();
+        scan_files_recursive(&root, 4, &mut files, &excluded);
+        assert!(files.iter().any(|path| path.ends_with("keep.txt")));
+        assert!(!files.iter().any(|path| path.ends_with("self.json")));
+        let _ = fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn test_delete_snapshot_outside_dir_denied() {
