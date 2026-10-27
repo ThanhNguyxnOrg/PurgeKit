@@ -466,14 +466,6 @@ fn infer_install_location(
         }
     }
 
-    if display_name.trim().chars().count() >= 4 {
-        if let Some(location) = super::shortcuts::find_install_location_for_name(display_name) {
-            if crate::winutil::is_safe_remnant_path(&location).is_ok() {
-                return Some(location);
-            }
-        }
-    }
-
     None
 }
 

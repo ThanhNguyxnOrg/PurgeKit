@@ -121,11 +121,19 @@ pub fn scan_app_remnants(
 ) -> Vec<RemnantItem> {
     let mut remnants = Vec::new();
     let app_name_lower = app_name.to_lowercase();
-    
+
     let match_token = clean_match_token(&app_name_lower);
     if match_token.len() < 3 {
         return remnants; // Avoid matching too short strings
     }
+
+    let inferred_location;
+    let install_location = if install_location.is_none() {
+        inferred_location = super::shortcuts::find_install_location_for_name(app_name);
+        inferred_location.as_deref()
+    } else {
+        install_location
+    };
 
     let settings = crate::settings::load_settings();
     let scan_targets = get_scan_locations(&settings.scan_level);
