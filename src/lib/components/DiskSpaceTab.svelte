@@ -208,6 +208,11 @@
     return stats;
   }
 
+  function nodeDisplayPath(node: DiskTreeNode | null | undefined): string {
+    if (!node) return "";
+    return node.path.startsWith("::") ? node.name : node.path;
+  }
+
   function fileSharePercent(file: DiskFile): string {
     if (scanRootWeight <= 0) return "0.0";
     return ((Math.max(file.allocated_bytes, file.size_bytes) / scanRootWeight) * 100).toFixed(1);
@@ -1395,7 +1400,7 @@
         <div
           class="disk-treemap relative w-full border border-border-default rounded-lg overflow-hidden bg-app-bg"
           role="img"
-          aria-label="Treemap of {focusNode ? focusNode.path : result.root_path}. Use the Largest files tab for a keyboard-accessible list."
+          aria-label="Treemap of {nodeDisplayPath(focusNode ?? result.root)}. Use the Largest files tab for a keyboard-accessible list."
         >
           <canvas
             bind:this={canvasEl}
@@ -1412,7 +1417,7 @@
               style="left: {tooltip.x}px; top: {tooltip.y}px"
             >
               <span class="block text-[11px] font-semibold text-text-primary break-all">{tooltip.node.name}</span>
-              <span class="block text-[10px] font-mono text-text-muted mt-0.5 break-all">{tooltip.node.path}</span>
+              <span class="block text-[10px] font-mono text-text-muted mt-0.5 break-all">{nodeDisplayPath(tooltip.node)}</span>
               <span class="block text-[10px] font-mono text-data-cyan mt-1">
                 {formatBytes(nodeWeight(tooltip.node))} · {percentOfFocusedNode(tooltip.node)}% · {tooltip.node.file_count.toLocaleString()} files
                 {#if tooltip.node.is_dir}· click to zoom{:else}· click to select{/if}
@@ -1429,7 +1434,7 @@
         <div class="flex flex-wrap items-center justify-between gap-3 text-xs">
           <div class="flex items-center gap-2 text-text-muted font-mono">
             <Folder class="w-3.5 h-3.5 text-accent" />
-            <span class="break-all">{selectedNode ? selectedNode.path : (focusNode ? focusNode.path : "")}</span>
+            <span class="break-all">{nodeDisplayPath(selectedNode ?? focusNode)}</span>
           </div>
           <div class="flex items-center gap-2">
             {#if selectedNode}
