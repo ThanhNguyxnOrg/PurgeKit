@@ -47,6 +47,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_UI_WindowsAndMessaging",      # WM_SETTINGCHANGE
     "Win32_UI_Shell",                    # SHChangeNotify
     "Win32_System_Threading",            # Handle duplication
+    "Win32_System_JobObjects",           # Wait for uninstaller child processes
     "Win32_System_Registry",             # RegSetValueExW (REG_EXPAND_SZ)
     "Win32_System_Environment",          # ExpandEnvironmentStringsW
     "Win32_System_IO",

@@ -869,13 +869,13 @@ pub async fn run_uninstall_command(uninstall_string: String) -> Result<(), Strin
         
         let path_clone = secure_path.clone();
         return tauri::async_runtime::spawn_blocking(move || {
-            let mut child = Command::new("powershell")
+            let mut command = Command::new("powershell");
+            command
                 .creation_flags(CREATE_NO_WINDOW)
                 .env("PATH", &path_clone)
-                .args(&["-NoProfile", "-Command", &format!("Remove-AppxPackage -Package {}", package_full)])
-                .spawn()
+                .args(&["-NoProfile", "-Command", &format!("Remove-AppxPackage -Package {}", package_full)]);
+            let status = crate::process::run_command_in_job(&mut command)
                 .map_err(|e| format!("Failed to spawn powershell: {}", e))?;
-            let status = child.wait().map_err(|e| format!("PowerShell finished with error: {}", e))?;
             if !status.success() {
                 return Err(format!("PowerShell Remove-AppxPackage failed with exit code: {:?}", status.code()));
             }
@@ -1172,8 +1172,7 @@ fn run_parsed_uninstall_command(
         command.raw_arg(&arguments);
     }
 
-    command
-        .status()
+    crate::process::run_command_in_job(&mut command)
         .map_err(|e| format!("Failed to run uninstaller: {}", e))
 }
 

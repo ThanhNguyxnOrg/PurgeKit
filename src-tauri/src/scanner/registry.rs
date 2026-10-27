@@ -452,10 +452,25 @@ fn infer_install_location(
             .filter(|token| token.len() >= 3)
             .collect();
         let matches_name = name_words.iter().any(|word| {
-            folder.contains(word) || folder_tokens.iter().any(|token| token.contains(word))
+            folder.contains(word)
+                || folder_tokens.iter().any(|token| {
+                    token.contains(word)
+                        || (token.len() >= 6
+                            && word.len() >= 6
+                            && token.len().abs_diff(word.len()) <= 2
+                            && super::remnants::levenshtein_distance(token, word) <= 1)
+                })
         });
         if matches_name {
             return Some(parent.to_string_lossy().to_string());
+        }
+    }
+
+    if display_name.trim().chars().count() >= 4 {
+        if let Some(location) = super::shortcuts::find_install_location_for_name(display_name) {
+            if crate::winutil::is_safe_remnant_path(&location).is_ok() {
+                return Some(location);
+            }
         }
     }
 

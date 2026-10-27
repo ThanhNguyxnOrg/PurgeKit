@@ -241,7 +241,7 @@ fn clean_match_token(app_name: &str) -> String {
     kept.join(" ").trim().to_lowercase()
 }
 
-fn levenshtein_distance(left: &str, right: &str) -> usize {
+pub(crate) fn levenshtein_distance(left: &str, right: &str) -> usize {
     let left: Vec<char> = left.chars().collect();
     let right: Vec<char> = right.chars().collect();
     if left.is_empty() {
