@@ -25,6 +25,7 @@ pub struct DiskTreeNode {
     pub is_dir: bool,
     pub size_bytes: u64,
     pub allocated_bytes: u64,
+    pub modified_epoch_ms: Option<u64>,
     pub file_count: u64,
     pub children: Vec<DiskTreeNode>,
 }
@@ -36,6 +37,7 @@ pub struct DiskFile {
     pub extension: String,
     pub size_bytes: u64,
     pub allocated_bytes: u64,
+    pub modified_epoch_ms: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -81,6 +83,7 @@ pub struct CachedDiskFile {
     pub path: String,
     pub size_bytes: u64,
     pub allocated_bytes: u64,
+    pub modified_epoch_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -186,6 +189,7 @@ pub fn search_cached_files(
             extension: file_extension(&file.path).unwrap_or_else(|| "(none)".to_string()),
             size_bytes: file.size_bytes,
             allocated_bytes: file.allocated_bytes,
+            modified_epoch_ms: file.modified_epoch_ms,
         })
         .collect();
 
@@ -205,6 +209,7 @@ pub(crate) struct FlatNode {
     pub(crate) is_dir: bool,
     pub(crate) size_bytes: u64,
     pub(crate) allocated_bytes: u64,
+    pub(crate) modified_epoch_ms: Option<u64>,
     pub(crate) file_count: u64,
     pub(crate) extension: String,
 }
@@ -221,6 +226,15 @@ fn allocated_or_logical(path: &Path, metadata: &fs::Metadata) -> u64 {
     } else {
         metadata.len()
     }
+}
+
+fn modified_millis(metadata: &fs::Metadata) -> Option<u64> {
+    metadata
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_millis() as u64)
 }
 
 fn build_tree_node(
@@ -270,6 +284,7 @@ fn build_tree_node(
         is_dir: node.is_dir,
         size_bytes: node.size_bytes,
         allocated_bytes: node.allocated_bytes,
+        modified_epoch_ms: node.modified_epoch_ms,
         file_count: node.file_count,
         children: child_nodes,
     }
@@ -309,8 +324,8 @@ where
     let max_depth = max_depth.clamp(1, 8);
     let max_children = max_children.clamp(4, 100);
 
-    fs::symlink_metadata(&root_path)
-        .map_err(|e| format!("Failed to read root metadata: {}", e))?;
+    let root_metadata =
+        fs::symlink_metadata(&root_path).map_err(|e| format!("Failed to read root metadata: {}", e))?;
 
     let mut nodes = vec![FlatNode {
         name: root_path
@@ -322,6 +337,7 @@ where
         is_dir: true,
         size_bytes: 0,
         allocated_bytes: 0,
+        modified_epoch_ms: modified_millis(&root_metadata),
         file_count: 0,
         extension: String::new(),
     }];
@@ -403,6 +419,7 @@ where
             is_dir,
             size_bytes,
             allocated_bytes,
+            modified_epoch_ms: modified_millis(&metadata),
             file_count: if is_dir { 0 } else { 1 },
             extension: extension.clone(),
         });
@@ -539,6 +556,7 @@ pub(crate) fn finalize_scan(
                 path: node.path.clone(),
                 size_bytes: node.size_bytes,
                 allocated_bytes: node.allocated_bytes,
+                modified_epoch_ms: node.modified_epoch_ms,
             });
         } else {
             index_complete = false;
@@ -577,6 +595,7 @@ pub(crate) fn finalize_scan(
                 extension: node.extension.clone(),
                 size_bytes: node.size_bytes,
                 allocated_bytes: node.allocated_bytes,
+                modified_epoch_ms: node.modified_epoch_ms,
             }
         })
         .collect();
@@ -621,6 +640,7 @@ pub(crate) fn finalize_scan(
                             extension: node.extension.clone(),
                             size_bytes: node.size_bytes,
                             allocated_bytes: node.allocated_bytes,
+                            modified_epoch_ms: node.modified_epoch_ms,
                         }
                     })
                     .collect();
@@ -806,11 +826,13 @@ mod tests {
         let index = result.file_index.as_ref().unwrap();
         assert_eq!(index.files.len(), 3);
         assert!(index.complete);
+        assert!(index.files.iter().all(|file| file.modified_epoch_ms.is_some()));
 
         let search = search_cached_files(index, "setup", None, None, 10);
         assert_eq!(search.total_matches, 1);
         assert_eq!(search.files[0].name, "Big_Setup.EXE");
         assert_eq!(search.files[0].extension, "exe");
+        assert!(search.files[0].modified_epoch_ms.is_some());
 
         let by_extension = search_cached_files(index, "", Some(".TXT"), None, 10);
         assert_eq!(by_extension.total_matches, 1);

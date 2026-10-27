@@ -12,6 +12,7 @@
     is_dir: boolean;
     size_bytes: number;
     allocated_bytes: number;
+    modified_epoch_ms: number | null;
     file_count: number;
     children: DiskTreeNode[];
   }
@@ -22,6 +23,7 @@
     extension: string;
     size_bytes: number;
     allocated_bytes: number;
+    modified_epoch_ms: number | null;
   }
 
   interface FileTypeStat {
@@ -202,6 +204,14 @@
     const units = ["B", "KB", "MB", "GB", "TB"];
     const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
     return `${(bytes / Math.pow(1024, index)).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+  }
+
+  function formatModified(epochMs: number | null): string {
+    if (!epochMs) return "—";
+    const date = new Date(epochMs);
+    if (Number.isNaN(date.getTime())) return "—";
+    const pad = (value: number) => String(value).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
   }
 
   function nodeWeight(node: DiskTreeNode): number {
@@ -612,11 +622,12 @@
 
     const escapeCsv = (value: string) => `"${value.replace(/"/g, '""')}"`;
     const rows = [
-      ["Name", "Path", "Extension", "LogicalBytes", "AllocatedBytes"],
+      ["Name", "Path", "Extension", "Modified", "LogicalBytes", "AllocatedBytes"],
       ...displayFiles.map((file) => [
         file.name,
         file.path,
         file.extension,
+        file.modified_epoch_ms ? formatModified(file.modified_epoch_ms) : "",
         String(file.size_bytes),
         String(file.allocated_bytes),
       ]),
@@ -1076,6 +1087,11 @@
                 {formatBytes(nodeWeight(tooltip.node))} · {tooltip.node.file_count.toLocaleString()} files
                 {#if tooltip.node.is_dir}· click to zoom{:else}· click to select{/if}
               </span>
+              {#if !tooltip.node.is_dir && tooltip.node.modified_epoch_ms}
+                <span class="block text-[10px] font-mono text-text-muted mt-1">
+                  Modified {formatModified(tooltip.node.modified_epoch_ms)}
+                </span>
+              {/if}
             </div>
           {/if}
         </div>
@@ -1174,11 +1190,12 @@
 
         <div class="border border-border-default rounded-lg overflow-hidden">
           <div class="overflow-x-auto">
-            <table class="w-full text-left text-xs min-w-[620px]">
+            <table class="w-full text-left text-xs min-w-[760px]">
               <thead class="bg-sidebar-bg text-text-muted uppercase tracking-wider font-mono sticky top-0 z-10">
                 <tr>
                   <th class="px-4 py-3">File</th>
                   <th class="px-4 py-3">Extension</th>
+                  <th class="px-4 py-3">Modified</th>
                   <th class="px-4 py-3 text-right">Allocated</th>
                   <th class="px-4 py-3 text-right">Logical</th>
                 </tr>
@@ -1195,16 +1212,17 @@
                         aria-label="Open folder containing {file.name}"
                       >
                         <span class="text-text-primary font-mono break-all">{file.name}</span>
-                        <span class="block text-[11px] text-text-muted font-mono truncate max-w-[560px]" title={file.path}>{file.path}</span>
+                        <span class="block text-[11px] text-text-muted font-mono truncate max-w-[420px]" title={file.path}>{file.path}</span>
                       </button>
                     </td>
                     <td class="px-4 py-2.5 font-mono text-text-secondary">{file.extension}</td>
+                    <td class="px-4 py-2.5 font-mono text-text-muted whitespace-nowrap">{formatModified(file.modified_epoch_ms)}</td>
                     <td class="px-4 py-2.5 text-right font-mono text-text-primary">{formatBytes(file.allocated_bytes)}</td>
                     <td class="px-4 py-2.5 text-right font-mono text-text-muted">{formatBytes(file.size_bytes)}</td>
                   </tr>
                 {:else}
                   <tr>
-                    <td colspan="4" class="px-4 py-8 text-center text-text-muted">
+                    <td colspan="5" class="px-4 py-8 text-center text-text-muted">
                       {isSearching ? "Searching indexed files…" : isSearchActive ? "No scanned files match this search." : "No top files match this filter."}
                     </td>
                   </tr>

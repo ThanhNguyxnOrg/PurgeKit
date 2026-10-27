@@ -4,6 +4,7 @@ use std::path::{Component, Path, Prefix};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
+use mft::attribute::MftAttributeType;
 use mft::MftEntry;
 use ntfs::{Ntfs, NtfsReadSeek};
 
@@ -18,6 +19,7 @@ struct MftRecord {
     is_dir: bool,
     size_bytes: u64,
     allocated_bytes: u64,
+    modified_epoch_ms: Option<u64>,
 }
 
 fn drive_letter(root: &str) -> Option<char> {
@@ -145,6 +147,14 @@ where
         let Some(name_attr) = entry.find_best_name_attribute() else {
             continue;
         };
+        let modified_epoch_ms = entry
+            .iter_attributes_matching(Some(vec![MftAttributeType::StandardInformation]))
+            .filter_map(Result::ok)
+            .find_map(|attribute| attribute.data.into_standard_info())
+            .map(|info| info.modified)
+            .unwrap_or(name_attr.modified)
+            .as_millisecond();
+        let modified_epoch_ms = u64::try_from(modified_epoch_ms).ok();
         let name = name_attr.name;
         if name.is_empty() || name == "." || name == ".." {
             continue;
@@ -165,6 +175,7 @@ where
                 // Resident data lives inside the MFT record itself.
                 name_attr.logical_size
             },
+            modified_epoch_ms,
         };
 
         if is_dir {
@@ -226,6 +237,7 @@ where
         is_dir: true,
         size_bytes: 0,
         allocated_bytes: 0,
+        modified_epoch_ms: root_record.modified_epoch_ms,
         file_count: 0,
         extension: String::new(),
     }];
@@ -261,6 +273,7 @@ where
                 is_dir: record.is_dir,
                 size_bytes: record.size_bytes,
                 allocated_bytes: record.allocated_bytes,
+                modified_epoch_ms: record.modified_epoch_ms,
                 file_count: if record.is_dir { 0 } else { 1 },
                 extension: if record.is_dir {
                     String::new()
