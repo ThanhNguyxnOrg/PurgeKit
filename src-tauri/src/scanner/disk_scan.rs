@@ -797,6 +797,107 @@ mod tests {
     }
 
     #[test]
+    fn prefix_matching_stops_at_directory_boundaries() {
+        assert!(is_under_prefix(r"C:\Tools\App\bin\a.exe", r"C:\Tools\App"));
+        assert!(is_under_prefix(r"C:\Tools\App\bin\a.exe", r"C:\Tools\App\"));
+        assert!(is_under_prefix(r"C:\TOOLS\APP\bin\a.exe", r"c:\tools\app"));
+        assert!(!is_under_prefix(r"C:\Tools\Application\a.exe", r"C:\Tools\App"));
+        assert!(!is_under_prefix(r"C:\Tools\App", r"C:\Tools\App"));
+        assert!(is_under_prefix(r"C:\Tools\App\a.exe", ""));
+    }
+
+    #[test]
+    fn search_filters_and_sorts_every_match() {
+        use std::path::Path;
+
+        let root = std::env::temp_dir().join("purgekit_disk_search_filters_test");
+        let _ = fs::remove_dir_all(&root);
+        for folder in ["Alpha", "Alphabet", "Beta"] {
+            fs::create_dir_all(root.join(folder)).unwrap();
+        }
+        fs::write(root.join("Alpha\\Report.TXT"), vec![0u8; 40]).unwrap();
+        fs::write(root.join("Alphabet\\Report.TXT"), vec![0u8; 20]).unwrap();
+        fs::write(root.join("Beta\\Report.TXT"), vec![0u8; 10]).unwrap();
+        fs::write(root.join("Alpha\\photo.PNG"), vec![0u8; 5]).unwrap();
+
+        fn set_modified(path: std::path::PathBuf, seconds: u64) {
+            let file = fs::File::options().write(true).open(path).unwrap();
+            file.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds))
+                .unwrap();
+        }
+        set_modified(root.join("Alpha\\Report.TXT"), 1_000);
+        set_modified(root.join("Alphabet\\Report.TXT"), 2_000);
+        set_modified(root.join("Beta\\Report.TXT"), 3_000);
+        set_modified(root.join("Alpha\\photo.PNG"), 500);
+
+        let cancel = AtomicBool::new(false);
+        let result = scan_disk_tree(&root.to_string_lossy(), 3, 20, false, &cancel, |_| {}).unwrap();
+        let index = result.file_index.as_ref().unwrap();
+
+        let parent_name = |file: &DiskFile| {
+            Path::new(&file.path)
+                .parent()
+                .and_then(|parent| parent.file_name())
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default()
+        };
+
+        let reports = search_cached_files(index, "REPORT", Some(".txt"), None, 10, "name");
+        assert_eq!(reports.total_matches, 3);
+        assert!(reports.files.iter().all(|file| file.extension == "txt"));
+
+        let scoped = search_cached_files(
+            index,
+            "report",
+            Some("txt"),
+            Some(&root.join("Alpha").to_string_lossy()),
+            10,
+            "size",
+        );
+        assert_eq!(scoped.total_matches, 1);
+        assert_eq!(scoped.files[0].name, "Report.TXT");
+        assert_eq!(parent_name(&scoped.files[0]), "Alpha");
+
+        let all_in_alpha = search_cached_files(
+            index,
+            "",
+            None,
+            Some(&root.join("Alpha").to_string_lossy()),
+            10,
+            "size",
+        );
+        assert_eq!(all_in_alpha.total_matches, 2);
+
+        let by_date = search_cached_files(index, "", Some("txt"), None, 10, "modified");
+        assert_eq!(
+            by_date.files.iter().map(parent_name).collect::<Vec<_>>(),
+            vec!["Beta", "Alphabet", "Alpha"]
+        );
+
+        let by_size = search_cached_files(index, "", Some("txt"), None, 10, "size");
+        assert_eq!(
+            by_size.files.iter().map(parent_name).collect::<Vec<_>>(),
+            vec!["Alpha", "Alphabet", "Beta"]
+        );
+
+        let by_name = search_cached_files(index, "", None, None, 10, "name");
+        assert_eq!(by_name.files[0].name, "photo.PNG");
+
+        let limited = search_cached_files(index, "", None, None, 2, "size");
+        assert_eq!(limited.total_matches, 4);
+        assert_eq!(limited.files.len(), 2);
+
+        let clamped = search_cached_files(index, "", None, None, 0, "size");
+        assert_eq!(clamped.files.len(), 1);
+
+        let missing = search_cached_files(index, "does-not-exist", None, None, 10, "size");
+        assert_eq!(missing.total_matches, 0);
+        assert!(missing.files.is_empty());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn rejects_relative_and_drive_relative_roots() {
         let cancel = AtomicBool::new(false);
         for root in [r"C:", r"relative\path", "."] {
@@ -828,9 +929,28 @@ mod tests {
         }
 
         let cancel = AtomicBool::new(false);
-        let result = scan_disk_tree(&root.to_string_lossy(), 2, 20, false, &cancel, |_| {}).unwrap();
+        let result = scan_disk_tree(&root.to_string_lossy(), 2, 20, true, &cancel, |_| {}).unwrap();
         assert_eq!(result.total_files, 2);
         assert_eq!(result.total_size, 4096);
+        assert!(result.duplicate_groups.is_empty());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn does_not_group_different_names_or_empty_files() {
+        let root = std::env::temp_dir().join("purgekit_disk_duplicate_negative_test");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("a")).unwrap();
+        fs::create_dir_all(root.join("b")).unwrap();
+        fs::write(root.join("a\\one.txt"), vec![3u8; 10]).unwrap();
+        fs::write(root.join("b\\two.txt"), vec![3u8; 10]).unwrap();
+        fs::write(root.join("a\\empty-one.txt"), b"").unwrap();
+        fs::write(root.join("b\\empty-two.txt"), b"").unwrap();
+
+        let cancel = AtomicBool::new(false);
+        let result = scan_disk_tree(&root.to_string_lossy(), 3, 20, true, &cancel, |_| {}).unwrap();
+        assert!(result.duplicate_groups.is_empty());
 
         let _ = fs::remove_dir_all(&root);
     }
