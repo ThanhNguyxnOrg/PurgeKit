@@ -749,6 +749,41 @@ pub async fn scan_disk_space(
 }
 
 #[tauri::command]
+pub async fn import_disk_csv(
+    cache: tauri::State<'_, scanner::disk_scan::DiskFileCache>,
+    csv: String,
+    source_name: String,
+    duplicate_mode: Option<String>,
+) -> Result<scanner::DiskScanResult, String> {
+    let cache = cache.0.clone();
+    let (find_duplicates, duplicate_include_date) = match duplicate_mode.as_deref() {
+        Some("off") => (false, false),
+        Some("name_size_date") => (true, true),
+        Some("name_size") => (true, false),
+        _ => (false, false),
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut result = scanner::csv_scan::import_scan_csv(
+            &csv,
+            &source_name,
+            find_duplicates,
+            duplicate_include_date,
+        )?;
+        if let Some(index) = result.file_index.take() {
+            let key = index.root_path.to_lowercase();
+            if let Ok(mut indexes) = cache.lock() {
+                indexes.clear();
+                indexes.insert(key, std::sync::Arc::new(index));
+            }
+        }
+        Ok(result)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub async fn search_disk_files(
     cache: tauri::State<'_, scanner::disk_scan::DiskFileCache>,
     path: String,

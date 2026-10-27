@@ -13,6 +13,7 @@ pub mod dev_rules;
 pub mod inventory;
 pub mod portable_apps;
 pub mod disk_scan;
+pub mod csv_scan;
 pub mod mft_scan;
 pub mod dev_extensions;
 pub mod shortcuts;

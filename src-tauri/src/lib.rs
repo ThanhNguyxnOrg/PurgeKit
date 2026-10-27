@@ -41,6 +41,7 @@ pub fn run() {
             commands::cancel_disk_scan,
             commands::search_disk_files,
             commands::export_disk_files_csv,
+            commands::import_disk_csv,
             commands::list_disk_drives,
             commands::get_path_entries,
             commands::save_path_entries,

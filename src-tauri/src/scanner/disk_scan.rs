@@ -144,7 +144,7 @@ fn is_under_prefix(path: &str, prefix: &str) -> bool {
     matches!(path_bytes[prefix_bytes.len()], b'\\' | b'/')
 }
 
-fn file_extension(path: &str) -> Option<String> {
+pub(crate) fn file_extension(path: &str) -> Option<String> {
     Path::new(path)
         .extension()
         .and_then(|extension| extension.to_str())

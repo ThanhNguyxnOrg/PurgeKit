@@ -3,7 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { openPath } from "@tauri-apps/plugin-opener";
-  import { FolderOpen, Play, Square, HardDrive, File, Folder, Search, X, ArrowUp, ArrowDown } from "@lucide/svelte";
+  import { FolderOpen, Play, Square, HardDrive, File, Folder, Search, X, ArrowUp, ArrowDown, Upload } from "@lucide/svelte";
   import { toast } from "../toast.svelte";
 
   interface DiskTreeNode {
@@ -56,7 +56,7 @@
     elapsed_ms: number;
     errors: number;
     truncated: boolean;
-    engine: "mft" | "traversal";
+    engine: "mft" | "traversal" | "csv";
     duplicate_mode: "off" | "name_size" | "name_size_date";
   }
 
@@ -111,6 +111,8 @@
   let lastScanHadDuplicates = $state(false);
   let isScanning = $state(false);
   let isCancelling = $state(false);
+  let isImporting = $state(false);
+  let csvInputEl = $state<HTMLInputElement | null>(null);
   let progress = $state<DiskProgress | null>(null);
   let errorMessage = $state("");
   let canvasEl = $state<HTMLCanvasElement | null>(null);
@@ -445,6 +447,7 @@
   }
 
   async function scanDisk() {
+    if (isImporting) return;
     const target = pathInput.trim();
     if (!target) {
       toast.show("Enter a drive or folder path first.", "warning");
@@ -502,6 +505,58 @@
       await invoke("cancel_disk_scan");
     } catch (e) {
       console.error("Cancel failed:", e);
+    }
+  }
+
+  function openCsvPicker() {
+    if (isScanning || isImporting) return;
+    csvInputEl?.click();
+  }
+
+  async function importCsv(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
+    if (file.size > 256 * 1024 * 1024) {
+      toast.show("CSV is larger than 256 MB. Export a narrower subtree.", "warning");
+      return;
+    }
+
+    isImporting = true;
+    errorMessage = "";
+    try {
+      const csv = await file.text();
+      const scanResult = await invoke<DiskScanResult>("import_disk_csv", {
+        csv,
+        sourceName: file.name,
+        duplicateMode,
+      });
+      lastScanHadDuplicates = scanResult.duplicate_mode !== "off";
+      result = scanResult;
+      focusStack = [scanResult.root];
+      focusNode = scanResult.root;
+      selectedNode = null;
+      hoverPath = null;
+      tooltip = null;
+      fileQuery = "";
+      fileExtensionFilter = null;
+      fileScope = "all";
+      duplicateSelection = {};
+      clearFileSearch();
+      activeView = "treemap";
+      pathInput = scanResult.root_path;
+      saveDiskPreferences();
+      toast.show(
+        `Imported ${scanResult.total_files.toLocaleString()} files from ${file.name}. This snapshot is read-only.`,
+        "success"
+      );
+    } catch (e: any) {
+      const message = e.toString();
+      errorMessage = message;
+      toast.show(`CSV import failed: ${message}`, "error");
+    } finally {
+      isImporting = false;
     }
   }
 
@@ -866,6 +921,10 @@
 
   async function quarantineSelectedDuplicates() {
     if (!result || selectedDuplicateCount === 0 || isQuarantining) return;
+    if (result.engine === "csv") {
+      toast.show("Imported CSV snapshots are read-only. Rescan the drive to clean files.", "warning");
+      return;
+    }
 
     const root = result.root_path;
     const selected = result.duplicate_groups.flatMap((group) =>
@@ -917,6 +976,10 @@
   async function quarantineSelected() {
     const node = selectedNode;
     if (!node || !result) return;
+    if (result.engine === "csv") {
+      toast.show("Imported CSV snapshots are read-only. Rescan the drive to clean files.", "warning");
+      return;
+    }
     if (node.path === result.root_path) {
       toast.show("Select a child folder or file first; the scan root is protected.", "warning");
       return;
@@ -1059,6 +1122,14 @@
         </p>
       </div>
       <div class="flex items-center gap-2">
+        <input
+          bind:this={csvInputEl}
+          type="file"
+          accept=".csv,.tsv,text/csv,text/tab-separated-values"
+          onchange={importCsv}
+          class="hidden"
+          tabindex="-1"
+        />
         {#if isScanning}
           <button
             onclick={cancelScan}
@@ -1070,8 +1141,18 @@
           </button>
         {:else}
           <button
+            onclick={openCsvPicker}
+            disabled={isImporting}
+            title="Load a PurgeKit or WizTree CSV export as a read-only tree"
+            class="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-text-secondary hover:text-text-primary text-xs font-semibold transition-colors disabled:opacity-40"
+          >
+            <Upload class="w-3.5 h-3.5" />
+            {isImporting ? "Importing…" : "Import CSV"}
+          </button>
+          <button
             onclick={scanDisk}
-            class="flex items-center gap-2 px-4 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-xs font-semibold transition-all active:scale-95"
+            disabled={isImporting}
+            class="flex items-center gap-2 px-4 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-xs font-semibold transition-all active:scale-95 disabled:opacity-40"
           >
             <Play class="w-3.5 h-3.5" />
             Scan
@@ -1094,7 +1175,7 @@
         {#each drives as drive}
           <button
             onclick={() => { pathInput = `${drive.letter}:\\`; scanDisk(); }}
-            disabled={isScanning}
+            disabled={isScanning || isImporting}
             title="{drive.label || 'Local Disk'} · {formatBytes(drive.free_bytes)} free of {formatBytes(drive.total_bytes)}"
             aria-label="Scan drive {drive.letter}:"
             class="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-[11px] font-semibold text-text-secondary disabled:opacity-40 transition-colors"
@@ -1106,7 +1187,7 @@
         {:else}
           <button
             onclick={() => { pathInput = "C:\\"; scanDisk(); }}
-            disabled={isScanning}
+            disabled={isScanning || isImporting}
             class="px-3 py-2 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-xs font-semibold text-text-secondary disabled:opacity-40"
           >
             C:\
@@ -1117,7 +1198,7 @@
           <select
             bind:value={duplicateMode}
             onchange={saveDiskPreferences}
-            disabled={isScanning}
+            disabled={isScanning || isImporting}
             aria-label="Duplicate comparison mode"
             class="bg-transparent text-[11px] font-mono text-text-primary outline-none cursor-pointer disabled:opacity-40"
           >
@@ -1172,7 +1253,7 @@
           </p>
         </div>
         <div class="px-4 py-3.5">
-          <span class="readout-label">Scan time</span>
+          <span class="readout-label">{result.engine === "csv" ? "Import time" : "Scan time"}</span>
           <p class="readout text-2xl font-semibold text-text-primary mt-1">
             {(result.elapsed_ms / 1000).toFixed(2)}<span class="text-base text-text-muted">s</span>
           </p>
@@ -1191,10 +1272,16 @@
         <span class="px-2 py-1 rounded border font-mono
           {result.engine === 'mft'
             ? 'bg-data-cyan/10 text-data-cyan border-data-cyan/30'
-            : 'bg-surface-bg text-text-muted border-border-default'}">
-          {result.engine === "mft" ? "MFT FAST SCAN" : "TRAVERSAL FALLBACK"}
+            : result.engine === 'csv'
+              ? 'bg-warning/10 text-warning border-warning/30'
+              : 'bg-surface-bg text-text-muted border-border-default'}">
+          {result.engine === "mft" ? "MFT FAST SCAN" : result.engine === "csv" ? "CSV IMPORT" : "TRAVERSAL FALLBACK"}
         </span>
-        {#if result.engine !== "mft" && isDriveRoot(pathInput)}
+        {#if result.engine === "csv"}
+          <span class="text-text-muted">
+            Read-only snapshot. Quarantine and cleanup are disabled until you rescan the drive.
+          </span>
+        {:else if result.engine === "traversal" && isDriveRoot(pathInput)}
           <span class="text-warning">
             MFT unavailable for this drive/session. Run as Administrator on local NTFS for the fast path.
           </span>
@@ -1311,8 +1398,9 @@
               </span>
               <button
                 onclick={quarantineSelected}
-                disabled={isQuarantining}
-                class="px-2.5 py-1.5 rounded-md bg-danger/10 hover:bg-danger text-danger hover:text-white border border-danger/20 text-[11px] font-semibold transition-colors disabled:opacity-40"
+                disabled={isQuarantining || result.engine === "csv"}
+                title={result.engine === "csv" ? "Imported snapshots are read-only" : "Move this item to quarantine"}
+                class="px-2.5 py-1.5 rounded-md bg-danger/10 hover:bg-danger text-danger hover:text-white border border-danger/20 text-[11px] font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {isQuarantining ? "Quarantining…" : "Quarantine"}
               </button>
@@ -1616,24 +1704,30 @@
         {:else}
           <div class="flex flex-wrap items-center justify-between gap-3 instrument-panel px-3.5 py-2.5">
             <span class="text-[11px] font-mono text-text-muted" aria-live="polite">
-              {selectedDuplicateCount} selected · {formatBytes(selectedDuplicateBytes)} reclaimable
+              {#if result.engine === "csv"}
+                Read-only import · rescan the drive to clean duplicates
+              {:else}
+                {selectedDuplicateCount} selected · {formatBytes(selectedDuplicateBytes)} reclaimable
+              {/if}
             </span>
-            <div class="flex items-center gap-2">
-              <button
-                onclick={clearDuplicateSelection}
-                disabled={selectedDuplicateCount === 0 || isQuarantining}
-                class="px-2.5 py-1.5 rounded-md bg-surface-bg border border-border-default hover:bg-elevated-bg text-[11px] font-semibold text-text-secondary disabled:opacity-40 transition-colors"
-              >
-                Clear
-              </button>
-              <button
-                onclick={quarantineSelectedDuplicates}
-                disabled={selectedDuplicateCount === 0 || isQuarantining}
-                class="px-2.5 py-1.5 rounded-md bg-danger/10 hover:bg-danger text-danger hover:text-white border border-danger/20 text-[11px] font-semibold disabled:opacity-40 transition-colors"
-              >
-                {isQuarantining ? "Quarantining…" : `Quarantine ${selectedDuplicateCount}`}
-              </button>
-            </div>
+            {#if result.engine !== "csv"}
+              <div class="flex items-center gap-2">
+                <button
+                  onclick={clearDuplicateSelection}
+                  disabled={selectedDuplicateCount === 0 || isQuarantining}
+                  class="px-2.5 py-1.5 rounded-md bg-surface-bg border border-border-default hover:bg-elevated-bg text-[11px] font-semibold text-text-secondary disabled:opacity-40 transition-colors"
+                >
+                  Clear
+                </button>
+                <button
+                  onclick={quarantineSelectedDuplicates}
+                  disabled={selectedDuplicateCount === 0 || isQuarantining}
+                  class="px-2.5 py-1.5 rounded-md bg-danger/10 hover:bg-danger text-danger hover:text-white border border-danger/20 text-[11px] font-semibold disabled:opacity-40 transition-colors"
+                >
+                  {isQuarantining ? "Quarantining…" : `Quarantine ${selectedDuplicateCount}`}
+                </button>
+              </div>
+            {/if}
           </div>
           <div class="space-y-3">
             {#each result.duplicate_groups as group}
@@ -1646,7 +1740,7 @@
                     {#if group.files.length > 1}
                       <button
                         onclick={() => selectAllButFirst(group)}
-                        disabled={isQuarantining}
+                        disabled={isQuarantining || result.engine === "csv"}
                         class="text-[10px] font-mono text-text-muted hover:text-accent disabled:opacity-40 transition-colors"
                         title="Select every listed copy except the first"
                       >
@@ -1664,7 +1758,7 @@
                       <input
                         type="checkbox"
                         checked={!!duplicateSelection[file.path]}
-                        disabled={isQuarantining || (!duplicateSelection[file.path] && duplicatesSelectedInGroup(group) >= group.file_count - 1)}
+                        disabled={result.engine === "csv" || isQuarantining || (!duplicateSelection[file.path] && duplicatesSelectedInGroup(group) >= group.file_count - 1)}
                         onchange={() => toggleDuplicateFile(group, file)}
                         aria-label="Select duplicate copy at {file.path}"
                         title={duplicateSelection[file.path] ? "Do not quarantine this copy" : "Quarantine this copy"}
