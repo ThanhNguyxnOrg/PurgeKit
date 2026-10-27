@@ -32,6 +32,59 @@ pub fn query_current_usn(drive: char) -> Result<u64, String> {
         .map_err(|_| "USN journal returned a negative cursor".to_string())
 }
 
+/// Merge USN changes from every tracked volume, skipping volumes that have
+/// gone away since tracking started.
+pub fn collect_usn_changes<F>(start_usns: &[(char, u64)], mut read: F) -> Vec<String>
+where
+    F: FnMut(char, u64) -> Result<Vec<String>, String>,
+{
+    let mut changes = Vec::new();
+    for &(drive, start_usn) in start_usns {
+        if let Ok(mut paths) = read(drive, start_usn) {
+            changes.append(&mut paths);
+        }
+    }
+    changes.sort();
+    changes.dedup();
+    changes
+}
+
+/// Select one USN cursor per journaled volume, always requiring the system
+/// volume. Volumes without an active journal are skipped so a USB/FAT volume
+/// cannot block tracking.
+pub fn collect_start_cursors<F>(
+    drives: &[char],
+    system_drive: char,
+    mut query: F,
+) -> Result<Vec<(char, u64)>, String>
+where
+    F: FnMut(char) -> Result<u64, String>,
+{
+    let system_drive = system_drive.to_ascii_uppercase();
+    let mut letters: Vec<char> = drives
+        .iter()
+        .map(|drive| drive.to_ascii_uppercase())
+        .collect();
+    if !letters.contains(&system_drive) {
+        letters.push(system_drive);
+    }
+    letters.sort_unstable();
+    letters.dedup();
+
+    let mut cursors = Vec::new();
+    for letter in letters {
+        match query(letter) {
+            Ok(usn) => cursors.push((letter, usn)),
+            Err(error) => {
+                if letter == system_drive {
+                    return Err(error);
+                }
+            }
+        }
+    }
+    Ok(cursors)
+}
+
 /// Read all available journal records from `start_usn` and resolve them to
 /// current full paths. The iterator loops until the journal tail, so records
 /// larger than one buffer are no longer silently dropped.
@@ -80,4 +133,72 @@ pub fn read_usn_changes(drive: char, start_usn: u64) -> Result<Vec<String>, Stri
     paths.sort();
     paths.dedup();
     Ok(paths)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn collects_cursors_for_all_journaled_drives() {
+        let cursors = collect_start_cursors(&['d', 'c'], 'C', |drive| match drive {
+            'C' => Ok(10),
+            'D' => Ok(20),
+            _ => Err("unexpected drive".to_string()),
+        })
+        .unwrap();
+
+        assert_eq!(cursors, vec![('C', 10), ('D', 20)]);
+    }
+
+    #[test]
+    fn skips_volumes_without_a_journal_but_requires_the_system_drive() {
+        let cursors = collect_start_cursors(&['C', 'D', 'E'], 'C', |drive| match drive {
+            'C' => Ok(5),
+            'D' => Err("no active journal".to_string()),
+            'E' => Ok(7),
+            _ => Err("unexpected drive".to_string()),
+        })
+        .unwrap();
+        assert_eq!(cursors, vec![('C', 5), ('E', 7)]);
+
+        let system_failure = collect_start_cursors(&['C', 'D'], 'C', |drive| {
+            if drive == 'C' {
+                Err("administrator access required".to_string())
+            } else {
+                Ok(1)
+            }
+        });
+        assert!(system_failure.is_err());
+    }
+
+    #[test]
+    fn always_includes_the_system_drive_and_deduplicates_letters() {
+        let cursors = collect_start_cursors(&['D', 'D'], 'C', |drive| match drive {
+            'C' => Ok(1),
+            'D' => Ok(2),
+            _ => Err("unexpected drive".to_string()),
+        })
+        .unwrap();
+
+        assert_eq!(cursors, vec![('C', 1), ('D', 2)]);
+    }
+
+    #[test]
+    fn merges_changes_across_volumes_and_deduplicates_paths() {
+        let changes = collect_usn_changes(&[('C', 1), ('D', 2), ('E', 3)], |drive, _| match drive {
+            'C' => Ok(vec![r"C:\a.txt".to_string(), r"C:\shared.txt".to_string()]),
+            'D' => Ok(vec![r"D:\b.txt".to_string(), r"C:\shared.txt".to_string()]),
+            _ => Err("volume went away".to_string()),
+        });
+
+        assert_eq!(
+            changes,
+            vec![
+                r"C:\a.txt".to_string(),
+                r"C:\shared.txt".to_string(),
+                r"D:\b.txt".to_string()
+            ]
+        );
+    }
 }
