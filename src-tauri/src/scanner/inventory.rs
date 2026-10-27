@@ -274,6 +274,39 @@ mod tests {
     }
 
     #[test]
+    fn flags_windows_updates_and_program_files_for_elevation() {
+        let mut update = app("kb", "Security Update for Windows (KB123)", "Microsoft");
+        update.install_location = Some(r"C:\Program Files\Contoso".to_string());
+        update.hive = "HKCU".to_string();
+
+        let item = wrap(update, "registry", None, None);
+        assert!(item.is_update);
+        assert!(item.requires_admin);
+        assert!(item.categories.contains(&"Windows Update".to_string()));
+        assert!(item.is_uninstallable);
+    }
+
+    #[test]
+    fn marks_store_cli_and_portable_entries_uninstallable() {
+        let store = wrap(app("store", "Store App", "Vendor"), "store", None, None);
+        assert!(store.is_uninstallable);
+        assert!(!store.requires_admin);
+
+        let cli = wrap(
+            app("cli", "gopls", "go"),
+            "cli",
+            Some("go".to_string()),
+            None,
+        );
+        assert!(cli.is_uninstallable);
+        assert!(!cli.requires_admin);
+
+        let portable = wrap(app("p", "Portable", "Vendor"), "portable", None, None);
+        assert!(portable.is_uninstallable);
+        assert!(portable.is_portable);
+    }
+
+    #[test]
     #[ignore = "manual smoke test scans the host machine"]
     fn inventory_smoke() {
         let items = build_inventory();
