@@ -1,4 +1,6 @@
 use serde::Serialize;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use super::dev_rules;
 use super::{
@@ -116,8 +118,60 @@ fn collect_claimed_path(app: &InstalledApp, claimed: &mut Vec<String>) {
     }
 }
 
+fn find_on_path(candidates: &[&str]) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    for directory in std::env::split_paths(&path) {
+        for candidate in candidates {
+            let path = directory.join(candidate);
+            if path.is_file() {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+fn icon_base64_for(path: &Path) -> Option<String> {
+    windows_icons::get_icon_base64_by_path(path).ok()
+}
+
+fn runtime_icon_base64(manager: &str) -> Option<String> {
+    let candidates: &[&str] = match manager {
+        "npm" | "yarn" | "pnpm" | "bun" => &["node.exe"],
+        "rustup" | "cargo" => &["cargo.exe", "rustup.exe"],
+        "pip" => &["python.exe", "pip.exe"],
+        "dotnet" => &["dotnet.exe"],
+        "composer" => &["php.exe"],
+        "deno" => &["deno.exe"],
+        "go" => &["go.exe"],
+        _ => &[],
+    };
+    if candidates.is_empty() {
+        return None;
+    }
+    find_on_path(candidates).as_deref().and_then(icon_base64_for)
+}
+
+fn toolchain_icon_base64(manager: &str, path: &str) -> Option<String> {
+    let base = Path::new(path);
+    let candidates: Vec<PathBuf> = match manager {
+        "rustup" => vec![
+            base.join("bin").join("rustc.exe"),
+            base.join("bin").join("cargo.exe"),
+        ],
+        "fnm" | "nvm" => vec![base.join("node.exe"), base.join("bin").join("node.exe")],
+        _ => Vec::new(),
+    };
+    candidates
+        .iter()
+        .find(|candidate| candidate.is_file())
+        .and_then(|candidate| icon_base64_for(candidate))
+        .or_else(|| runtime_icon_base64(manager))
+}
+
 pub fn build_inventory() -> Vec<InventoryApp> {
     let mut items = Vec::new();
+    let mut runtime_icons: HashMap<String, Option<String>> = HashMap::new();
 
     let registry_apps = super::registry::scan_registry();
     let store_apps = scan_uwp_apps();
@@ -137,6 +191,10 @@ pub fn build_inventory() -> Vec<InventoryApp> {
         items.push(wrap(app, "store", None, None));
     }
     for package in scan_global_cli_packages() {
+        let cli_icon = runtime_icons
+            .entry(package.manager.clone())
+            .or_insert_with(|| runtime_icon_base64(&package.manager))
+            .clone();
         let app = InstalledApp {
             id: format!("cli:{}:{}", package.manager, package.name),
             display_name: package.name.clone(),
@@ -149,7 +207,7 @@ pub fn build_inventory() -> Vec<InventoryApp> {
             install_location: Some(package.path.clone()),
             install_date: None,
             display_icon: None,
-            icon_base64: None,
+            icon_base64: cli_icon,
             estimated_size: Some(package.size_bytes),
             registry_path: format!("cli:{}:{}", package.manager, package.name),
             hive: "CLI".to_string(),
@@ -159,6 +217,7 @@ pub fn build_inventory() -> Vec<InventoryApp> {
         items.push(wrap(app, "cli", Some(package.manager), None));
     }
     for toolchain in scan_toolchain_versions() {
+        let toolchain_icon = toolchain_icon_base64(&toolchain.manager, &toolchain.path);
         let app = InstalledApp {
             id: format!("toolchain:{}:{}", toolchain.manager, toolchain.version),
             display_name: toolchain.version.clone(),
@@ -171,7 +230,7 @@ pub fn build_inventory() -> Vec<InventoryApp> {
             install_location: Some(toolchain.path.clone()),
             install_date: None,
             display_icon: None,
-            icon_base64: None,
+            icon_base64: toolchain_icon,
             estimated_size: Some(toolchain.size_bytes),
             registry_path: format!("toolchain:{}:{}", toolchain.manager, toolchain.version),
             hive: "TOOLCHAIN".to_string(),
@@ -192,6 +251,8 @@ pub fn build_inventory() -> Vec<InventoryApp> {
         if claimed_names.contains(&portable.name.to_lowercase()) {
             continue;
         }
+        let portable_icon = icon_base64_for(Path::new(&portable.executable));
+        let portable_icon_source = portable.executable.clone();
         let app = InstalledApp {
             id: format!("portable:{}", portable.path),
             display_name: portable.name,
@@ -203,8 +264,8 @@ pub fn build_inventory() -> Vec<InventoryApp> {
             release_type: None,
             install_location: Some(portable.path),
             install_date: None,
-            display_icon: None,
-            icon_base64: None,
+            display_icon: Some(portable_icon_source),
+            icon_base64: portable_icon,
             estimated_size: Some(portable.size_bytes),
             registry_path: portable.executable,
             hive: "PORTABLE".to_string(),
@@ -314,7 +375,18 @@ mod tests {
         println!("inventory items: {}", items.len());
         for source in ["registry", "store", "cli", "toolchain", "portable"] {
             let count = items.iter().filter(|item| item.source == source).count();
-            println!("  {}: {}", source, count);
+            let missing = items
+                .iter()
+                .filter(|item| item.source == source && item.app.icon_base64.is_none())
+                .count();
+            println!("  {}: {} ({} without icon)", source, count, missing);
+        }
+        for item in items
+            .iter()
+            .filter(|item| item.app.icon_base64.is_none())
+            .take(40)
+        {
+            println!("    no icon: {} [{}]", item.app.display_name, item.source);
         }
         println!(
             "  dev: {}",

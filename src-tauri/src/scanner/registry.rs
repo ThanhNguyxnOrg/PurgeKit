@@ -244,26 +244,27 @@ fn scan_uninstall_key(
         
         let mut icon_base64 = None;
         if let Some(ref icon_path) = display_icon {
-            let clean_path = icon_path.trim().trim_matches('"');
-            let clean_path = if let Some(comma_pos) = clean_path.rfind(',') {
-                let suffix = &clean_path[comma_pos + 1..];
-                if suffix.chars().all(|c| c.is_ascii_digit()) {
-                    &clean_path[..comma_pos]
-                } else {
-                    clean_path
-                }
-            } else {
-                clean_path
-            };
-
+            let clean_path = clean_icon_path(icon_path);
             if !clean_path.is_empty() {
-                if let Ok(base64_str) = windows_icons::get_icon_base64_by_path(clean_path) {
+                if let Ok(base64_str) = windows_icons::get_icon_base64_by_path(&clean_path) {
                     icon_base64 = Some(base64_str);
                 }
             }
         }
-        
-        // Fallback 1: Try to extract icon from the uninstaller executable itself
+
+        // Fallback 1: Start Menu shortcut icon (same source Geek consults before
+        // falling back to install folders and uninstallers).
+        if icon_base64.is_none() {
+            if let Some(icon_source) =
+                super::shortcuts::find_icon_source_for_name(display_name)
+            {
+                if let Ok(base64_str) = windows_icons::get_icon_base64_by_path(&icon_source) {
+                    icon_base64 = Some(base64_str);
+                }
+            }
+        }
+
+        // Fallback 2: Try to extract icon from the uninstaller executable itself
         if icon_base64.is_none() {
             if let Some(ref uninst) = uninstall_string {
                 if let Some(exe_path) = get_executable_from_uninstall_string(uninst) {
@@ -277,7 +278,7 @@ fn scan_uninstall_key(
             }
         }
 
-        // Fallback 2: Try to find executables in the InstallLocation folder
+        // Fallback 3: Try to find executables in the InstallLocation folder
         if icon_base64.is_none() {
             if let Some(ref loc) = install_location {
                 let loc_path = Path::new(loc.trim().trim_matches('"'));
@@ -339,7 +340,7 @@ fn scan_uninstall_key(
             }
         }
 
-        // Fallback 3: Try to find executables in the system PATH environment variable
+        // Fallback 4: Try to find executables in the system PATH environment variable
         if icon_base64.is_none() {
             let app_name_lower = display_name.to_lowercase();
             let mut search_exes = Vec::new();
@@ -440,7 +441,7 @@ fn derived_fingerprint(
     estimated_size: Option<u64>,
 ) -> String {
     format!(
-        "v2\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}",
+        "v3\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}",
         display_name,
         display_version.unwrap_or_default(),
         uninstall_string.unwrap_or_default(),
@@ -510,12 +511,16 @@ fn detect_is_verified(
 
 fn clean_icon_path(icon: &str) -> String {
     let cleaned = icon.trim().trim_matches('"');
-    if let Some((path, suffix)) = cleaned.rsplit_once(',') {
+    let cleaned = if let Some((path, suffix)) = cleaned.rsplit_once(',') {
         if suffix.chars().all(|character| character.is_ascii_digit()) {
-            return path.to_string();
+            path
+        } else {
+            cleaned
         }
-    }
-    cleaned.to_string()
+    } else {
+        cleaned
+    };
+    crate::winutil::expand_env_strings(cleaned.trim().trim_matches('"'))
 }
 
 fn infer_install_location(

@@ -337,6 +337,30 @@ fn resolve_manifest_asset(install_location: &Path, raw: &str) -> Option<PathBuf>
     best.map(|(_, path)| path)
 }
 
+fn manifest_executable(install_location: &Path) -> Option<PathBuf> {
+    let manifest = fs::read_to_string(install_location.join("AppxManifest.xml")).ok()?;
+    let base = crate::winutil::canonicalize_path_safety(&install_location.to_string_lossy());
+    let marker = "Executable=\"";
+    let mut rest = manifest.as_str();
+    while let Some(start) = rest.find(marker) {
+        rest = &rest[start + marker.len()..];
+        let Some(end) = rest.find('"') else {
+            break;
+        };
+        let candidate = install_location.join(rest[..end].replace('/', "\\"));
+        let candidate = crate::winutil::canonicalize_path_safety(&candidate.to_string_lossy());
+        if candidate.starts_with(&base)
+            && candidate.is_file()
+            && candidate
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
+        {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 fn get_uwp_icon_base64(install_location: &str) -> Option<String> {
     let path = Path::new(install_location);
     if !path.is_dir() {
@@ -354,23 +378,38 @@ fn get_uwp_icon_base64(install_location: &str) -> Option<String> {
         }
     }
 
+    // Some manifests use ms-resource logos or omit the asset. The application
+    // executable still carries the package icon in most of those packages.
+    if let Some(executable) = manifest_executable(path) {
+        if let Ok(base64) = windows_icons::get_icon_base64_by_path(&executable) {
+            return Some(base64);
+        }
+    }
+
     // Manifest paths can be resource references; fall back to a bounded walk
-    // so a huge package cannot stall the whole inventory.
+    // inside the package so a huge or malicious package cannot escape it.
     let mut candidates = Vec::new();
     for entry in walkdir::WalkDir::new(path)
-        .max_depth(3)
+        .max_depth(6)
+        .follow_links(false)
         .into_iter()
         .filter_map(|entry| entry.ok())
-        .take(4000)
+        .take(20_000)
     {
         let p = entry.path();
-        if p.is_file() && p.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("png")) {
+        let is_image = p.extension().is_some_and(|ext| {
+            ext.eq_ignore_ascii_case("png") || ext.eq_ignore_ascii_case("ico")
+        });
+        let is_plain_file = fs::symlink_metadata(p)
+            .map(|metadata| metadata.is_file() && !crate::winutil::is_reparse_point(&metadata))
+            .unwrap_or(false);
+        if is_plain_file && is_image {
             if let Some(name) = p.file_name().and_then(|n| n.to_str()).map(|n| n.to_lowercase()) {
                 let is_high_contrast = name.contains("contrast-black") || name.contains("contrast-white") 
                     || name.contains("hc-black") || name.contains("hc-white");
                 let is_altform = name.contains("altform");
                 
-                let mut score = if name.contains("storelogo") || name.contains("store_logo") || name.contains("storestorelogo") {
+                let mut score: u32 = if name.contains("storelogo") || name.contains("store_logo") || name.contains("storestorelogo") {
                     100
                 } else if name.contains("square150x150logo") || name.contains("square150") {
                     80
@@ -385,6 +424,9 @@ fn get_uwp_icon_base64(install_location: &str) -> Option<String> {
                 } else {
                     10
                 };
+                if name.ends_with(".ico") {
+                    score = score.saturating_sub(5);
+                }
                 
                 if is_high_contrast {
                     score -= 40;
@@ -400,11 +442,42 @@ fn get_uwp_icon_base64(install_location: &str) -> Option<String> {
     
     candidates.sort_by_key(|b| std::cmp::Reverse(b.0));
     if let Some((_, best_path)) = candidates.first() {
-        if let Ok(bytes) = fs::read(best_path) {
-            return Some(general_purpose::STANDARD.encode(&bytes));
+        if let Some(encoded) = encode_package_icon(best_path) {
+            return Some(encoded);
+        }
+    }
+
+    // Stub/streamed Store packages can have no staged logo asset. windows-icons
+    // resolves the shell app-exec link for those; restrict it to signed,
+    // read-only WindowsApps packages so temp/test paths never reach it.
+    let in_windows_apps = path
+        .to_string_lossy()
+        .split(['\\', '/'])
+        .any(|segment| segment.eq_ignore_ascii_case("WindowsApps"));
+    if in_windows_apps {
+        if let Ok(base64) = windows_icons::get_icon_base64_by_path(path) {
+            if !base64.is_empty() {
+                return Some(base64);
+            }
         }
     }
     None
+}
+
+fn encode_package_icon(path: &Path) -> Option<String> {
+    if path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("png"))
+    {
+        let bytes = fs::read(path).ok()?;
+        if bytes.is_empty() {
+            return None;
+        }
+        return Some(general_purpose::STANDARD.encode(&bytes));
+    }
+    windows_icons::get_icon_base64_by_path(path)
+        .ok()
+        .filter(|base64| !base64.is_empty())
 }
 
 #[cfg(test)]
@@ -433,6 +506,37 @@ mod tests {
         assert_eq!(decoded, vec![1, 2, 3]);
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolves_manifest_executable_inside_the_package() {
+        let root = std::env::temp_dir().join("purgekit_uwp_executable_test");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("bin")).unwrap();
+        fs::write(root.join("bin").join("app.exe"), b"exe").unwrap();
+        fs::write(
+            root.join("AppxManifest.xml"),
+            r#"<Package><Applications><Application Executable="bin\app.exe" /></Applications></Package>"#,
+        )
+        .unwrap();
+        assert_eq!(
+            manifest_executable(&root)
+                .and_then(|path| path.file_name().map(|name| name.to_owned()))
+                .and_then(|name| name.to_str().map(|name| name.to_string())),
+            Some("app.exe".to_string())
+        );
+
+        let outside = std::env::temp_dir().join("purgekit_uwp_executable_outside.exe");
+        fs::write(&outside, b"exe").unwrap();
+        fs::write(
+            root.join("AppxManifest.xml"),
+            r#"<Package><Applications><Application Executable="..\purgekit_uwp_executable_outside.exe" /></Applications></Package>"#,
+        )
+        .unwrap();
+        assert!(manifest_executable(&root).is_none());
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_file(&outside);
     }
 
     #[test]
