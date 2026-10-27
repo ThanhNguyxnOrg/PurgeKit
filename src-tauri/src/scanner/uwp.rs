@@ -456,6 +456,77 @@ mod tests {
     }
 
     #[test]
+    fn manifest_logo_candidates_are_priority_ordered_and_deduplicated() {
+        let root = std::env::temp_dir().join("purgekit_uwp_manifest_candidates_test");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("AppxManifest.xml"),
+            r#"<Package>
+                <Properties><Logo>Assets\StoreLogo.png</Logo></Properties>
+                <Applications>
+                    <Application>
+                        <uap:VisualElements Square44x44Logo="Assets\Small.png" Square150x150Logo="Assets\Wide.png" />
+                        <uap:DefaultTile Square44x44Logo="Assets\Small.png" />
+                    </Application>
+                </Applications>
+            </Package>"#,
+        )
+        .unwrap();
+
+        let candidates = manifest_logo_candidates(&root);
+        assert_eq!(
+            candidates,
+            vec![
+                r"Assets\Small.png".to_string(),
+                r"Assets\Wide.png".to_string(),
+                r"Assets\StoreLogo.png".to_string()
+            ]
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn icon_scores_prefer_large_normal_assets() {
+        assert!(icon_score("square44x44logo.targetsize-256.png") > icon_score("square44x44logo.scale-200.png"));
+        assert!(icon_score("square44x44logo.targetsize-48.png") > icon_score("square44x44logo.scale-100.png"));
+        assert!(icon_score("square44x44logo.altform-unplated_targetsize-256.png") > icon_score("square44x44logo.scale-100.png"));
+        assert_eq!(icon_score("square44x44logo.contrast-black.png"), 0);
+    }
+
+    #[test]
+    fn prefers_exact_manifest_assets_and_falls_back_for_resource_logos() {
+        let root = std::env::temp_dir().join("purgekit_uwp_icon_exact_test");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("Assets")).unwrap();
+        fs::write(
+            root.join("AppxManifest.xml"),
+            r#"<Package><Properties><Logo>ms-resource://StoreLogo</Logo></Properties><Applications><Application><uap:VisualElements Square44x44Logo="Assets\Exact.png" /></Application></Applications></Package>"#,
+        )
+        .unwrap();
+        fs::write(root.join("Assets\\Exact.png"), [1u8, 2, 3]).unwrap();
+        fs::write(root.join("Assets\\Exact.scale-100.png"), [4u8, 5, 6]).unwrap();
+
+        let exact = get_uwp_icon_base64(root.to_str().unwrap()).expect("exact icon");
+        assert_eq!(
+            general_purpose::STANDARD.decode(exact).unwrap(),
+            vec![1, 2, 3]
+        );
+
+        fs::write(
+            root.join("AppxManifest.xml"),
+            r#"<Package><Properties><Logo>ms-resource://StoreLogo</Logo></Properties></Package>"#,
+        )
+        .unwrap();
+        let fallback = get_uwp_icon_base64(root.to_str().unwrap()).expect("fallback icon");
+        let decoded = general_purpose::STANDARD.decode(fallback).unwrap();
+        assert!(!decoded.is_empty());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn test_scan_uwp_apps() {
         let apps = scan_uwp_apps();
         println!("Found {} UWP apps", apps.len());
