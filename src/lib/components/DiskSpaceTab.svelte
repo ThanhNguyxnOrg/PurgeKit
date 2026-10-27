@@ -56,8 +56,9 @@
     elapsed_ms: number;
     errors: number;
     truncated: boolean;
-    engine: "mft" | "traversal" | "csv";
+    engine: "mft" | "traversal" | "csv" | "multi";
     duplicate_mode: "off" | "name_size" | "name_size_date";
+    protected_roots?: string[];
   }
 
   interface DiskProgress {
@@ -133,6 +134,15 @@
   let searchSequence = 0;
   let isQuarantining = $state(false);
   let duplicateSelection = $state<Record<string, boolean>>({});
+
+  let scanTargets = $derived(
+    pathInput
+      .split(/[;\n]+/)
+      .map((value) => value.trim())
+      .filter(Boolean)
+  );
+
+  let primaryScanTarget = $derived(scanTargets[0] ?? "");
 
   let selectedDuplicateCount = $derived(
     result
@@ -359,6 +369,13 @@
     return /^[a-zA-Z]:[\\/]*$/.test(value.trim());
   }
 
+  function activeSearchPrefix(): string | null {
+    if (fileScope !== "folder" || !focusNode) return null;
+    // A merged multi-root scan uses a synthetic root that is not a real path.
+    if (focusNode.path.startsWith("::")) return null;
+    return focusNode.path;
+  }
+
   function clearFileSearch() {
     clearTimeout(searchTimer);
     searchResult = null;
@@ -388,7 +405,7 @@
         path: result.root_path,
         query: fileQuery.trim(),
         extension: fileExtensionFilter,
-        prefix: fileScope === "folder" ? focusNode?.path ?? null : null,
+        prefix: activeSearchPrefix(),
         filterMode: fileFilterMode,
         include: fileInclude.trim() || null,
         exclude: fileExclude.trim() || null,
@@ -448,8 +465,11 @@
 
   async function scanDisk() {
     if (isImporting) return;
-    const target = pathInput.trim();
-    if (!target) {
+    const targets = pathInput
+      .split(/[;\n]+/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (targets.length === 0) {
       toast.show("Enter a drive or folder path first.", "warning");
       return;
     }
@@ -470,12 +490,19 @@
     clearFileSearch();
 
     try {
-      const scanResult = await invoke<DiskScanResult>("scan_disk_space", {
-        path: target,
-        maxDepth: 4,
-        maxChildren: 40,
-        duplicateMode,
-      });
+      const scanResult = targets.length > 1
+        ? await invoke<DiskScanResult>("scan_disk_space_multi", {
+            paths: targets,
+            maxDepth: 4,
+            maxChildren: 40,
+            duplicateMode,
+          })
+        : await invoke<DiskScanResult>("scan_disk_space", {
+            path: targets[0],
+            maxDepth: 4,
+            maxChildren: 40,
+            duplicateMode,
+          });
       lastScanHadDuplicates = scanResult.duplicate_mode !== "off";
       result = scanResult;
       focusStack = [scanResult.root];
@@ -870,7 +897,7 @@
         path: result.root_path,
         query: fileQuery.trim(),
         extension: fileExtensionFilter,
-        prefix: fileScope === "folder" ? focusNode?.path ?? null : null,
+        prefix: activeSearchPrefix(),
         filterMode: fileFilterMode,
         include: fileInclude.trim() || null,
         exclude: fileExclude.trim() || null,
@@ -926,7 +953,6 @@
       return;
     }
 
-    const root = result.root_path;
     const selected = result.duplicate_groups.flatMap((group) =>
       group.files.filter((file) => duplicateSelection[file.path])
     );
@@ -968,7 +994,6 @@
       failed > 0 ? "warning" : "success"
     );
 
-    pathInput = root;
     await scanDisk();
     if (duplicateMode !== "off" && result) activeView = "duplicates";
   }
@@ -980,8 +1005,11 @@
       toast.show("Imported CSV snapshots are read-only. Rescan the drive to clean files.", "warning");
       return;
     }
-    if (node.path === result.root_path) {
-      toast.show("Select a child folder or file first; the scan root is protected.", "warning");
+    const protectedRoots = result.protected_roots?.length
+      ? result.protected_roots
+      : [result.root_path];
+    if (protectedRoots.some((root) => root.toLowerCase() === node.path.toLowerCase())) {
+      toast.show("Select a child folder or file first; scan roots are protected.", "warning");
       return;
     }
 
@@ -1037,6 +1065,10 @@
   async function openSelected() {
     const node = selectedNode || focusNode;
     if (!node) return;
+    if (node.path.startsWith("::")) {
+      toast.show("Select one of the scanned roots to open it in Explorer.", "warning");
+      return;
+    }
     const folder = node.is_dir
       ? node.path
       : node.path.slice(0, Math.max(0, node.path.lastIndexOf("\\")));
@@ -1155,7 +1187,7 @@
             class="flex items-center gap-2 px-4 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-xs font-semibold transition-all active:scale-95 disabled:opacity-40"
           >
             <Play class="w-3.5 h-3.5" />
-            Scan
+            {scanTargets.length > 1 ? `Scan ${scanTargets.length} paths` : "Scan"}
           </button>
         {/if}
       </div>
@@ -1166,8 +1198,8 @@
         <input
           bind:value={pathInput}
           onkeydown={(event) => event.key === "Enter" && !isScanning && scanDisk()}
-          placeholder="C:\ or D:\Code"
-          aria-label="Drive or folder to scan"
+          placeholder="C:\ or D:\Code; E:\Games"
+          aria-label="Drives or folders to scan, separated by semicolons"
           class="w-full px-3 py-2 rounded-lg bg-surface-bg border border-border-default focus:border-accent/50 focus:ring-1 focus:ring-accent/30 outline-none text-sm font-mono text-text-primary placeholder:text-text-muted"
         />
       </div>
@@ -1274,14 +1306,22 @@
             ? 'bg-data-cyan/10 text-data-cyan border-data-cyan/30'
             : result.engine === 'csv'
               ? 'bg-warning/10 text-warning border-warning/30'
-              : 'bg-surface-bg text-text-muted border-border-default'}">
-          {result.engine === "mft" ? "MFT FAST SCAN" : result.engine === "csv" ? "CSV IMPORT" : "TRAVERSAL FALLBACK"}
+              : result.engine === 'multi'
+                ? 'bg-accent/10 text-accent border-accent/30'
+                : 'bg-surface-bg text-text-muted border-border-default'}">
+          {result.engine === "mft"
+            ? "MFT FAST SCAN"
+            : result.engine === "csv"
+              ? "CSV IMPORT"
+              : result.engine === "multi"
+                ? "MULTI-ROOT"
+                : "TRAVERSAL FALLBACK"}
         </span>
         {#if result.engine === "csv"}
           <span class="text-text-muted">
             Read-only snapshot. Quarantine and cleanup are disabled until you rescan the drive.
           </span>
-        {:else if result.engine === "traversal" && isDriveRoot(pathInput)}
+        {:else if result.engine === "traversal" && isDriveRoot(primaryScanTarget)}
           <span class="text-warning">
             MFT unavailable for this drive/session. Run as Administrator on local NTFS for the fast path.
           </span>
@@ -1452,8 +1492,12 @@
             <button
               onclick={() => setFileScope("folder")}
               aria-pressed={fileScope === "folder"}
-              disabled={!focusNode}
-              title={focusNode ? `Limit to ${focusNode.path}` : "Open a folder in the treemap first"}
+              disabled={!focusNode || focusNode.path.startsWith("::")}
+              title={focusNode
+                ? focusNode.path.startsWith("::")
+                  ? "Open one of the scanned roots in the treemap first"
+                  : `Limit to ${focusNode.path}`
+                : "Open a folder in the treemap first"}
               class="px-2.5 py-2 text-[11px] font-semibold border-l border-border-default transition-colors disabled:opacity-40 {fileScope === 'folder' ? 'bg-accent-subtle text-accent' : 'bg-surface-bg text-text-muted hover:text-text-primary'}"
             >
               This folder

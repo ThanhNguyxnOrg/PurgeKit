@@ -675,6 +675,114 @@ fn collect_pending_reboot_operations(
     }
 }
 
+fn disk_cache_key(path: &str) -> String {
+    let trimmed = path.trim();
+    if trimmed.starts_with("::") {
+        trimmed.to_ascii_lowercase()
+    } else {
+        crate::winutil::canonicalize_path_safety(path)
+            .to_string_lossy()
+            .to_lowercase()
+    }
+}
+
+fn path_key_is_child(child: &str, parent: &str) -> bool {
+    child.len() > parent.len()
+        && child.starts_with(parent)
+        && matches!(child.as_bytes()[parent.len()], b'\\' | b'/')
+}
+
+fn normalize_scan_targets(paths: &[String]) -> Result<Vec<String>, String> {
+    let mut targets: Vec<(String, String)> = Vec::new();
+    for raw in paths {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let expanded = crate::winutil::expand_env_strings(trimmed);
+        if !std::path::Path::new(&expanded).is_absolute() {
+            return Err(format!(
+                "Enter an absolute path to scan (for example C:\\ or C:\\Folder): {}",
+                trimmed
+            ));
+        }
+        let canonical = crate::winutil::canonicalize_path_safety(&expanded);
+        let display = canonical.to_string_lossy().to_string();
+        let key = display.trim_end_matches(['\\', '/']).to_ascii_lowercase();
+        if targets.iter().any(|(existing, _)| existing == &key) {
+            continue;
+        }
+        if targets
+            .iter()
+            .any(|(existing, _)| path_key_is_child(&key, existing))
+        {
+            continue;
+        }
+        targets.retain(|(existing, _)| !path_key_is_child(existing, &key));
+        targets.push((key, display));
+    }
+    Ok(targets.into_iter().map(|(_, path)| path).collect())
+}
+
+fn scan_single_disk_target(
+    app: &AppHandle,
+    path: &str,
+    max_depth: u32,
+    max_children: usize,
+    find_duplicates: bool,
+    duplicate_include_date: bool,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<scanner::DiskScanResult, String> {
+    let mft_app = app.clone();
+    let mft_result = scanner::mft_scan::scan_ntfs_mft(
+        path,
+        max_depth,
+        max_children,
+        find_duplicates,
+        duplicate_include_date,
+        cancel,
+        move |progress| {
+            let _ = mft_app.emit("disk-scan-progress", progress);
+        },
+    );
+    if let Ok(result) = mft_result {
+        return Ok(result);
+    }
+
+    // MFT requires an elevated process and a local NTFS volume. Fall back to
+    // the traversal engine, which also supports folders, network shares and
+    // non-NTFS drives.
+    let fallback_app = app.clone();
+    scanner::disk_scan::scan_disk_tree(
+        path,
+        max_depth,
+        max_children,
+        find_duplicates,
+        duplicate_include_date,
+        cancel,
+        move |progress| {
+            let _ = fallback_app.emit("disk-scan-progress", progress);
+        },
+    )
+}
+
+fn store_disk_index(
+    cache: &std::sync::Mutex<
+        std::collections::HashMap<String, std::sync::Arc<scanner::disk_scan::DiskFileIndex>>,
+    >,
+    result: &mut scanner::DiskScanResult,
+) {
+    if let Some(index) = result.file_index.take() {
+        let key = index.root_path.to_lowercase();
+        if let Ok(mut indexes) = cache.lock() {
+            // The UI searches one scan at a time; dropping older indexes keeps
+            // memory bounded on multi-hundred-thousand-file volumes.
+            indexes.clear();
+            indexes.insert(key, std::sync::Arc::new(index));
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn scan_disk_space(
     app: AppHandle,
@@ -700,50 +808,77 @@ pub async fn scan_disk_space(
             _ => (find_duplicates.unwrap_or(false), false),
         };
 
-        let mft_app = app.clone();
-        let mft_result = scanner::mft_scan::scan_ntfs_mft(
+        scan_single_disk_target(
+            &app,
             &path,
             max_depth,
             max_children,
             find_duplicates,
             duplicate_include_date,
             &cancel,
-            move |progress| {
-                let _ = mft_app.emit("disk-scan-progress", progress);
-            },
-        );
-        if let Ok(result) = mft_result {
-            return Ok(result);
-        }
-
-        // MFT requires an elevated process and a local NTFS volume. Fall back to
-        // the traversal engine, which also supports folders, network shares and
-        // non-NTFS drives.
-        let fallback_app = app.clone();
-        scanner::disk_scan::scan_disk_tree(
-            &path,
-            max_depth,
-            max_children,
-            find_duplicates,
-            duplicate_include_date,
-            &cancel,
-            move |progress| {
-                let _ = fallback_app.emit("disk-scan-progress", progress);
-            },
         )
     })
     .await
     .map_err(|e| e.to_string())??;
 
-    if let Some(index) = result.file_index.take() {
-        let key = index.root_path.to_lowercase();
-        if let Ok(mut indexes) = cache.lock() {
-            // The UI searches one scan at a time; dropping older indexes keeps
-            // memory bounded on multi-hundred-thousand-file volumes.
-            indexes.clear();
-            indexes.insert(key, std::sync::Arc::new(index));
-        }
+    store_disk_index(&cache, &mut result);
+
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn scan_disk_space_multi(
+    app: AppHandle,
+    state: tauri::State<'_, scanner::DiskScanState>,
+    cache: tauri::State<'_, scanner::disk_scan::DiskFileCache>,
+    paths: Vec<String>,
+    max_depth: Option<u32>,
+    max_children: Option<usize>,
+    duplicate_mode: Option<String>,
+) -> Result<scanner::DiskScanResult, String> {
+    state.0.store(false, Ordering::Relaxed);
+    let cancel = state.0.clone();
+    let cache = cache.0.clone();
+
+    let targets = normalize_scan_targets(&paths)?;
+    if targets.is_empty() {
+        return Err("Enter at least one absolute drive or folder path.".to_string());
     }
+    if targets.len() > 32 {
+        return Err("Select at most 32 scan targets at once.".to_string());
+    }
+
+    let mut result = tauri::async_runtime::spawn_blocking(move || {
+        let max_depth = max_depth.unwrap_or(4);
+        let max_children = max_children.unwrap_or(40);
+        let (find_duplicates, duplicate_include_date) = match duplicate_mode.as_deref() {
+            Some("off") => (false, false),
+            Some("name_size_date") => (true, true),
+            Some("name_size") => (true, false),
+            _ => (false, false),
+        };
+
+        let mut results = Vec::with_capacity(targets.len());
+        for target in &targets {
+            if cancel.load(Ordering::Relaxed) {
+                return Err("Disk scan cancelled".to_string());
+            }
+            results.push(scan_single_disk_target(
+                &app,
+                target,
+                max_depth,
+                max_children,
+                find_duplicates,
+                duplicate_include_date,
+                &cancel,
+            )?);
+        }
+        scanner::disk_scan::merge_disk_scans(results, "Multiple locations")
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    store_disk_index(&cache, &mut result);
 
     Ok(result)
 }
@@ -796,9 +931,7 @@ pub async fn search_disk_files(
     limit: Option<usize>,
     sort: Option<String>,
 ) -> Result<scanner::disk_scan::DiskFileSearchResult, String> {
-    let key = crate::winutil::canonicalize_path_safety(&path)
-        .to_string_lossy()
-        .to_lowercase();
+    let key = disk_cache_key(&path);
     let index = {
         let indexes = cache
             .0
@@ -842,9 +975,7 @@ pub async fn export_disk_files_csv(
     sort: Option<String>,
     limit: Option<usize>,
 ) -> Result<scanner::disk_scan::DiskCsvExport, String> {
-    let key = crate::winutil::canonicalize_path_safety(&path)
-        .to_string_lossy()
-        .to_lowercase();
+    let key = disk_cache_key(&path);
     let index = {
         let indexes = cache
             .0
@@ -1998,6 +2129,32 @@ mod tests {
             is_uwp,
             is_verified: None,
         }
+    }
+
+    #[test]
+    fn test_normalize_scan_targets_removes_duplicates_and_nested_paths() {
+        let base = std::env::temp_dir().join("purgekit_scan_targets_test");
+        let first = base.join("first");
+        let nested = first.join("nested");
+        let second = base.join("second");
+        let _ = fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+
+        let targets = normalize_scan_targets(&[
+            first.to_string_lossy().to_string(),
+            nested.to_string_lossy().to_string(),
+            second.to_string_lossy().to_string(),
+            second.to_string_lossy().to_string(),
+        ])
+        .unwrap();
+        assert_eq!(targets.len(), 2);
+        assert!(targets[0].to_lowercase().contains("first"));
+        assert!(targets[1].to_lowercase().contains("second"));
+
+        assert!(normalize_scan_targets(&["relative\\folder".to_string()]).is_err());
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

@@ -38,6 +38,7 @@ pub fn run() {
             commands::compare_snapshots,
             commands::get_pending_reboot_items,
             commands::scan_disk_space,
+            commands::scan_disk_space_multi,
             commands::cancel_disk_scan,
             commands::search_disk_files,
             commands::export_disk_files_csv,

@@ -75,6 +75,7 @@ pub struct DiskScanResult {
     pub truncated: bool,
     pub engine: String,
     pub duplicate_mode: String,
+    pub protected_roots: Vec<String>,
     #[serde(skip)]
     pub file_index: Option<DiskFileIndex>,
 }
@@ -901,12 +902,213 @@ pub(crate) fn finalize_scan(
         } else {
             "name_size".to_string()
         },
+        protected_roots: vec![root_path.clone()],
         file_index: Some(DiskFileIndex {
             root_path,
             files: indexed_files,
             complete: index_complete,
         }),
     }
+}
+
+fn volume_identity(path: &str) -> String {
+    let normalized = path.replace('/', "\\");
+    if normalized.len() >= 2 && normalized.as_bytes()[1] == b':' {
+        return normalized[..2].to_ascii_lowercase();
+    }
+    if let Some(rest) = normalized.strip_prefix("\\\\") {
+        let mut parts = rest.splitn(3, '\\');
+        let server = parts.next().unwrap_or_default();
+        let share = parts.next().unwrap_or_default();
+        if !server.is_empty() && !share.is_empty() {
+            return format!("\\\\{}\\{}", server, share).to_ascii_lowercase();
+        }
+    }
+    normalized.to_ascii_lowercase()
+}
+
+fn duplicate_groups_from_cached(
+    files: &[CachedDiskFile],
+    include_date: bool,
+) -> Vec<DuplicateGroup> {
+    let mut grouped: HashMap<(u64, String, Option<u64>), Vec<&CachedDiskFile>> = HashMap::new();
+    for file in files {
+        if file.size_bytes == 0 {
+            continue;
+        }
+        let name = Path::new(&file.path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(&file.path)
+            .to_lowercase();
+        let modified = if include_date {
+            Some(file.modified_epoch_ms.unwrap_or(0))
+        } else {
+            None
+        };
+        grouped
+            .entry((file.size_bytes, name, modified))
+            .or_default()
+            .push(file);
+    }
+
+    let mut groups: Vec<DuplicateGroup> = grouped
+        .into_iter()
+        .filter(|(_, entries)| entries.len() > 1)
+        .map(|((size_bytes, name, _), mut entries)| {
+            entries.sort_by_key(|file| Reverse(file.allocated_bytes));
+            let file_count = entries.len();
+            let files = entries
+                .into_iter()
+                .take(25)
+                .map(disk_file_from_cached)
+                .collect();
+            DuplicateGroup {
+                name,
+                size_bytes,
+                file_count,
+                files,
+            }
+        })
+        .collect();
+    groups.sort_by_key(|group| {
+        Reverse(
+            group
+                .size_bytes
+                .saturating_mul(group.file_count.saturating_sub(1) as u64),
+        )
+    });
+    groups.truncate(500);
+    groups
+}
+
+pub fn merge_disk_scans(results: Vec<DiskScanResult>, label: &str) -> Result<DiskScanResult, String> {
+    if results.is_empty() {
+        return Err("No scan targets were provided.".to_string());
+    }
+    if results.len() == 1 {
+        return Ok(results.into_iter().next().unwrap());
+    }
+
+    let duplicate_mode = results[0].duplicate_mode.clone();
+    let find_duplicates = duplicate_mode != "off";
+    let include_date = duplicate_mode == "name_size_date";
+
+    let mut children = Vec::with_capacity(results.len());
+    let mut files: Vec<CachedDiskFile> = Vec::new();
+    let mut top_files: Vec<DiskFile> = Vec::new();
+    let mut file_types: HashMap<String, (u64, u64)> = HashMap::new();
+    let mut protected_roots = Vec::new();
+    let mut volumes: HashMap<String, (u64, u64)> = HashMap::new();
+    let mut total_files = 0u64;
+    let mut total_dirs = 0u64;
+    let mut total_size = 0u64;
+    let mut total_allocated = 0u64;
+    let mut errors = 0u64;
+    let mut truncated = false;
+    let mut index_complete = true;
+    let mut elapsed_ms = 0u64;
+
+    for mut result in results {
+        if let Some(index) = result.file_index.take() {
+            index_complete &= index.complete;
+            files.extend(index.files);
+        } else {
+            index_complete = false;
+        }
+        top_files.extend(result.top_files);
+        for stat in result.file_types {
+            let entry = file_types.entry(stat.extension).or_insert((0, 0));
+            entry.0 += stat.size_bytes;
+            entry.1 += stat.file_count;
+        }
+        protected_roots.push(result.root.path.clone());
+        volumes.insert(
+            volume_identity(&result.root.path),
+            (result.volume_total_bytes, result.volume_free_bytes),
+        );
+        total_files += result.total_files;
+        total_dirs += result.total_dirs;
+        total_size += result.total_size;
+        total_allocated += result.total_allocated;
+        errors += result.errors;
+        truncated |= result.truncated;
+        elapsed_ms += result.elapsed_ms;
+        children.push(result.root);
+    }
+
+    let duplicate_groups = if find_duplicates {
+        duplicate_groups_from_cached(&files, include_date)
+    } else {
+        Vec::new()
+    };
+
+    if files.len() > MAX_INDEXED_FILES {
+        files.truncate(MAX_INDEXED_FILES);
+        index_complete = false;
+    }
+
+    top_files.sort_by_key(|file| Reverse(file.allocated_bytes.max(file.size_bytes)));
+    top_files.truncate(100);
+
+    let mut file_types: Vec<FileTypeStat> = file_types
+        .into_iter()
+        .map(|(extension, (size_bytes, file_count))| FileTypeStat {
+            extension,
+            size_bytes,
+            file_count,
+        })
+        .collect();
+    file_types.sort_by_key(|stat| Reverse(stat.size_bytes));
+    file_types.truncate(20);
+
+    let (volume_total_bytes, volume_free_bytes) = volumes
+        .values()
+        .fold((0u64, 0u64), |(total, free), (volume_total, volume_free)| {
+            (total + volume_total, free + volume_free)
+        });
+
+    let root_path = format!("::multi::{}", children.len());
+    let root = DiskTreeNode {
+        name: format!("{} ({} roots)", label, children.len()),
+        path: root_path.clone(),
+        is_dir: true,
+        size_bytes: total_size,
+        allocated_bytes: total_allocated,
+        modified_epoch_ms: None,
+        attributes: "D".to_string(),
+        file_count: total_files,
+        children,
+    };
+
+    let mut protected_roots_out = Vec::with_capacity(protected_roots.len() + 1);
+    protected_roots_out.push(root_path.clone());
+    protected_roots_out.extend(protected_roots);
+
+    Ok(DiskScanResult {
+        root_path: root_path.clone(),
+        root,
+        top_files,
+        file_types,
+        duplicate_groups,
+        total_files,
+        total_dirs,
+        total_size,
+        total_allocated,
+        volume_total_bytes,
+        volume_free_bytes,
+        elapsed_ms,
+        errors,
+        truncated,
+        engine: "multi".to_string(),
+        duplicate_mode,
+        protected_roots: protected_roots_out,
+        file_index: Some(DiskFileIndex {
+            root_path,
+            files,
+            complete: index_complete,
+        }),
+    })
 }
 
 #[cfg(test)]
@@ -1167,6 +1369,37 @@ mod tests {
         assert!(missing.files.is_empty());
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn merges_multiple_scan_roots_and_finds_cross_root_duplicates() {
+        let base = std::env::temp_dir().join("purgekit_multi_root_merge_test");
+        let left = base.join("left");
+        let right = base.join("right");
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&left).unwrap();
+        fs::create_dir_all(&right).unwrap();
+        fs::write(left.join("same.txt"), vec![7u8; 128]).unwrap();
+        fs::write(right.join("same.txt"), vec![7u8; 128]).unwrap();
+
+        let cancel = AtomicBool::new(false);
+        let left_result =
+            scan_disk_tree(&left.to_string_lossy(), 3, 20, true, false, &cancel, |_| {}).unwrap();
+        let right_result =
+            scan_disk_tree(&right.to_string_lossy(), 3, 20, true, false, &cancel, |_| {}).unwrap();
+        let merged = merge_disk_scans(vec![left_result, right_result], "Multiple locations").unwrap();
+
+        assert_eq!(merged.engine, "multi");
+        assert!(merged.root_path.starts_with("::multi::"));
+        assert_eq!(merged.root.children.len(), 2);
+        assert_eq!(merged.total_files, 2);
+        assert_eq!(merged.total_size, 256);
+        assert_eq!(merged.protected_roots.len(), 3);
+        assert_eq!(merged.duplicate_groups.len(), 1);
+        assert_eq!(merged.duplicate_groups[0].file_count, 2);
+        assert_eq!(merged.file_index.as_ref().unwrap().files.len(), 2);
+
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]
