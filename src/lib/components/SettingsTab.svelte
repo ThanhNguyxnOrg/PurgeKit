@@ -1,10 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Shield, HardDrive, Info, Heart, RefreshCw, Bug, ExternalLink, CheckCircle, Trash2, Lightbulb, Database } from "@lucide/svelte";
+  import { Shield, HardDrive, Info, Heart, RefreshCw, Bug, ExternalLink, CheckCircle, Trash2, Lightbulb, Database, Sun, Moon, Monitor } from "@lucide/svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { invoke } from "@tauri-apps/api/core";
   import { getVersion } from "@tauri-apps/api/app";
   import { toast } from "../toast.svelte";
+  import { theme } from "../theme.svelte";
 
   let scanLevel = $state("safe");
   let autoBackup = $state(true);
@@ -270,6 +271,53 @@
 
   <!-- Content Area -->
   <div class="flex-1 overflow-y-auto p-6 max-w-4xl space-y-6">
+    <!-- Appearance -->
+    <section class="border border-border-default rounded-lg bg-surface-bg/30 p-5 space-y-4">
+      <h3 class="text-sm font-bold text-text-primary flex items-center gap-2">
+        <Sun class="w-4 h-4 text-accent" />
+        Appearance
+      </h3>
+      <p class="text-xs text-text-muted font-sans leading-relaxed">
+        Choose a palette or follow the Windows app theme. Currently showing the
+        <span class="font-mono text-text-secondary">{theme.resolved}</span> palette.
+      </p>
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-2" role="group" aria-label="Color theme">
+        <button
+          onclick={() => theme.setMode("auto")}
+          aria-pressed={theme.mode === "auto"}
+          class="flex items-start gap-3 p-3 rounded-lg border text-left transition-colors {theme.mode === 'auto' ? 'border-accent bg-accent-subtle text-accent' : 'border-border-default bg-app-bg text-text-secondary hover:bg-elevated-bg'}"
+        >
+          <Monitor class="w-4 h-4 mt-0.5 shrink-0" />
+          <span class="flex flex-col">
+            <span class="text-xs font-bold">Auto</span>
+            <span class="text-[10px] text-text-muted mt-0.5">Follow Windows</span>
+          </span>
+        </button>
+        <button
+          onclick={() => theme.setMode("light")}
+          aria-pressed={theme.mode === "light"}
+          class="flex items-start gap-3 p-3 rounded-lg border text-left transition-colors {theme.mode === 'light' ? 'border-accent bg-accent-subtle text-accent' : 'border-border-default bg-app-bg text-text-secondary hover:bg-elevated-bg'}"
+        >
+          <Sun class="w-4 h-4 mt-0.5 shrink-0" />
+          <span class="flex flex-col">
+            <span class="text-xs font-bold">Light</span>
+            <span class="text-[10px] text-text-muted mt-0.5">Warm paper palette</span>
+          </span>
+        </button>
+        <button
+          onclick={() => theme.setMode("dark")}
+          aria-pressed={theme.mode === "dark"}
+          class="flex items-start gap-3 p-3 rounded-lg border text-left transition-colors {theme.mode === 'dark' ? 'border-accent bg-accent-subtle text-accent' : 'border-border-default bg-app-bg text-text-secondary hover:bg-elevated-bg'}"
+        >
+          <Moon class="w-4 h-4 mt-0.5 shrink-0" />
+          <span class="flex flex-col">
+            <span class="text-xs font-bold">Dark</span>
+            <span class="text-[10px] text-text-muted mt-0.5">Low-light palette</span>
+          </span>
+        </button>
+      </div>
+    </section>
+
     <!-- Scanner settings -->
     <section class="border border-border-default rounded-lg bg-surface-bg/30 p-5 space-y-4">
       <h3 class="text-sm font-bold text-text-primary flex items-center gap-2">

@@ -35,6 +35,51 @@
   --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
 }
 
+html[data-theme="light"] {
+  --color-app-bg: #F4F1EB;
+  --color-sidebar-bg: #EDE9E2;
+  --color-surface-bg: #FFFFFF;
+  --color-elevated-bg: #F6F3EE;
+  --color-overlay-bg: rgba(255, 255, 255, 0.78);
+
+  --color-border-default: #D8D2C8;
+  --color-border-subtle: #E8E3DA;
+  --color-border-strong: #B4AC9E;
+
+  --color-text-primary: #171A1F;
+  --color-text-secondary: #4B525C;
+  --color-text-muted: #707781;
+  --color-text-disabled: #9AA0A8;
+
+  --color-accent: #C94E1B;
+  --color-accent-hover: #B34214;
+  --color-accent-subtle: rgba(201, 78, 27, 0.11);
+
+  --color-success: #17835A;
+  --color-warning: #96620A;
+  --color-danger: #C03939;
+  --color-info: #1B7F8C;
+  --color-brand-purple: #6F4BC7;
+
+  --color-data-cyan: #1E7E8B;
+  --color-data-green: #237A58;
+  --color-data-amber: #96660F;
+  --color-data-rose: #A7485A;
+
+  color-scheme: light;
+}
+
+html[data-theme="light"] .instrument-panel {
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.018), transparent 38%),
+    var(--color-surface-bg);
+}
+
+html[data-theme="light"] ::selection {
+  background-color: rgba(201, 78, 27, 0.22);
+  color: #171A1F;
+}
+
 @layer components {
   .instrument-panel {
     background:
