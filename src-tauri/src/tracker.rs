@@ -12,7 +12,8 @@ pub struct TrackingSession {
 
 pub struct ActiveTracking(pub std::sync::Arc<Mutex<Option<TrackingSession>>>);
 
-/// Query the current tail of the volume USN journal. Requires Administrator.
+/// Query the current tail of the volume USN journal. Requires Administrator
+/// and an existing journal; tracking never creates a journal as a side effect.
 pub fn query_current_usn(drive: char) -> Result<u64, String> {
     let volume = Volume::from_drive_letter(drive).map_err(|error| {
         format!(
@@ -20,10 +21,12 @@ pub fn query_current_usn(drive: char) -> Result<u64, String> {
             drive, error
         )
     })?;
-    let journal = volume
-        .journal()
-        .query_or_create()
-        .map_err(|error| format!("Failed to query USN journal: {}", error))?;
+    let journal = volume.journal().query().map_err(|error| {
+        format!(
+            "No active USN journal is available on {}: ({}). Enable it with 'fsutil usn createjournal m=... a=...' or choose an NTFS volume with journaling enabled.",
+            drive, error
+        )
+    })?;
 
     u64::try_from(journal.next_usn.get())
         .map_err(|_| "USN journal returned a negative cursor".to_string())
