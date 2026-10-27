@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::fs;
@@ -362,6 +362,7 @@ pub fn export_cached_files_csv(
 }
 
 
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct FlatNode {
     pub(crate) name: String,
     pub(crate) path: String,

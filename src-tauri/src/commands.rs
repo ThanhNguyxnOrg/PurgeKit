@@ -675,6 +675,103 @@ fn collect_pending_reboot_operations(
     }
 }
 
+#[derive(Debug, Serialize)]
+pub struct MftDumpResponse {
+    pub result: scanner::DiskScanResult,
+    pub dump_path: String,
+}
+
+#[tauri::command]
+pub async fn dump_mft_scan(
+    app: AppHandle,
+    state: tauri::State<'_, scanner::DiskScanState>,
+    cache: tauri::State<'_, scanner::disk_scan::DiskFileCache>,
+    path: String,
+    max_depth: Option<u32>,
+    max_children: Option<usize>,
+    duplicate_mode: Option<String>,
+) -> Result<MftDumpResponse, String> {
+    state.0.store(false, Ordering::Relaxed);
+    let cancel = state.0.clone();
+    let cache = cache.0.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let max_depth = max_depth.unwrap_or(8);
+        let max_children = max_children.unwrap_or(100);
+        let (find_duplicates, duplicate_include_date) = match duplicate_mode.as_deref() {
+            Some("name_size_date") => (true, true),
+            Some("name_size") => (true, false),
+            _ => (false, false),
+        };
+        let progress_app = app.clone();
+        let (mut result, dump_path) = scanner::mft_scan::dump_ntfs_mft(
+            &path,
+            max_depth,
+            max_children,
+            find_duplicates,
+            duplicate_include_date,
+            &cancel,
+            move |progress| {
+                let _ = progress_app.emit("disk-scan-progress", progress);
+            },
+        )?;
+        store_disk_index(&cache, &mut result);
+        Ok(MftDumpResponse {
+            result,
+            dump_path: dump_path.to_string_lossy().to_string(),
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn list_mft_dumps() -> Vec<scanner::mft_scan::MftDumpInfo> {
+    scanner::mft_scan::list_mft_dumps()
+}
+
+#[tauri::command]
+pub fn get_mft_dump_dir() -> String {
+    scanner::mft_scan::dump_directory()
+        .to_string_lossy()
+        .to_string()
+}
+
+#[tauri::command]
+pub async fn load_mft_dump(
+    state: tauri::State<'_, scanner::DiskScanState>,
+    cache: tauri::State<'_, scanner::disk_scan::DiskFileCache>,
+    path: String,
+    max_depth: Option<u32>,
+    max_children: Option<usize>,
+    duplicate_mode: Option<String>,
+) -> Result<scanner::DiskScanResult, String> {
+    state.0.store(false, Ordering::Relaxed);
+    let cancel = state.0.clone();
+    let cache = cache.0.clone();
+
+    let mut result = tauri::async_runtime::spawn_blocking(move || {
+        let (find_duplicates, duplicate_include_date) = match duplicate_mode.as_deref() {
+            Some("name_size_date") => (true, true),
+            Some("name_size") => (true, false),
+            _ => (false, false),
+        };
+        scanner::mft_scan::load_mft_dump(
+            &path,
+            max_depth.unwrap_or(8),
+            max_children.unwrap_or(100),
+            find_duplicates,
+            duplicate_include_date,
+            &cancel,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    store_disk_index(&cache, &mut result);
+    Ok(result)
+}
+
 #[tauri::command]
 pub fn get_derived_cache_summary() -> scanner::derived_cache::DerivedCacheSummary {
     scanner::derived_cache::summary()

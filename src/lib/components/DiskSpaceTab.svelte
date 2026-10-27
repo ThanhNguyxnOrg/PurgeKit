@@ -3,7 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { openPath } from "@tauri-apps/plugin-opener";
-  import { FolderOpen, Play, Square, HardDrive, File, Folder, Search, X, ArrowUp, ArrowDown, Upload } from "@lucide/svelte";
+  import { FolderOpen, Play, Square, HardDrive, File, Folder, Search, X, ArrowUp, ArrowDown, Upload, Save, History } from "@lucide/svelte";
   import { toast } from "../toast.svelte";
 
   interface DiskTreeNode {
@@ -56,7 +56,7 @@
     elapsed_ms: number;
     errors: number;
     truncated: boolean;
-    engine: "mft" | "traversal" | "csv" | "multi";
+    engine: "mft" | "traversal" | "csv" | "multi" | "mft-dump";
     duplicate_mode: "off" | "name_size" | "name_size_date";
     protected_roots?: string[];
   }
@@ -90,6 +90,18 @@
     free_bytes: number;
   }
 
+  interface MftDumpInfo {
+    path: string;
+    name: string;
+    size_bytes: number;
+    modified_epoch_ms: number | null;
+  }
+
+  interface MftDumpResponse {
+    result: DiskScanResult;
+    dump_path: string;
+  }
+
   interface LayoutRect {
     node: DiskTreeNode;
     x: number;
@@ -114,6 +126,11 @@
   let isCancelling = $state(false);
   let isImporting = $state(false);
   let csvInputEl = $state<HTMLInputElement | null>(null);
+  let isAdmin = $state(false);
+  let showMftDumps = $state(false);
+  let mftDumps = $state<MftDumpInfo[]>([]);
+  let isLoadingMftDumps = $state(false);
+  let loadingDumpPath = $state<string | null>(null);
   let progress = $state<DiskProgress | null>(null);
   let errorMessage = $state("");
   let canvasEl = $state<HTMLCanvasElement | null>(null);
@@ -143,6 +160,10 @@
   );
 
   let primaryScanTarget = $derived(scanTargets[0] ?? "");
+
+  let isSnapshotView = $derived(
+    result?.engine === "csv" || result?.engine === "mft-dump"
+  );
 
   let selectedDuplicateCount = $derived(
     result
@@ -592,6 +613,144 @@
     }
   }
 
+  async function loadMftDumps() {
+    isLoadingMftDumps = true;
+    try {
+      mftDumps = await invoke<MftDumpInfo[]>("list_mft_dumps");
+    } catch (e) {
+      console.error("Failed to list MFT dumps:", e);
+    } finally {
+      isLoadingMftDumps = false;
+    }
+  }
+
+  async function toggleMftDumps() {
+    showMftDumps = !showMftDumps;
+    if (showMftDumps) {
+      await loadMftDumps();
+    }
+  }
+
+  function resetScanView() {
+    result = null;
+    focusNode = null;
+    focusStack = [];
+    selectedNode = null;
+    hoverPath = null;
+    tooltip = null;
+    fileQuery = "";
+    fileExtensionFilter = null;
+    fileScope = "all";
+    duplicateSelection = {};
+    clearFileSearch();
+  }
+
+  async function dumpMft() {
+    if (isScanning || isImporting) return;
+    if (scanTargets.length !== 1) {
+      toast.show("MFT dumps support one drive or folder at a time.", "warning");
+      return;
+    }
+    if (!isAdmin) {
+      toast.show("Restart PurgeKit as Administrator to dump the MFT.", "warning");
+      return;
+    }
+    const target = scanTargets[0];
+    const confirmed = confirm(
+      `Dump the $MFT for ${target}?\n\n` +
+      `This reads the live NTFS Master File Table, which can take a while on large volumes. ` +
+      `The dump is stored under %APPDATA%\\PurgeKit\\mft_dumps and can be loaded later without Administrator.`
+    );
+    if (!confirmed) return;
+
+    isScanning = true;
+    isCancelling = false;
+    progress = null;
+    errorMessage = "";
+    resetScanView();
+
+    try {
+      const response = await invoke<MftDumpResponse>("dump_mft_scan", {
+        path: target,
+        maxDepth: 8,
+        maxChildren: 100,
+        duplicateMode,
+      });
+      const scanResult = response.result;
+      lastScanHadDuplicates = scanResult.duplicate_mode !== "off";
+      result = scanResult;
+      focusStack = [scanResult.root];
+      focusNode = scanResult.root;
+      activeView = "treemap";
+      const dumpName = response.dump_path.split(/[\\/]/).pop() || response.dump_path;
+      toast.show(
+        `Scanned ${scanResult.total_files.toLocaleString()} files and saved ${dumpName}.`,
+        "success"
+      );
+      await loadMftDumps();
+    } catch (e: any) {
+      const message = e.toString();
+      errorMessage = message;
+      toast.show(`MFT dump failed: ${message}`, "error");
+    } finally {
+      isScanning = false;
+      isCancelling = false;
+    }
+  }
+
+  async function loadSavedDump(dump: MftDumpInfo) {
+    if (isScanning) return;
+    const confirmed = confirm(
+      `Load ${dump.name}?\n\n` +
+      `This is a read-only snapshot. Quarantine and cleanup are disabled until you rescan the drive.`
+    );
+    if (!confirmed) return;
+
+    isScanning = true;
+    isCancelling = false;
+    loadingDumpPath = dump.path;
+    errorMessage = "";
+    resetScanView();
+
+    try {
+      const scanResult = await invoke<DiskScanResult>("load_mft_dump", {
+        path: dump.path,
+        maxDepth: 8,
+        maxChildren: 100,
+        duplicateMode,
+      });
+      lastScanHadDuplicates = scanResult.duplicate_mode !== "off";
+      result = scanResult;
+      focusStack = [scanResult.root];
+      focusNode = scanResult.root;
+      activeView = "treemap";
+      pathInput = scanResult.root_path;
+      showMftDumps = false;
+      saveDiskPreferences();
+      toast.show(
+        `Loaded ${scanResult.total_files.toLocaleString()} files from ${dump.name}. This snapshot is read-only.`,
+        "success"
+      );
+    } catch (e: any) {
+      const message = e.toString();
+      errorMessage = message;
+      toast.show(`Could not load MFT dump: ${message}`, "error");
+    } finally {
+      isScanning = false;
+      isCancelling = false;
+      loadingDumpPath = null;
+    }
+  }
+
+  async function openMftDumpFolder() {
+    try {
+      const directory = await invoke<string>("get_mft_dump_dir");
+      await openPath(directory);
+    } catch (e: any) {
+      toast.show(`Could not open the dump folder: ${e.toString()}`, "error");
+    }
+  }
+
   function binaryTreemap(
     items: DiskTreeNode[],
     x: number,
@@ -953,8 +1112,8 @@
 
   async function quarantineSelectedDuplicates() {
     if (!result || selectedDuplicateCount === 0 || isQuarantining) return;
-    if (result.engine === "csv") {
-      toast.show("Imported CSV snapshots are read-only. Rescan the drive to clean files.", "warning");
+    if (isSnapshotView) {
+      toast.show("Snapshots are read-only. Rescan the drive to clean files.", "warning");
       return;
     }
 
@@ -1006,8 +1165,8 @@
   async function quarantineSelected() {
     const node = selectedNode;
     if (!node || !result) return;
-    if (result.engine === "csv") {
-      toast.show("Imported CSV snapshots are read-only. Rescan the drive to clean files.", "warning");
+    if (isSnapshotView) {
+      toast.show("Snapshots are read-only. Rescan the drive to clean files.", "warning");
       return;
     }
     const protectedRoots = result.protected_roots?.length
@@ -1128,6 +1287,10 @@
     invoke<DriveInfo[]>("list_disk_drives")
       .then((list) => { drives = list; })
       .catch(() => {});
+    invoke<boolean>("check_is_admin")
+      .then((value) => { isAdmin = value; })
+      .catch(() => {});
+    loadMftDumps();
 
     const unlisten = listen<DiskProgress>("disk-scan-progress", (event) => {
       progress = event.payload;
@@ -1244,8 +1407,90 @@
             <option value="name_size_date">Name + size + date</option>
           </select>
         </label>
+        <div class="flex items-center gap-2 sm:ml-auto">
+          <button
+            onclick={dumpMft}
+            disabled={isScanning || isImporting || !isAdmin}
+            title={isAdmin
+              ? "Dump the live NTFS Master File Table for this target"
+              : "Restart PurgeKit as Administrator to dump the MFT"}
+            class="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-[11px] font-semibold text-text-secondary disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            <Save class="w-3.5 h-3.5" />
+            Dump MFT
+          </button>
+          <button
+            onclick={toggleMftDumps}
+            disabled={isScanning || isImporting}
+            class="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-[11px] font-semibold text-text-secondary disabled:opacity-40 transition-colors"
+          >
+            <History class="w-3.5 h-3.5" />
+            Load dump
+            {#if mftDumps.length > 0}
+              <span class="font-mono text-text-muted">({mftDumps.length})</span>
+            {/if}
+          </button>
+        </div>
       </div>
     </div>
+
+    {#if showMftDumps}
+      <div class="p-3 rounded-lg border border-border-default bg-surface-bg/40 space-y-2">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-[11px] font-mono uppercase tracking-wider text-text-muted">Saved MFT dumps</span>
+          <div class="flex items-center gap-1.5">
+            <button
+              onclick={loadMftDumps}
+              disabled={isLoadingMftDumps}
+              class="p-1.5 rounded-md bg-surface-bg border border-border-default hover:bg-elevated-bg text-text-muted hover:text-text-primary transition-colors disabled:opacity-40"
+              title="Refresh dump list"
+              aria-label="Refresh MFT dump list"
+            >
+              <History class="w-3.5 h-3.5 {isLoadingMftDumps ? 'animate-pulse text-accent' : ''}" />
+            </button>
+            <button
+              onclick={openMftDumpFolder}
+              class="px-2 py-1.5 rounded-md bg-surface-bg border border-border-default hover:bg-elevated-bg text-[10px] font-semibold text-text-muted hover:text-text-primary transition-colors"
+            >
+              Open folder
+            </button>
+            <button
+              onclick={() => showMftDumps = false}
+              class="p-1.5 rounded-md text-text-muted hover:text-text-primary transition-colors"
+              title="Hide dump list"
+              aria-label="Hide MFT dump list"
+            >
+              <X class="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+        {#if mftDumps.length === 0}
+          <p class="text-[11px] text-text-muted py-1">
+            No dumps yet. Run as Administrator and select a single drive or folder, then choose Dump MFT.
+          </p>
+        {:else}
+          <div class="space-y-1 max-h-48 overflow-y-auto">
+            {#each mftDumps as dump}
+              <div class="flex items-center justify-between gap-3 px-2.5 py-1.5 rounded-md bg-app-bg border border-border-subtle">
+                <div class="flex flex-col min-w-0">
+                  <span class="text-[11px] font-mono text-text-primary truncate" title={dump.path}>{dump.name}</span>
+                  <span class="text-[10px] text-text-muted font-mono">
+                    {formatBytes(dump.size_bytes)} · {dump.modified_epoch_ms ? formatModified(dump.modified_epoch_ms) : "unknown date"}
+                  </span>
+                </div>
+                <button
+                  onclick={() => loadSavedDump(dump)}
+                  disabled={isScanning || loadingDumpPath === dump.path}
+                  class="px-2.5 py-1.5 rounded-md bg-accent/10 hover:bg-accent hover:text-white border border-accent/20 text-accent text-[10px] font-semibold transition-colors disabled:opacity-40"
+                >
+                  {loadingDumpPath === dump.path ? "Loading…" : "Load"}
+                </button>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {/if}
 
     {#if isScanning}
       <div class="p-3 rounded-lg bg-accent/5 border border-accent/15 text-xs">
@@ -1290,7 +1535,9 @@
           </p>
         </div>
         <div class="px-4 py-3.5">
-          <span class="readout-label">{result.engine === "csv" ? "Import time" : "Scan time"}</span>
+          <span class="readout-label">
+            {result.engine === "csv" ? "Import time" : result.engine === "mft-dump" ? "Load time" : "Scan time"}
+          </span>
           <p class="readout text-2xl font-semibold text-text-primary mt-1">
             {(result.elapsed_ms / 1000).toFixed(2)}<span class="text-base text-text-muted">s</span>
           </p>
@@ -1309,7 +1556,7 @@
         <span class="px-2 py-1 rounded border font-mono
           {result.engine === 'mft'
             ? 'bg-data-cyan/10 text-data-cyan border-data-cyan/30'
-            : result.engine === 'csv'
+            : result.engine === 'csv' || result.engine === 'mft-dump'
               ? 'bg-warning/10 text-warning border-warning/30'
               : result.engine === 'multi'
                 ? 'bg-accent/10 text-accent border-accent/30'
@@ -1318,11 +1565,13 @@
             ? "MFT FAST SCAN"
             : result.engine === "csv"
               ? "CSV IMPORT"
-              : result.engine === "multi"
-                ? "MULTI-ROOT"
-                : "TRAVERSAL FALLBACK"}
+              : result.engine === "mft-dump"
+                ? "MFT DUMP"
+                : result.engine === "multi"
+                  ? "MULTI-ROOT"
+                  : "TRAVERSAL FALLBACK"}
         </span>
-        {#if result.engine === "csv"}
+        {#if isSnapshotView}
           <span class="text-text-muted">
             Read-only snapshot. Quarantine and cleanup are disabled until you rescan the drive.
           </span>
@@ -1443,8 +1692,8 @@
               </span>
               <button
                 onclick={quarantineSelected}
-                disabled={isQuarantining || result.engine === "csv"}
-                title={result.engine === "csv" ? "Imported snapshots are read-only" : "Move this item to quarantine"}
+                disabled={isQuarantining || isSnapshotView}
+                title={isSnapshotView ? "Snapshots are read-only" : "Move this item to quarantine"}
                 class="px-2.5 py-1.5 rounded-md bg-danger/10 hover:bg-danger text-danger hover:text-white border border-danger/20 text-[11px] font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {isQuarantining ? "Quarantining…" : "Quarantine"}
@@ -1753,13 +2002,13 @@
         {:else}
           <div class="flex flex-wrap items-center justify-between gap-3 instrument-panel px-3.5 py-2.5">
             <span class="text-[11px] font-mono text-text-muted" aria-live="polite">
-              {#if result.engine === "csv"}
-                Read-only import · rescan the drive to clean duplicates
+              {#if isSnapshotView}
+                Read-only snapshot · rescan the drive to clean duplicates
               {:else}
                 {selectedDuplicateCount} selected · {formatBytes(selectedDuplicateBytes)} reclaimable
               {/if}
             </span>
-            {#if result.engine !== "csv"}
+            {#if !isSnapshotView}
               <div class="flex items-center gap-2">
                 <button
                   onclick={clearDuplicateSelection}
@@ -1789,7 +2038,7 @@
                     {#if group.files.length > 1}
                       <button
                         onclick={() => selectAllButFirst(group)}
-                        disabled={isQuarantining || result.engine === "csv"}
+                        disabled={isQuarantining || isSnapshotView}
                         class="text-[10px] font-mono text-text-muted hover:text-accent disabled:opacity-40 transition-colors"
                         title="Select every listed copy except the first"
                       >
@@ -1807,7 +2056,7 @@
                       <input
                         type="checkbox"
                         checked={!!duplicateSelection[file.path]}
-                        disabled={result.engine === "csv" || isQuarantining || (!duplicateSelection[file.path] && duplicatesSelectedInGroup(group) >= group.file_count - 1)}
+                        disabled={isSnapshotView || isQuarantining || (!duplicateSelection[file.path] && duplicatesSelectedInGroup(group) >= group.file_count - 1)}
                         onchange={() => toggleDuplicateFile(group, file)}
                         aria-label="Select duplicate copy at {file.path}"
                         title={duplicateSelection[file.path] ? "Do not quarantine this copy" : "Quarantine this copy"}
