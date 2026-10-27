@@ -3,7 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { openPath } from "@tauri-apps/plugin-opener";
-  import { FolderOpen, Play, Square, HardDrive, File, Folder, Search, X } from "@lucide/svelte";
+  import { FolderOpen, Play, Square, HardDrive, File, Folder, Search, X, ArrowUp, ArrowDown } from "@lucide/svelte";
   import { toast } from "../toast.svelte";
 
   interface DiskTreeNode {
@@ -107,6 +107,7 @@
   let tooltip = $state<{ x: number; y: number; node: DiskTreeNode } | null>(null);
   let fileQuery = $state("");
   let fileExtensionFilter = $state<string | null>(null);
+  let fileSort = $state<"size" | "modified" | "name">("size");
   let fileScope = $state<"all" | "folder">("all");
   let searchResult = $state<DiskFileSearchResult | null>(null);
   let isSearching = $state(false);
@@ -155,7 +156,11 @@
   );
 
   let displayFiles = $derived(
-    searchResult ? searchResult.files : filteredTopFiles
+    searchResult ? searchResult.files : sortTopFiles(filteredTopFiles, fileSort)
+  );
+
+  let fileSortLabel = $derived(
+    fileSort === "size" ? "size" : fileSort === "modified" ? "newest" : "name"
   );
 
   let isSearchActive = $derived(
@@ -214,6 +219,33 @@
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
   }
 
+  function sortTopFiles(files: DiskFile[], sort: "size" | "modified" | "name"): DiskFile[] {
+    const sorted = [...files];
+    if (sort === "name") {
+      sorted.sort((left, right) =>
+        left.name.localeCompare(right.name, undefined, { sensitivity: "base" })
+      );
+    } else if (sort === "modified") {
+      sorted.sort(
+        (left, right) => (right.modified_epoch_ms ?? 0) - (left.modified_epoch_ms ?? 0)
+      );
+    } else {
+      sorted.sort(
+        (left, right) =>
+          Math.max(right.allocated_bytes, right.size_bytes) -
+          Math.max(left.allocated_bytes, left.size_bytes)
+      );
+    }
+    return sorted;
+  }
+
+  function setFileSort(sort: "size" | "modified" | "name") {
+    fileSort = sort;
+    if (isSearchActive) {
+      scheduleFileSearch();
+    }
+  }
+
   function nodeWeight(node: DiskTreeNode): number {
     return Math.max(node.allocated_bytes, node.size_bytes);
   }
@@ -252,6 +284,7 @@
         query: fileQuery.trim(),
         extension: fileExtensionFilter,
         prefix: fileScope === "folder" ? focusNode?.path ?? null : null,
+        sort: fileSort,
         limit: 500,
       });
       if (sequence === searchSequence) {
@@ -1180,10 +1213,10 @@
             {:else if isSearchActive && searchResult}
               {searchResult.total_matches.toLocaleString()} matches · {searchResult.indexed_files.toLocaleString()} indexed{searchResult.index_complete ? "" : " (capped)"}
               {#if searchResult.total_matches > searchResult.files.length}
-                · top {searchResult.files.length} by size
+                · top {searchResult.files.length} by {fileSortLabel}
               {/if}
             {:else}
-              Top {displayFiles.length} by size · search covers all scanned files
+              Top {displayFiles.length} files · search covers all scanned files
             {/if}
           </span>
         </div>
@@ -1193,10 +1226,40 @@
             <table class="w-full text-left text-xs min-w-[760px]">
               <thead class="bg-sidebar-bg text-text-muted uppercase tracking-wider font-mono sticky top-0 z-10">
                 <tr>
-                  <th class="px-4 py-3">File</th>
+                  <th class="px-4 py-3" aria-sort={fileSort === "name" ? "ascending" : "none"}>
+                    <button
+                      type="button"
+                      onclick={() => setFileSort("name")}
+                      title="Sort by file name"
+                      class="inline-flex items-center gap-1 uppercase hover:text-text-primary transition-colors"
+                    >
+                      File
+                      {#if fileSort === "name"}<ArrowUp class="w-3 h-3 text-accent" aria-hidden="true" />{/if}
+                    </button>
+                  </th>
                   <th class="px-4 py-3">Extension</th>
-                  <th class="px-4 py-3">Modified</th>
-                  <th class="px-4 py-3 text-right">Allocated</th>
+                  <th class="px-4 py-3" aria-sort={fileSort === "modified" ? "descending" : "none"}>
+                    <button
+                      type="button"
+                      onclick={() => setFileSort("modified")}
+                      title="Sort by last modified, newest first"
+                      class="inline-flex items-center gap-1 uppercase hover:text-text-primary transition-colors"
+                    >
+                      Modified
+                      {#if fileSort === "modified"}<ArrowDown class="w-3 h-3 text-accent" aria-hidden="true" />{/if}
+                    </button>
+                  </th>
+                  <th class="px-4 py-3 text-right" aria-sort={fileSort === "size" ? "descending" : "none"}>
+                    <button
+                      type="button"
+                      onclick={() => setFileSort("size")}
+                      title="Sort by allocated size, largest first"
+                      class="inline-flex items-center gap-1 uppercase hover:text-text-primary transition-colors"
+                    >
+                      Allocated
+                      {#if fileSort === "size"}<ArrowDown class="w-3 h-3 text-accent" aria-hidden="true" />{/if}
+                    </button>
+                  </th>
                   <th class="px-4 py-3 text-right">Logical</th>
                 </tr>
               </thead>

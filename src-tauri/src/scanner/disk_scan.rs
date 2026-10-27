@@ -118,8 +118,13 @@ fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
         .any(|window| window.eq_ignore_ascii_case(needle))
 }
 
-fn is_under_prefix(path: &str, prefix: &str) -> bool {
-    let prefix = prefix.trim_end_matches(['\\', '/']);
+fn compare_paths_case_insensitive(left: &str, right: &str) -> std::cmp::Ordering {
+    left.bytes()
+        .map(|byte| byte.to_ascii_lowercase())
+        .cmp(right.bytes().map(|byte| byte.to_ascii_lowercase()))
+}
+
+fn is_under_prefix(path: &str, prefix: &str) -> bool {    let prefix = prefix.trim_end_matches(['\\', '/']);
     if prefix.is_empty() {
         return true;
     }
@@ -147,6 +152,7 @@ pub fn search_cached_files(
     extension: Option<&str>,
     prefix: Option<&str>,
     limit: usize,
+    sort: &str,
 ) -> DiskFileSearchResult {
     let query = query.trim();
     let extension = extension
@@ -175,7 +181,24 @@ pub fn search_cached_files(
     }
 
     let total_matches = matches.len();
-    matches.sort_unstable_by_key(|file| Reverse(file.allocated_bytes.max(file.size_bytes)));
+    match sort {
+        "name" => matches.sort_unstable_by(|left, right| {
+            let left_name = Path::new(&left.path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(&left.path);
+            let right_name = Path::new(&right.path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(&right.path);
+            compare_paths_case_insensitive(left_name, right_name)
+                .then_with(|| compare_paths_case_insensitive(&left.path, &right.path))
+        }),
+        "modified" => matches
+            .sort_unstable_by_key(|file| Reverse(file.modified_epoch_ms.unwrap_or(0))),
+        _ => matches
+            .sort_unstable_by_key(|file| Reverse(file.allocated_bytes.max(file.size_bytes))),
+    }
     matches.truncate(limit);
 
     let files = matches
@@ -828,13 +851,13 @@ mod tests {
         assert!(index.complete);
         assert!(index.files.iter().all(|file| file.modified_epoch_ms.is_some()));
 
-        let search = search_cached_files(index, "setup", None, None, 10);
+        let search = search_cached_files(index, "setup", None, None, 10, "size");
         assert_eq!(search.total_matches, 1);
         assert_eq!(search.files[0].name, "Big_Setup.EXE");
         assert_eq!(search.files[0].extension, "exe");
         assert!(search.files[0].modified_epoch_ms.is_some());
 
-        let by_extension = search_cached_files(index, "", Some(".TXT"), None, 10);
+        let by_extension = search_cached_files(index, "", Some(".TXT"), None, 10, "size");
         assert_eq!(by_extension.total_matches, 1);
         assert_eq!(by_extension.files[0].name, "notes.txt");
 
@@ -844,13 +867,18 @@ mod tests {
             None,
             Some(&root.join("nested").to_string_lossy()),
             10,
+            "size",
         );
         assert_eq!(scoped.total_matches, 2);
 
-        let sorted = search_cached_files(index, "", None, None, 2);
+        let sorted = search_cached_files(index, "", None, None, 2, "size");
         assert_eq!(sorted.total_matches, 3);
         assert_eq!(sorted.files.len(), 2);
         assert_eq!(sorted.files[0].name, "Big_Setup.EXE");
+
+        let by_name = search_cached_files(index, "", None, None, 10, "name");
+        assert_eq!(by_name.files[0].name, "backup.bin");
+        assert_eq!(by_name.files[1].name, "Big_Setup.EXE");
 
         let _ = fs::remove_dir_all(&root);
     }

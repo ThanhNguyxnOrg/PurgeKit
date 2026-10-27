@@ -748,6 +748,7 @@ pub async fn search_disk_files(
     extension: Option<String>,
     prefix: Option<String>,
     limit: Option<usize>,
+    sort: Option<String>,
 ) -> Result<scanner::disk_scan::DiskFileSearchResult, String> {
     let key = crate::winutil::canonicalize_path_safety(&path)
         .to_string_lossy()
@@ -764,6 +765,7 @@ pub async fn search_disk_files(
     };
 
     let limit = limit.unwrap_or(500);
+    let sort = sort.unwrap_or_else(|| "size".to_string());
     tauri::async_runtime::spawn_blocking(move || {
         scanner::disk_scan::search_cached_files(
             &index,
@@ -771,6 +773,7 @@ pub async fn search_disk_files(
             extension.as_deref(),
             prefix.as_deref(),
             limit,
+            &sort,
         )
     })
     .await
