@@ -1123,4 +1123,28 @@ mod tests {
         assert!(drive.total_bytes > 0);
         assert!(drive.free_bytes <= drive.total_bytes);
     }
+
+    #[test]
+    fn file_identity_matches_hardlinks() {
+        let root = std::env::temp_dir().join("purgekit_file_identity_test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let original = root.join("original.bin");
+        let alias = root.join("alias.bin");
+        let separate = root.join("separate.bin");
+        std::fs::write(&original, b"identity").unwrap();
+        std::fs::write(&separate, b"identity").unwrap();
+        if std::fs::hard_link(&original, &alias).is_err() {
+            let _ = std::fs::remove_dir_all(&root);
+            return;
+        }
+
+        let original_id = file_identity(&original).expect("original identity");
+        let alias_id = file_identity(&alias).expect("alias identity");
+        let separate_id = file_identity(&separate).expect("separate identity");
+        assert_eq!(original_id, alias_id);
+        assert_ne!(original_id, separate_id);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
