@@ -19,6 +19,8 @@ pub struct CachedDerived {
     #[serde(default)]
     pub estimated_size: Option<u64>,
     #[serde(default)]
+    pub install_date: Option<String>,
+    #[serde(default)]
     pub is_verified: Option<bool>,
 }
 
@@ -182,6 +184,7 @@ mod tests {
                 display_icon: Some(r"C:\Program Files\App\app.exe".to_string()),
                 icon_base64: Some("AAAA".to_string()),
                 estimated_size: Some(2048),
+                install_date: Some("2026-10-01".to_string()),
                 is_verified: Some(true),
             },
         );

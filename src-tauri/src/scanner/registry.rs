@@ -159,6 +159,7 @@ fn scan_uninstall_key(
         let release_type: Option<String> = subkey.get_value("ReleaseType").ok();
         let mut install_location: Option<String> = subkey.get_value("InstallLocation").ok();
         let install_date: Option<String> = subkey.get_value("InstallDate").ok();
+        let normalized_install_date = normalize_install_date(install_date.as_deref());
         let mut display_icon: Option<String> = subkey.get_value("DisplayIcon").ok();
 
         // EstimatedSize: Windows stores KiB -> multiply by 1024 to get bytes
@@ -190,10 +191,28 @@ fn scan_uninstall_key(
         // scans and icon extraction. The fingerprint invalidates the entry when
         // registry values change; stale paths are discarded before display.
         if let Some(cached) = super::derived_cache::lookup(&cache_key, &fingerprint) {
+            let mut cached = cached;
             let cached_install = cached
                 .install_location
-                .filter(|location| Path::new(location.trim().trim_matches('"')).is_dir());
-            let cached_icon = cached.display_icon.or(display_icon);
+                .as_ref()
+                .filter(|location| Path::new(location.trim().trim_matches('"')).is_dir())
+                .cloned();
+            let cached_icon = cached.display_icon.clone().or_else(|| display_icon.clone());
+            let mut effective_install_date = cached
+                .install_date
+                .clone()
+                .or(normalized_install_date);
+            if effective_install_date.is_none() {
+                effective_install_date = infer_install_date(
+                    cached_install.as_deref(),
+                    uninstall_string.as_deref(),
+                    cached_icon.as_deref(),
+                );
+                if effective_install_date.is_some() {
+                    cached.install_date = effective_install_date.clone();
+                    super::derived_cache::store(cache_key.clone(), cached.clone());
+                }
+            }
             apps.push(InstalledApp {
                 id: name,
                 display_name: display_name.to_string(),
@@ -204,7 +223,7 @@ fn scan_uninstall_key(
                 modify_path,
                 release_type,
                 install_location: cached_install,
-                install_date,
+                install_date: effective_install_date,
                 display_icon: cached_icon,
                 icon_base64: cached.icon_base64,
                 estimated_size: cached.estimated_size.or(estimated_size),
@@ -241,6 +260,14 @@ fn scan_uninstall_key(
                 display_name,
             );
         }
+
+        let install_date = normalized_install_date.or_else(|| {
+            infer_install_date(
+                install_location.as_deref(),
+                uninstall_string.as_deref(),
+                display_icon.as_deref(),
+            )
+        });
         
         let mut icon_base64 = None;
         if let Some(ref icon_path) = display_icon {
@@ -405,6 +432,7 @@ fn scan_uninstall_key(
                 display_icon: display_icon.clone(),
                 icon_base64: icon_base64.clone(),
                 estimated_size,
+                install_date: install_date.clone(),
                 is_verified,
             },
         );
@@ -521,6 +549,78 @@ fn clean_icon_path(icon: &str) -> String {
         cleaned
     };
     crate::winutil::expand_env_strings(cleaned.trim().trim_matches('"'))
+}
+
+/// Windows vendors store InstallDate either as `YYYYMMDD` or loosely formatted
+/// text. Normalize the common shape and reject impossible calendar values so
+/// the UI can show one consistent date.
+fn normalize_install_date(raw: Option<&str>) -> Option<String> {
+    let trimmed = raw?.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let digits: String = trimmed.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.len() == 8 {
+        let year: u32 = digits[0..4].parse().ok()?;
+        let month: u32 = digits[4..6].parse().ok()?;
+        let day: u32 = digits[6..8].parse().ok()?;
+        if (1900..=2200).contains(&year) && (1..=12).contains(&month) && (1..=31).contains(&day) {
+            return Some(format!("{year:04}-{month:02}-{day:02}"));
+        }
+    }
+
+    if let Some(date) = trimmed.get(0..10) {
+        let bytes = date.as_bytes();
+        if bytes.len() == 10
+            && bytes[4] == b'-'
+            && bytes[7] == b'-'
+            && bytes
+                .iter()
+                .enumerate()
+                .all(|(index, byte)| index == 4 || index == 7 || byte.is_ascii_digit())
+        {
+            return Some(date.to_string());
+        }
+    }
+
+    Some(trimmed.to_string())
+}
+
+fn path_created_date(path: &str) -> Option<String> {
+    let clean = path.trim().trim_matches('"');
+    if clean.is_empty() {
+        return None;
+    }
+    let created = std::fs::metadata(clean).ok()?.created().ok()?;
+    let date = chrono::DateTime::<chrono::Local>::from(created);
+    Some(date.format("%Y-%m-%d").to_string())
+}
+
+fn infer_install_date(
+    install_location: Option<&str>,
+    uninstall_string: Option<&str>,
+    display_icon: Option<&str>,
+) -> Option<String> {
+    if let Some(location) = install_location {
+        if let Some(date) = path_created_date(location) {
+            return Some(date);
+        }
+    }
+    if let Some(command) = uninstall_string {
+        if let Some(path) = get_executable_from_uninstall_string(command) {
+            if let Some(date) = path_created_date(&path) {
+                return Some(date);
+            }
+        }
+    }
+    if let Some(icon) = display_icon {
+        let path = clean_icon_path(icon);
+        if let Some(date) = path_created_date(&path) {
+            return Some(date);
+        }
+    }
+    None
 }
 
 fn infer_install_location(
@@ -698,6 +798,34 @@ mod tests {
         let inferred = infer_install_location(Some(&command), None, "My App");
         assert!(inferred.is_some(), "expected inferred install location");
         assert!(inferred.unwrap().to_lowercase().contains("my app"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn normalizes_install_dates() {
+        assert_eq!(
+            normalize_install_date(Some("20240131")).as_deref(),
+            Some("2024-01-31")
+        );
+        assert_eq!(
+            normalize_install_date(Some("2024-02-29 10:00:00")).as_deref(),
+            Some("2024-02-29")
+        );
+        assert_eq!(normalize_install_date(Some("20241340")).as_deref(), Some("20241340"));
+        assert_eq!(normalize_install_date(Some("  ")), None);
+        assert_eq!(normalize_install_date(None), None);
+    }
+
+    #[test]
+    fn infers_install_date_from_the_install_folder() {
+        let root = std::env::temp_dir().join("purgekit_install_date_test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let inferred = infer_install_date(Some(root.to_string_lossy().as_ref()), None, None)
+            .expect("folder creation date");
+        assert_eq!(inferred.len(), 10, "expected YYYY-MM-DD, got {inferred}");
 
         let _ = std::fs::remove_dir_all(&root);
     }

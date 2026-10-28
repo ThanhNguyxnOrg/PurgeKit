@@ -268,6 +268,8 @@ const apps: Record<string, string> = {
     "Trình gỡ cài đặt chưa hoàn tất. Các phần còn sót được hiển thị để xem nhưng không được chọn sẵn; chỉ dọn những mục bạn chắc chắn.",
   "Some leftovers were not auto-purged, or an uninstaller did not complete. Review each item below before cleaning it permanently.":
     "Một số phần còn sót chưa được tự động dọn, hoặc trình gỡ cài đặt chưa hoàn tất. Hãy xem từng mục bên dưới trước khi xoá vĩnh viễn.",
+  "Installed": "Ngày cài",
+  "Installed {date}": "Cài ngày {date}",
 };
 
 export default apps;

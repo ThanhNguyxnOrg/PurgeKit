@@ -654,6 +654,7 @@
           <td>${escapeHtml(app.display_name)}</td>
           <td>${escapeHtml(app.publisher || t("Unknown"))}</td>
           <td>${escapeHtml(app.display_version || "—")}</td>
+          <td>${escapeHtml(app.install_date || "—")}</td>
           <td>${formatSize(app.estimated_size)}</td>
           <td>${escapeHtml(appSource(app).toUpperCase())}</td>
           <td>${app.is_dev ? "DEV" : "—"}${app.categories?.length ? ` · ${escapeHtml(app.categories.join(", "))}` : ""}</td>
@@ -672,12 +673,12 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
 </style></head><body>
 <h1>${t("PurgeKit application report")}</h1>
 <p>${t("{count} applications · generated {date}", { count: filteredApps.length, date: new Date().toLocaleString() })}</p>
-<table><thead><tr><th>${t("Name")}</th><th>${t("Publisher")}</th><th>${t("Version")}</th><th>${t("Size")}</th><th>${t("Source")}</th><th>${t("Dev / Categories")}</th><th>${t("Signature")}</th><th>${t("Location")}</th></tr></thead>
+<table><thead><tr><th>${t("Name")}</th><th>${t("Publisher")}</th><th>${t("Version")}</th><th>${t("Installed")}</th><th>${t("Size")}</th><th>${t("Source")}</th><th>${t("Dev / Categories")}</th><th>${t("Signature")}</th><th>${t("Location")}</th></tr></thead>
 <tbody>${rows}</tbody></table></body></html>`;
       mimeType = "text/html;charset=utf-8";
       filename = `purgekit_apps_${new Date().toISOString().slice(0, 10)}.html`;
     } else {
-      const headers = ["ID", "Name", "Version", "Publisher", "Source", "IsDev", "Categories", "InstallLocation", "RegistryPath", "Hive", "IsStore", "IsVerified"];
+      const headers = ["ID", "Name", "Version", "Publisher", "Source", "IsDev", "Categories", "InstallLocation", "InstallDate", "RegistryPath", "Hive", "IsStore", "IsVerified"];
       const rows = filteredApps.map((app) => [
         app.id,
         app.display_name,
@@ -687,6 +688,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
         app.is_dev ? "TRUE" : "FALSE",
         (app.categories || []).join("; "),
         app.install_location || "",
+        app.install_date || "",
         app.registry_path,
         app.hive,
         app.is_uwp ? "TRUE" : "FALSE",
@@ -991,6 +993,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                 <th class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5">{t("App Name")}</th>
                 <th class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 hidden xl:table-cell">{t("Publisher")}</th>
                 <th class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 hidden lg:table-cell">{t("Version")}</th>
+                <th class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 hidden 2xl:table-cell">{t("Installed")}</th>
                 <th class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5">{t("Size")}</th>
                 <th class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5">{t("Source")}</th>
                 <th class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 text-right">{t("Actions")}</th>
@@ -1040,7 +1043,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                         {/if}
                       </div>
                       <span class="text-[10px] text-text-muted font-mono mt-0.5 max-w-[200px] truncate" title={app.registry_path}>
-                        {app.id}
+                        {app.id}{#if app.install_date} · {t("Installed {date}", { date: app.install_date })}{/if}
                       </span>
                       {#if app.categories && app.categories.length > 0}
                         <span class="text-[9px] text-text-muted font-sans mt-0.5 truncate" title={app.categories.join(", ")}>
@@ -1058,6 +1061,11 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                   <!-- Version -->
                   <td class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 text-text-secondary font-mono text-xs hidden lg:table-cell">
                     {app.display_version || "—"}
+                  </td>
+
+                  <!-- Installed -->
+                  <td class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 text-text-secondary font-mono text-xs hidden 2xl:table-cell whitespace-nowrap">
+                    {app.install_date || "—"}
                   </td>
                   
                   <!-- Size -->
@@ -1230,6 +1238,10 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
             <div class="p-3 rounded-lg bg-app-bg border border-border-default">
               <span class="block text-[10px] uppercase tracking-wider text-text-muted font-mono">{t("Estimated size")}</span>
               <span class="block mt-1 text-text-primary font-mono">{formatSize(preflightApp.estimated_size)}</span>
+            </div>
+            <div class="p-3 rounded-lg bg-app-bg border border-border-default">
+              <span class="block text-[10px] uppercase tracking-wider text-text-muted font-mono">{t("Installed")}</span>
+              <span class="block mt-1 text-text-primary font-mono">{preflightApp.install_date || "—"}</span>
             </div>
             <div class="p-3 rounded-lg bg-app-bg border border-border-default">
               <span class="block text-[10px] uppercase tracking-wider text-text-muted font-mono">{t("Managed by")}</span>
