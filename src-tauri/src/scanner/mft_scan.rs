@@ -798,10 +798,7 @@ where
 {
     let started = Instant::now();
     let (_, target_components) = parse_scan_target(root)
-        .ok_or_else(|| "Choose a drive root such as C:\\ for this MFT dump.".to_string())?;
-    if !target_components.is_empty() {
-        return Err("WizTree MFT dumps represent an entire drive; choose a drive root.".to_string());
-    }
+        .ok_or_else(|| "Choose a drive or folder path for this MFT dump.".to_string())?;
 
     let mut file = File::open(path).map_err(|error| format!("Could not open the MFT file: {}", error))?;
     let length = file.metadata().map_err(|e| e.to_string())?.len();
