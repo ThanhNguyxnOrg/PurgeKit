@@ -101,4 +101,36 @@ mod tests {
         let status = run_command_in_job(&mut command).expect("spawn cmd.exe");
         assert!(status.success());
     }
+
+    #[test]
+    fn waits_for_grandchildren_started_by_the_uninstaller() {
+        let script = std::env::temp_dir().join(format!(
+            "purgekit_job_child_{}.ps1",
+            std::process::id()
+        ));
+        std::fs::write(&script, "Start-Sleep -Seconds 2").unwrap();
+
+        let started = Instant::now();
+        let mut command = Command::new("cmd.exe");
+        command.args([
+            "/C",
+            "start",
+            "",
+            "/B",
+            "powershell.exe",
+            "-NoProfile",
+            "-File",
+            &script.to_string_lossy(),
+        ]);
+        let status = run_command_in_job(&mut command).expect("spawn detached child");
+        let elapsed = started.elapsed();
+        let _ = std::fs::remove_file(&script);
+
+        assert!(status.success());
+        assert!(
+            elapsed >= Duration::from_millis(1500),
+            "job wait returned before the grandchild finished: {:?}",
+            elapsed
+        );
+    }
 }
