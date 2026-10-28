@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::os::windows::process::CommandExt;
@@ -54,6 +55,8 @@ pub struct StartupItem {
     pub is_registry: bool,
     pub registry_path: Option<String>,
     pub file_path: Option<String>,
+    pub icon_base64: Option<String>,
+    pub target_missing: bool,
 }
 
 fn get_hive_from_name(hive_name: &str) -> Option<winreg::HKEY> {
@@ -180,7 +183,7 @@ pub fn get_task_name_from_path(task_path: &Path) -> Option<String> {
     })
 }
 
-fn scan_tasks_directory(dir: &Path, items: &mut Vec<StartupItem>) {
+fn scan_tasks_directory(dir: &Path, items: &mut Vec<StartupItem>, icon_cache: &mut HashMap<String, Option<String>>) {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -188,7 +191,7 @@ fn scan_tasks_directory(dir: &Path, items: &mut Vec<StartupItem>) {
     for entry in entries.filter_map(|e| e.ok()) {
         let path = entry.path();
         if path.is_dir() {
-            scan_tasks_directory(&path, items);
+            scan_tasks_directory(&path, items, icon_cache);
         } else if path.is_file() {
             let file_name = match path.file_name().and_then(|n| n.to_str()) {
                 Some(n) => n,
@@ -246,6 +249,11 @@ fn scan_tasks_directory(dir: &Path, items: &mut Vec<StartupItem>) {
                     }
                 }
                 
+                let task_icon = startup_icon_base64(
+                    startup_icon_source(&full_command, None),
+                    icon_cache,
+                );
+                let target_missing = startup_target_missing(&full_command);
                 let id = format!("task|{}", path.to_string_lossy());
                 items.push(StartupItem {
                     id,
@@ -256,14 +264,54 @@ fn scan_tasks_directory(dir: &Path, items: &mut Vec<StartupItem>) {
                     is_registry: false,
                     registry_path: None,
                     file_path: Some(path.to_string_lossy().to_string()),
+                    icon_base64: task_icon,
+                    target_missing,
                 });
             }
         }
     }
 }
 
+fn startup_target_missing(command: &str) -> bool {
+    if command.trim().is_empty() {
+        return false;
+    }
+    let executable = crate::winutil::extract_executable_path(command);
+    let path = Path::new(executable.trim().trim_matches('"'));
+    path.is_absolute() && !path.exists()
+}
+
+fn startup_icon_source(command: &str, file_path: Option<&Path>) -> Option<PathBuf> {
+    if let Some(path) = file_path {
+        if path.is_file() {
+            return Some(path.to_path_buf());
+        }
+    }
+    if command.trim().is_empty() {
+        return None;
+    }
+    let executable = crate::winutil::extract_executable_path(command);
+    let path = Path::new(executable.trim().trim_matches('"'));
+    path.is_file().then(|| path.to_path_buf())
+}
+
+fn startup_icon_base64(
+    source: Option<PathBuf>,
+    cache: &mut HashMap<String, Option<String>>,
+) -> Option<String> {
+    let source = source?;
+    let key = source.to_string_lossy().to_lowercase();
+    if let Some(cached) = cache.get(&key) {
+        return cached.clone();
+    }
+    let icon = windows_icons::get_icon_base64_by_path(&source).ok();
+    cache.insert(key, icon.clone());
+    icon
+}
+
 pub fn list_startup_items() -> Result<Vec<StartupItem>, String> {
     let mut items = Vec::new();
+    let mut icon_cache: HashMap<String, Option<String>> = HashMap::new();
 
     // 1. Scan Registry Run keys
     let run_locations = vec![
@@ -291,6 +339,11 @@ pub fn list_startup_items() -> Result<Vec<StartupItem>, String> {
                     Ok(s) => s.replace('\0', "").trim().to_string(),
                     Err(_) => String::from_utf8_lossy(&val.bytes).replace('\0', "").trim().to_string(),
                 };
+                let icon = startup_icon_base64(
+                    startup_icon_source(&command_str, None),
+                    &mut icon_cache,
+                );
+                let target_missing = startup_target_missing(&command_str);
                 let id = format!("reg|{}|{}|{}", hive_name, subpath, name);
                 items.push(StartupItem {
                     id,
@@ -301,6 +354,8 @@ pub fn list_startup_items() -> Result<Vec<StartupItem>, String> {
                     is_registry: true,
                     registry_path: Some(format!(r"{}\{}", subpath, name)),
                     file_path: None,
+                    icon_base64: icon,
+                    target_missing,
                 });
             }
         }
@@ -313,6 +368,11 @@ pub fn list_startup_items() -> Result<Vec<StartupItem>, String> {
                     Ok(s) => s.replace('\0', "").trim().to_string(),
                     Err(_) => String::from_utf8_lossy(&val.bytes).replace('\0', "").trim().to_string(),
                 };
+                let icon = startup_icon_base64(
+                    startup_icon_source(&command_str, None),
+                    &mut icon_cache,
+                );
+                let target_missing = startup_target_missing(&command_str);
                 let id = format!("reg|{}|{}|{}", hive_name, subpath, name);
                 items.push(StartupItem {
                     id,
@@ -323,6 +383,8 @@ pub fn list_startup_items() -> Result<Vec<StartupItem>, String> {
                     is_registry: true,
                     registry_path: Some(format!(r"{}\{}", subpath, name)),
                     file_path: None,
+                    icon_base64: icon,
+                    target_missing,
                 });
             }
         }
@@ -368,6 +430,7 @@ pub fn list_startup_items() -> Result<Vec<StartupItem>, String> {
                             display_name = display_name[..display_name.len() - 4].to_string();
                         }
                         
+                        let startup_icon = startup_icon_base64(Some(path.clone()), &mut icon_cache);
                         items.push(StartupItem {
                             id,
                             name: display_name,
@@ -377,6 +440,8 @@ pub fn list_startup_items() -> Result<Vec<StartupItem>, String> {
                             is_registry: false,
                             registry_path: None,
                             file_path: Some(path.to_string_lossy().to_string()),
+                            icon_base64: startup_icon,
+                            target_missing: false,
                         });
                     }
                 }
@@ -390,7 +455,7 @@ pub fn list_startup_items() -> Result<Vec<StartupItem>, String> {
         .unwrap_or_else(|_| "C:\\Windows".to_string());
     let tasks_dir = Path::new(&windir).join("System32").join("Tasks");
     if tasks_dir.exists() {
-        scan_tasks_directory(&tasks_dir, &mut items);
+        scan_tasks_directory(&tasks_dir, &mut items, &mut icon_cache);
     }
 
     Ok(items)
@@ -637,6 +702,15 @@ mod tests {
 
         assert!(parse_registry_startup_id(r"reg|HKCU|Environment|Path").is_err());
         assert!(parse_registry_startup_id(r"reg|HKLM|SOFTWARE\Microsoft\Windows\CurrentVersion\Run|").is_err());
+    }
+
+    #[test]
+    fn test_startup_target_missing_only_checks_absolute_paths() {
+        assert!(startup_target_missing(
+            r"C:\PurgeKitMissingTarget\missing.exe --background"
+        ));
+        assert!(!startup_target_missing(r"C:\Windows\System32\cmd.exe"));
+        assert!(!startup_target_missing("cmd.exe /c echo hello"));
     }
 
     #[test]

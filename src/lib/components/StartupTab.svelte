@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
-  import { Zap, RefreshCw, Trash2, Search, Check, X, ShieldAlert, Monitor, FileCode, CheckSquare, Square } from "@lucide/svelte";
+  import { Zap, RefreshCw, Trash2, Search, Check, X, ShieldAlert, Monitor, FileCode, CheckSquare, Square, AlertTriangle } from "@lucide/svelte";
   import { toast } from "../toast.svelte";
   import { t } from "$lib/i18n.svelte";
 
@@ -14,6 +14,8 @@
     is_registry: boolean;
     registry_path: string | null;
     file_path: string | null;
+    icon_base64: string | null;
+    target_missing: boolean;
   }
 
   let items = $state<StartupItem[]>([]);
@@ -102,10 +104,10 @@
   function getAvatarStyle(name: string): string {
     const charCode = name.charCodeAt(0) || 0;
     const colors = [
-      "bg-emerald-950/40 text-emerald-400 border-emerald-800/30",
-      "bg-blue-950/40 text-blue-400 border-blue-800/30",
-      "bg-amber-950/40 text-amber-400 border-amber-800/30",
-      "bg-rose-950/40 text-rose-400 border-rose-800/30",
+      "bg-success/15 text-success border-success/25",
+      "bg-info/15 text-info border-info/25",
+      "bg-warning/15 text-warning border-warning/25",
+      "bg-danger/15 text-danger border-danger/25",
       "bg-brand-purple/10 text-brand-purple border-brand-purple/20",
     ];
     return colors[charCode % colors.length];
@@ -226,13 +228,22 @@
               <tr class="hover:bg-elevated-bg/50 transition-colors duration-150 group">
                 <!-- Name -->
                 <td class="py-4 px-3 lg:px-5 font-sans font-medium flex items-center gap-3 min-w-0">
-                  <div class="w-8 h-8 rounded-lg border flex items-center justify-center overflow-hidden transition-colors shadow-sm bg-surface-bg border-border-default flex-shrink-0">
-                    <div class="w-full h-full flex items-center justify-center font-mono text-xs {getAvatarStyle(item.name)}">
-                      {item.name.charAt(0).toUpperCase()}
-                    </div>
+                  <div class="app-icon-frame w-8 h-8 rounded-lg border flex items-center justify-center overflow-hidden transition-colors shadow-sm border-border-default flex-shrink-0">
+                    {#if item.icon_base64}
+                      <img src="data:image/png;base64,{item.icon_base64}" class="app-icon w-6 h-6 object-contain" alt="" />
+                    {:else}
+                      <div class="w-full h-full flex items-center justify-center font-mono text-xs {getAvatarStyle(item.name)}">
+                        {item.name.charAt(0).toUpperCase()}
+                      </div>
+                    {/if}
                   </div>
                   <div class="flex flex-col min-w-0">
                     <span class="text-text-primary group-hover:text-accent transition-colors truncate" title={item.name}>{item.name}</span>
+                    {#if item.target_missing}
+                      <span class="shrink-0" title={t("Target path does not exist")}>
+                        <AlertTriangle class="w-3.5 h-3.5 text-danger" />
+                      </span>
+                    {/if}
                   </div>
                 </td>
                 
@@ -240,10 +251,10 @@
                 <td class="py-4 px-3 lg:px-5 text-text-secondary max-w-[200px] truncate">
                   <span class="inline-block max-w-full truncate align-middle px-2 py-0.5 rounded text-[10px] font-mono border
                     {item.location.startsWith('HKLM') 
-                      ? 'bg-amber-950/30 text-amber-400 border-amber-800/40' 
+                      ? 'bg-warning/10 text-warning border-warning/25' 
                       : item.location.startsWith('HKCU')
                         ? 'bg-brand-purple/10 text-brand-purple border-brand-purple/20' 
-                        : 'bg-blue-950/30 text-blue-400 border-blue-800/40'}">
+                        : 'bg-info/10 text-info border-info/25'}">
                     {item.location}
                   </span>
                 </td>
@@ -279,7 +290,7 @@
                   <button
                     onclick={() => deleteItem(item)}
                     title={t("Delete permanently")}
-                    class="p-1.5 rounded-lg bg-danger/10 hover:bg-danger text-danger hover:text-white transition-all border border-danger/20 inline-flex items-center justify-center active:scale-95 cursor-pointer"
+                    class="p-1.5 rounded-lg bg-danger/10 hover:bg-danger-strong text-danger hover:text-white transition-all border border-danger/20 inline-flex items-center justify-center active:scale-95 cursor-pointer"
                   >
                     <Trash2 class="w-4 h-4" />
                   </button>

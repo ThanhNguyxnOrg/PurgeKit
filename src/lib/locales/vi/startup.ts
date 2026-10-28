@@ -1,4 +1,5 @@
 const startup: Record<string, string> = {
+  "Target path does not exist": "Đường dẫn mục tiêu không tồn tại",
   // Header
   "Startup Manager": "Quản lý khởi động",
   "Manage programs that launch with Windows to optimize boot speed and system performance":
