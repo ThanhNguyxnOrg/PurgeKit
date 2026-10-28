@@ -39,6 +39,8 @@ pub struct DiskFile {
     pub size_bytes: u64,
     pub allocated_bytes: u64,
     pub modified_epoch_ms: Option<u64>,
+    pub created_epoch_ms: Option<u64>,
+    pub accessed_epoch_ms: Option<u64>,
     pub attributes: String,
 }
 
@@ -88,6 +90,8 @@ pub struct CachedDiskFile {
     pub size_bytes: u64,
     pub allocated_bytes: u64,
     pub modified_epoch_ms: Option<u64>,
+    pub created_epoch_ms: Option<u64>,
+    pub accessed_epoch_ms: Option<u64>,
     pub attributes: String,
 }
 
@@ -242,6 +246,8 @@ fn disk_file_from_cached(file: &CachedDiskFile) -> DiskFile {
         size_bytes: file.size_bytes,
         allocated_bytes: file.allocated_bytes,
         modified_epoch_ms: file.modified_epoch_ms,
+        created_epoch_ms: file.created_epoch_ms,
+        accessed_epoch_ms: file.accessed_epoch_ms,
         attributes: file.attributes.clone(),
     }
 }
@@ -277,21 +283,28 @@ pub fn search_cached_files(
 
 #[derive(Debug, Serialize, Clone)]
 pub struct DiskCsvExport {
-    pub csv: String,
+    pub content: String,
     pub exported: usize,
+    pub folders: usize,
     pub total: usize,
     pub truncated: bool,
 }
 
-fn csv_field(value: &str) -> String {
-    format!("\"{}\"", value.replace('"', "\"\""))
+fn delimited_field(value: &str, delimiter: char) -> String {
+    if value.contains(delimiter)
+        || value.contains('"')
+        || value.contains('\n')
+        || value.contains('\r')
+    {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
 }
 
-fn csv_modified(epoch_ms: Option<u64>) -> String {
+fn formatted_date(epoch_ms: Option<u64>) -> String {
     epoch_ms
-        .and_then(|milliseconds| {
-            chrono::DateTime::from_timestamp_millis(milliseconds as i64)
-        })
+        .and_then(|milliseconds| chrono::DateTime::from_timestamp_millis(milliseconds as i64))
         .map(|date| date.format("%Y-%m-%d %H:%M:%S").to_string())
         .unwrap_or_default()
 }
@@ -306,6 +319,9 @@ pub fn export_cached_files_csv(
     exclude: Option<&str>,
     sort: &str,
     limit: usize,
+    format: &str,
+    include_dates: bool,
+    include_folders: bool,
 ) -> DiskCsvExport {
     let mut matches = cached_matches(index, query, extension, prefix, filter_mode, include, exclude);
     let total = matches.len();
@@ -314,48 +330,139 @@ pub fn export_cached_files_csv(
     let truncated = total > limit;
     matches.truncate(limit);
 
+    let delimiter = if format.eq_ignore_ascii_case("tsv") { '\t' } else { ',' };
     let root_weight: u64 = index
         .files
         .iter()
         .map(|file| file.allocated_bytes.max(file.size_bytes))
         .sum();
 
-    let mut csv = String::from(
-        "\u{feff}Name,Path,Extension,Modified,Attributes,SharePercent,LogicalBytes,AllocatedBytes\n",
-    );
-    for file in &matches {
-        let weight = file.allocated_bytes.max(file.size_bytes);
-        let share = if root_weight == 0 {
+    let weight_of = |file: &CachedDiskFile| file.allocated_bytes.max(file.size_bytes);
+    let share_of = |weight: u64| {
+        if root_weight == 0 {
             0.0
         } else {
             (weight as f64 / root_weight as f64) * 100.0
-        };
+        }
+    };
+
+    let mut folders: std::collections::BTreeMap<String, (u64, u64, usize)> =
+        std::collections::BTreeMap::new();
+
+    let mut header = vec![
+        "Name",
+        "Path",
+        "Type",
+        "Extension",
+        "Modified",
+    ];
+    if include_dates {
+        header.push("Created");
+        header.push("LastAccessed");
+    }
+    header.extend([
+        "Attributes",
+        "SharePercent",
+        "LogicalBytes",
+        "AllocatedBytes",
+    ]);
+    if include_folders {
+        header.push("DirectFiles");
+    }
+
+    let mut content = String::from("\u{feff}");
+    content.push_str(
+        &header
+            .iter()
+            .map(|field| delimited_field(field, delimiter))
+            .collect::<Vec<_>>()
+            .join(&delimiter.to_string()),
+    );
+    content.push('\n');
+
+    for file in &matches {
+        let weight = weight_of(file);
         let name = Path::new(&file.path)
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or(&file.path);
         let extension = file_extension(&file.path).unwrap_or_else(|| "(none)".to_string());
-        csv.push_str(&csv_field(name));
-        csv.push(',');
-        csv.push_str(&csv_field(&file.path));
-        csv.push(',');
-        csv.push_str(&csv_field(&extension));
-        csv.push(',');
-        csv.push_str(&csv_field(&csv_modified(file.modified_epoch_ms)));
-        csv.push(',');
-        csv.push_str(&csv_field(&file.attributes));
-        csv.push(',');
-        csv.push_str(&format!("{:.1}", share));
-        csv.push(',');
-        csv.push_str(&file.size_bytes.to_string());
-        csv.push(',');
-        csv.push_str(&file.allocated_bytes.to_string());
-        csv.push('\n');
+
+        if include_folders {
+            if let Some(parent) = Path::new(&file.path).parent() {
+                let key = parent.to_string_lossy().to_string();
+                let entry = folders.entry(key).or_insert((0, 0, 0));
+                entry.0 += file.size_bytes;
+                entry.1 += file.allocated_bytes;
+                entry.2 += 1;
+            }
+        }
+
+        let mut row = vec![
+            name.to_string(),
+            file.path.clone(),
+            "File".to_string(),
+            extension,
+            formatted_date(file.modified_epoch_ms),
+        ];
+        if include_dates {
+            row.push(formatted_date(file.created_epoch_ms));
+            row.push(formatted_date(file.accessed_epoch_ms));
+        }
+        row.extend([
+            file.attributes.clone(),
+            format!("{:.1}", share_of(weight)),
+            file.size_bytes.to_string(),
+            file.allocated_bytes.to_string(),
+        ]);
+        if include_folders {
+            row.push("1".to_string());
+        }
+        content.push_str(
+            &row.iter()
+                .map(|field| delimited_field(field, delimiter))
+                .collect::<Vec<_>>()
+                .join(&delimiter.to_string()),
+        );
+        content.push('\n');
+    }
+
+    for (path, (logical, allocated, direct_files)) in &folders {
+        let name = Path::new(path)
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.clone());
+        let mut row = vec![
+            name,
+            path.clone(),
+            "Folder".to_string(),
+            String::new(),
+            String::new(),
+        ];
+        if include_dates {
+            row.push(String::new());
+            row.push(String::new());
+        }
+        row.extend([
+            String::from("D"),
+            format!("{:.1}", share_of((*allocated).max(*logical))),
+            logical.to_string(),
+            allocated.to_string(),
+            direct_files.to_string(),
+        ]);
+        content.push_str(
+            &row.iter()
+                .map(|field| delimited_field(field, delimiter))
+                .collect::<Vec<_>>()
+                .join(&delimiter.to_string()),
+        );
+        content.push('\n');
     }
 
     DiskCsvExport {
-        csv,
+        content,
         exported: matches.len(),
+        folders: folders.len(),
         total,
         truncated,
     }
@@ -371,6 +478,8 @@ pub(crate) struct FlatNode {
     pub(crate) size_bytes: u64,
     pub(crate) allocated_bytes: u64,
     pub(crate) modified_epoch_ms: Option<u64>,
+    pub(crate) created_epoch_ms: Option<u64>,
+    pub(crate) accessed_epoch_ms: Option<u64>,
     pub(crate) attributes: String,
     pub(crate) file_count: u64,
     pub(crate) extension: String,
@@ -393,6 +502,24 @@ fn allocated_or_logical(path: &Path, metadata: &fs::Metadata) -> u64 {
 fn modified_millis(metadata: &fs::Metadata) -> Option<u64> {
     metadata
         .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_millis() as u64)
+}
+
+fn created_millis(metadata: &fs::Metadata) -> Option<u64> {
+    metadata
+        .created()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_millis() as u64)
+}
+
+fn accessed_millis(metadata: &fs::Metadata) -> Option<u64> {
+    metadata
+        .accessed()
         .ok()?
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
@@ -536,6 +663,8 @@ where
         size_bytes: 0,
         allocated_bytes: 0,
         modified_epoch_ms: modified_millis(&root_metadata),
+        created_epoch_ms: created_millis(&root_metadata),
+        accessed_epoch_ms: accessed_millis(&root_metadata),
         attributes: metadata_attributes(&root_metadata),
         file_count: 0,
         extension: String::new(),
@@ -619,6 +748,8 @@ where
             size_bytes,
             allocated_bytes,
             modified_epoch_ms: modified_millis(&metadata),
+            created_epoch_ms: created_millis(&metadata),
+            accessed_epoch_ms: accessed_millis(&metadata),
             attributes: metadata_attributes(&metadata),
             file_count: if is_dir { 0 } else { 1 },
             extension: extension.clone(),
@@ -759,6 +890,8 @@ pub(crate) fn finalize_scan(
                 size_bytes: node.size_bytes,
                 allocated_bytes: node.allocated_bytes,
                 modified_epoch_ms: node.modified_epoch_ms,
+                created_epoch_ms: node.created_epoch_ms,
+                accessed_epoch_ms: node.accessed_epoch_ms,
                 attributes: node.attributes.clone(),
             });
         } else {
@@ -799,6 +932,8 @@ pub(crate) fn finalize_scan(
                 size_bytes: node.size_bytes,
                 allocated_bytes: node.allocated_bytes,
                 modified_epoch_ms: node.modified_epoch_ms,
+                created_epoch_ms: node.created_epoch_ms,
+                accessed_epoch_ms: node.accessed_epoch_ms,
                 attributes: node.attributes.clone(),
             }
         })
@@ -850,6 +985,8 @@ pub(crate) fn finalize_scan(
                             size_bytes: node.size_bytes,
                             allocated_bytes: node.allocated_bytes,
                             modified_epoch_ms: node.modified_epoch_ms,
+                            created_epoch_ms: node.created_epoch_ms,
+                            accessed_epoch_ms: node.accessed_epoch_ms,
                             attributes: node.attributes.clone(),
                         }
                     })
@@ -1416,26 +1553,101 @@ mod tests {
             scan_disk_tree(&root.to_string_lossy(), 2, 20, false, false, &cancel, |_| {}).unwrap();
         let index = result.file_index.as_ref().unwrap();
 
-        let exported = export_cached_files_csv(index, "", None, None, Some("name"), None, None, "name", 10);
+        let exported = export_cached_files_csv(
+            index,
+            "",
+            None,
+            None,
+            Some("name"),
+            None,
+            None,
+            "name",
+            10,
+            "csv",
+            false,
+            false,
+        );
         assert_eq!(exported.total, 2);
         assert_eq!(exported.exported, 2);
         assert!(!exported.truncated);
-        assert!(exported.csv.contains("Name,Path,Extension,Modified,Attributes"));
-        assert!(exported.csv.contains("alpha.txt"));
-        assert!(exported.csv.contains("\"beta,quoted.txt\""));
+        assert!(exported
+            .content
+            .contains("Name,Path,Type,Extension,Modified,Attributes"));
+        assert!(exported.content.contains("alpha.txt"));
+        assert!(exported.content.contains("\"beta,quoted.txt\""));
 
-        let limited = export_cached_files_csv(index, "", None, None, Some("name"), None, None, "name", 1);
+        let limited = export_cached_files_csv(
+            index,
+            "",
+            None,
+            None,
+            Some("name"),
+            None,
+            None,
+            "name",
+            1,
+            "csv",
+            false,
+            false,
+        );
         assert_eq!(limited.exported, 1);
         assert!(limited.truncated);
 
-        let included = export_cached_files_csv(index, "", None, None, Some("name"), Some("beta"), None, "name", 10);
+        let included = export_cached_files_csv(
+            index,
+            "",
+            None,
+            None,
+            Some("name"),
+            Some("beta"),
+            None,
+            "name",
+            10,
+            "csv",
+            false,
+            false,
+        );
         assert_eq!(included.total, 1);
-        assert!(included.csv.contains("beta,quoted.txt"));
-        assert!(!included.csv.contains("alpha.txt"));
+        assert!(included.content.contains("beta,quoted.txt"));
+        assert!(!included.content.contains("alpha.txt"));
 
-        let excluded = export_cached_files_csv(index, "", None, None, Some("name"), None, Some("alpha"), "name", 10);
+        let excluded = export_cached_files_csv(
+            index,
+            "",
+            None,
+            None,
+            Some("name"),
+            None,
+            Some("alpha"),
+            "name",
+            10,
+            "csv",
+            false,
+            false,
+        );
         assert_eq!(excluded.total, 1);
-        assert!(excluded.csv.contains("beta,quoted.txt"));
+        assert!(excluded.content.contains("beta,quoted.txt"));
+
+        let with_folders = export_cached_files_csv(
+            index,
+            "",
+            None,
+            None,
+            Some("name"),
+            None,
+            None,
+            "name",
+            10,
+            "tsv",
+            true,
+            true,
+        );
+        assert_eq!(with_folders.folders, 1);
+        assert!(with_folders.content.contains("\tFile\t"));
+        assert!(with_folders.content.contains("\tFolder\t"));
+        assert!(with_folders.content.contains("Created"));
+        assert!(with_folders.content.contains("LastAccessed"));
+        assert!(with_folders.content.contains("DirectFiles"));
 
         let _ = fs::remove_dir_all(&root);
     }

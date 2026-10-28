@@ -14,6 +14,8 @@ struct CsvColumns {
     size: Option<usize>,
     allocated: Option<usize>,
     modified: Option<usize>,
+    created: Option<usize>,
+    accessed: Option<usize>,
     attributes: Option<usize>,
 }
 
@@ -100,6 +102,20 @@ fn columns_from_headers(headers: &csv::StringRecord) -> Result<CsvColumns, Strin
                 "last modified",
                 "last write time",
                 "modified time",
+            ],
+        ),
+        created: find_column(
+            headers,
+            &["created", "created date", "date created", "creation time", "created time"],
+        ),
+        accessed: find_column(
+            headers,
+            &[
+                "last accessed",
+                "accessed",
+                "last access",
+                "access time",
+                "last accessed time",
             ],
         ),
         attributes: find_column(headers, &["attributes", "attribute", "attr", "attrs"]),
@@ -337,6 +353,14 @@ pub fn import_scan_csv(
             .modified
             .and_then(|index| record.get(index))
             .and_then(parse_modified_epoch_ms);
+        let created = columns
+            .created
+            .and_then(|index| record.get(index))
+            .and_then(parse_modified_epoch_ms);
+        let accessed = columns
+            .accessed
+            .and_then(|index| record.get(index))
+            .and_then(parse_modified_epoch_ms);
 
         let (parsed_root, components) = match normalize_import_path(raw_path) {
             Ok(parsed) => parsed,
@@ -363,6 +387,8 @@ pub fn import_scan_csv(
                     size_bytes: 0,
                     allocated_bytes: 0,
                     modified_epoch_ms: None,
+                    created_epoch_ms: None,
+                    accessed_epoch_ms: None,
                     attributes: "D".to_string(),
                     file_count: 0,
                     extension: String::new(),
@@ -421,6 +447,12 @@ pub fn import_scan_csv(
                     if modified.is_some() {
                         node.modified_epoch_ms = modified;
                     }
+                    if created.is_some() {
+                        node.created_epoch_ms = created;
+                    }
+                    if accessed.is_some() {
+                        node.accessed_epoch_ms = accessed;
+                    }
                     if !attributes.is_empty() {
                         node.attributes = attributes.clone();
                     }
@@ -434,6 +466,8 @@ pub fn import_scan_csv(
                         size_bytes: file_size,
                         allocated_bytes: allocated_size,
                         modified_epoch_ms: modified,
+                        created_epoch_ms: created,
+                        accessed_epoch_ms: accessed,
                         attributes: attributes.clone(),
                         file_count: 1,
                         extension: super::disk_scan::file_extension(&current_path)
@@ -453,6 +487,12 @@ pub fn import_scan_csv(
                 if is_last {
                     if modified.is_some() {
                         node.modified_epoch_ms = modified;
+                    }
+                    if created.is_some() {
+                        node.created_epoch_ms = created;
+                    }
+                    if accessed.is_some() {
+                        node.accessed_epoch_ms = accessed;
                     }
                     if !attributes.is_empty() {
                         node.attributes = if attributes_indicate_directory(&attributes) {
@@ -478,6 +518,8 @@ pub fn import_scan_csv(
                     size_bytes: 0,
                     allocated_bytes: 0,
                     modified_epoch_ms: if is_last { modified } else { None },
+                    created_epoch_ms: if is_last { created } else { None },
+                    accessed_epoch_ms: if is_last { accessed } else { None },
                     attributes: directory_attributes,
                     file_count: 0,
                     extension: String::new(),

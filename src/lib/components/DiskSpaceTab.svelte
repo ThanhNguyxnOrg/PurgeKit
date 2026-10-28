@@ -27,6 +27,8 @@
     size_bytes: number;
     allocated_bytes: number;
     modified_epoch_ms: number | null;
+    created_epoch_ms?: number | null;
+    accessed_epoch_ms?: number | null;
     attributes: string;
   }
 
@@ -78,8 +80,9 @@
   }
 
   interface DiskCsvExport {
-    csv: string;
+    content: string;
     exported: number;
+    folders: number;
     total: number;
     truncated: boolean;
   }
@@ -142,6 +145,12 @@
   let fileQuery = $state("");
   let fileExtensionFilter = $state<string | null>(null);
   let fileSort = $state<"size" | "modified" | "name">("size");
+  let showExportDialog = $state(false);
+  let exportScope = $state<"view" | "all">("all");
+  let exportFormat = $state<"csv" | "tsv">("csv");
+  let exportIncludeDates = $state(false);
+  let exportIncludeFolders = $state(false);
+  let isExporting = $state(false);
   let fileScope = $state<"all" | "folder">("all");
   let fileFilterMode = $state<"name" | "path">("name");
   let fileInclude = $state("");
@@ -1065,10 +1074,38 @@
 
     selectedNode = hit.node;
     if (hit.node.is_dir && hit.node.children.length > 0) {
-      const path = result ? pathToNode(result.root, hit.node.path) : [hit.node];
-      focusStack = path.length > 0 ? path : [hit.node];
-      focusNode = hit.node;
+      focusTreemapOn(hit.node);
     }
+  }
+
+  function handleCanvasDoubleClick(event: MouseEvent) {
+    const canvas = canvasEl;
+    if (!canvas || !result) return;
+    const bounds = canvas.getBoundingClientRect();
+    const hit = rectAt(event.clientX - bounds.left, event.clientY - bounds.top);
+    if (!hit || isPseudoTreemapNode(hit.node)) return;
+
+    const target = hit.node.is_dir ? hit.node : parentDirectoryNode(hit.node);
+    if (target && target.children.length > 0) {
+      focusTreemapOn(target);
+    }
+  }
+
+  function focusTreemapOn(node: DiskTreeNode) {
+    if (!result) return;
+    const path = pathToNode(result.root, node.path);
+    focusStack = path.length > 0 ? path : [node];
+    focusNode = node;
+  }
+
+  function parentDirectoryNode(node: DiskTreeNode): DiskTreeNode | null {
+    if (!result) return null;
+    const normalized = node.path.replace(/\//g, "\\");
+    const separator = normalized.lastIndexOf("\\");
+    if (separator <= 0) return null;
+    const parentPath = normalized.slice(0, separator);
+    const stack = pathToNode(result.root, parentPath);
+    return stack.length > 0 ? stack[stack.length - 1] : null;
   }
 
   function pathToNode(rootNode: DiskTreeNode, targetPath: string): DiskTreeNode[] {
@@ -1138,42 +1175,19 @@
     document.body.removeChild(link);
   }
 
-  function exportTopFilesCsv() {
-    if (!result || displayFiles.length === 0) {
+  function openExportDialog(scope: "view" | "all") {
+    exportScope = scope;
+    showExportDialog = true;
+  }
+
+  async function runDiskExport() {
+    if (!result) return;
+    if (exportScope === "view" && displayFiles.length === 0) {
       toast.show(t("No files to export for this filter."), "warning");
       return;
     }
 
-    const escapeCsv = (value: string) => `"${value.replace(/"/g, '""')}"`;
-    const duplicateColumns = result.duplicate_mode !== "off";
-    const rows = [
-      ["Name", "Path", "Extension", "Modified", "Attributes", "SharePercent", "LogicalBytes", "AllocatedBytes", ...(duplicateColumns ? ["DupCount", "DupWasteBytes"] : [])],
-      ...displayFiles.map((file) => [
-        file.name,
-        file.path,
-        file.extension,
-        file.modified_epoch_ms ? formatModified(file.modified_epoch_ms) : "",
-        file.attributes,
-        fileSharePercent(file),
-        String(file.size_bytes),
-        String(file.allocated_bytes),
-        ...(duplicateColumns ? [String(duplicateStats.get(file.path)?.count ?? 0), String(duplicateStats.get(file.path)?.waste ?? 0)] : []),
-      ]),
-    ];
-    const csv = "\uFEFF" + rows.map((row) => row.map(escapeCsv).join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `purgekit_disk_${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  }
-
-  async function exportAllFilesCsv() {
-    if (!result) return;
+    isExporting = true;
     try {
       const exported = await invoke<DiskCsvExport>("export_disk_files_csv", {
         path: result.root_path,
@@ -1184,28 +1198,44 @@
         include: fileInclude.trim() || null,
         exclude: fileExclude.trim() || null,
         sort: fileSort,
-        limit: 100000,
+        limit: exportScope === "view" ? Math.max(displayFiles.length, 1) : 100000,
+        format: exportFormat,
+        includeDates: exportIncludeDates,
+        includeFolders: exportIncludeFolders,
       });
-      const blob = new Blob([exported.csv], { type: "text/csv;charset=utf-8" });
+      const mime = exportFormat === "tsv"
+        ? "text/tab-separated-values;charset=utf-8"
+        : "text/csv;charset=utf-8";
+      const blob = new Blob([exported.content], { type: mime });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `purgekit_disk_all_${new Date().toISOString().slice(0, 10)}.csv`;
+      link.download = `purgekit_disk_${exportScope}_${new Date().toISOString().slice(0, 10)}.${exportFormat}`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
+      showExportDialog = false;
+      const folderNote = exported.folders > 0
+        ? t(" and {count} folders", { count: exported.folders.toLocaleString() })
+        : "";
       toast.show(
         exported.truncated
-          ? t("Exported {count} of {total} files (100k cap).", {
+          ? t("Exported {count} of {total} files (100k cap){folders}.", {
               count: exported.exported.toLocaleString(),
               total: exported.total.toLocaleString(),
+              folders: folderNote,
             })
-          : t("Exported {count} files.", { count: exported.exported.toLocaleString() }),
+          : t("Exported {count} files{folders}.", {
+              count: exported.exported.toLocaleString(),
+              folders: folderNote,
+            }),
         exported.truncated ? "warning" : "success"
       );
     } catch (e: any) {
       toast.show(t("Export failed: {message}", { message: e.toString() }), "error");
+    } finally {
+      isExporting = false;
     }
   }
 
@@ -1470,6 +1500,12 @@ ${duplicateRows ? `<h2>Duplicate groups (top 50)</h2><table><thead><tr><th>Name<
     focusStack = focusStack.slice(0, index + 1);
     focusNode = focusStack[focusStack.length - 1] || null;
     selectedNode = null;
+  }
+
+  function zoomOutTreemap() {
+    if (focusStack.length > 1) {
+      goToFocus(focusStack.length - 2);
+    }
   }
 
   async function openSelected() {
@@ -1902,6 +1938,17 @@ ${duplicateRows ? `<h2>Duplicate groups (top 50)</h2><table><thead><tr><th>Name<
 
       {#if activeView === "treemap"}
         <div class="flex flex-wrap items-center gap-1.5 text-xs">
+          <button
+            type="button"
+            onclick={zoomOutTreemap}
+            disabled={focusStack.length <= 1}
+            class="inline-flex items-center gap-1 px-2 py-1 rounded bg-surface-bg border border-border-default hover:bg-elevated-bg text-text-secondary hover:text-text-primary font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
+            title={t("Zoom out one level")}
+            aria-label={t("Zoom out one level")}
+          >
+            <ArrowUp class="w-3 h-3" aria-hidden="true" />
+            {t("Up")}
+          </button>
           {#each focusStack as crumb, index}
             <button
               onclick={() => goToFocus(index)}
@@ -1992,6 +2039,7 @@ ${duplicateRows ? `<h2>Duplicate groups (top 50)</h2><table><thead><tr><th>Name<
           <canvas
             bind:this={canvasEl}
             onclick={handleCanvasClick}
+            ondblclick={handleCanvasDoubleClick}
             onmousemove={handleCanvasMove}
             onmouseleave={handleCanvasLeave}
             aria-hidden="true"
@@ -2011,7 +2059,7 @@ ${duplicateRows ? `<h2>Duplicate groups (top 50)</h2><table><thead><tr><th>Name<
                   percent: percentOfFocusedNode(tooltip.node),
                   files: tooltip.node.file_count.toLocaleString(),
                 })}
-                {#if tooltip.node.is_dir}{t("· click to zoom")}{:else}{t("· click to select")}{/if}
+                {#if tooltip.node.is_dir}{t("· click to zoom")}{:else}{t("· click to select · double-click to zoom")}{/if}
               </span>
               {#if !tooltip.node.is_dir && tooltip.node.modified_epoch_ms}
                 <span class="block text-[10px] font-mono text-text-muted mt-1">
@@ -2048,7 +2096,7 @@ ${duplicateRows ? `<h2>Duplicate groups (top 50)</h2><table><thead><tr><th>Name<
         </div>
 
         <div class="flex flex-wrap items-center gap-3 text-[11px] text-text-muted">
-          <span class="font-mono">{t("Click to zoom or select · hover for details")}</span>
+          <span class="font-mono">{t("Click to select · double-click to zoom · hover for details")}</span>
           <span class="text-border-strong">/</span>
           <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-sm" style="background: {activeDirColors[0]}"></span>{t("folder")}</span>
           {#each result.file_types.slice(0, 6) as type}
@@ -2135,18 +2183,11 @@ ${duplicateRows ? `<h2>Duplicate groups (top 50)</h2><table><thead><tr><th>Name<
             </select>
           </label>
           <button
-            onclick={exportTopFilesCsv}
+            onclick={() => openExportDialog("view")}
             class="px-3 py-2 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-xs font-semibold text-text-secondary hover:text-text-primary transition-colors"
-            title={t("Export the files currently shown")}
+            title={t("Export files with CSV/TSV options")}
           >
-            {t("Export view")}
-          </button>
-          <button
-            onclick={exportAllFilesCsv}
-            class="px-3 py-2 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-xs font-semibold text-text-secondary hover:text-text-primary transition-colors"
-            title={t("Export every indexed file matching the current filters")}
-          >
-            {t("Export all")}
+            {t("Export…")}
           </button>
           <span class="text-[11px] font-mono text-text-muted self-center" aria-live="polite">
             {#if isSearching}
@@ -2470,4 +2511,91 @@ ${duplicateRows ? `<h2>Duplicate groups (top 50)</h2><table><thead><tr><th>Name<
       </div>
     {/if}
   </div>
+
+  {#if showExportDialog}
+    <div
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      role="presentation"
+      onclick={(event) => {
+        if (event.target === event.currentTarget && !isExporting) showExportDialog = false;
+      }}
+    >
+      <div
+        class="w-full max-w-md rounded-xl border border-border-strong bg-elevated-bg shadow-2xl p-5 space-y-4"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="disk-export-title"
+      >
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <h3 id="disk-export-title" class="text-sm font-bold text-text-primary">{t("Export file list")}</h3>
+            <p class="text-[11px] text-text-muted mt-1">{t("Choose the scope, format and optional columns.")}</p>
+          </div>
+          <button
+            type="button"
+            onclick={() => showExportDialog = false}
+            disabled={isExporting}
+            class="p-1 rounded-md text-text-muted hover:text-text-primary hover:bg-surface-bg disabled:opacity-40"
+            aria-label={t("Close export options")}
+          >
+            <X class="w-4 h-4" aria-hidden="true" />
+          </button>
+        </div>
+
+        <fieldset class="space-y-1.5">
+          <legend class="text-[11px] font-mono uppercase tracking-wider text-text-muted mb-1">{t("Scope")}</legend>
+          <label class="flex items-center gap-2 text-xs text-text-secondary cursor-pointer">
+            <input type="radio" bind:group={exportScope} value="view" class="accent-accent" />
+            {t("Current view ({count} files)", { count: displayFiles.length.toLocaleString() })}
+          </label>
+          <label class="flex items-center gap-2 text-xs text-text-secondary cursor-pointer">
+            <input type="radio" bind:group={exportScope} value="all" class="accent-accent" />
+            {t("All matching files (100k cap)")}
+          </label>
+        </fieldset>
+
+        <fieldset class="space-y-1.5">
+          <legend class="text-[11px] font-mono uppercase tracking-wider text-text-muted mb-1">{t("Format")}</legend>
+          <label class="flex items-center gap-2 text-xs text-text-secondary cursor-pointer">
+            <input type="radio" bind:group={exportFormat} value="csv" class="accent-accent" />
+            {t("CSV (comma separated)")}
+          </label>
+          <label class="flex items-center gap-2 text-xs text-text-secondary cursor-pointer">
+            <input type="radio" bind:group={exportFormat} value="tsv" class="accent-accent" />
+            {t("TSV (tab separated)")}
+          </label>
+        </fieldset>
+
+        <div class="space-y-1.5">
+          <label class="flex items-center gap-2 text-xs text-text-secondary cursor-pointer">
+            <input type="checkbox" bind:checked={exportIncludeFolders} class="accent-accent" />
+            {t("Include folder totals (direct files only)")}
+          </label>
+          <label class="flex items-center gap-2 text-xs text-text-secondary cursor-pointer">
+            <input type="checkbox" bind:checked={exportIncludeDates} class="accent-accent" />
+            {t("Include created and last-accessed dates")}
+          </label>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-1">
+          <button
+            type="button"
+            onclick={() => showExportDialog = false}
+            disabled={isExporting}
+            class="px-3 py-2 rounded-lg border border-border-default text-xs font-semibold text-text-secondary hover:text-text-primary hover:bg-surface-bg disabled:opacity-40"
+          >
+            {t("Cancel")}
+          </button>
+          <button
+            type="button"
+            onclick={runDiskExport}
+            disabled={isExporting}
+            class="px-3 py-2 rounded-lg bg-accent-strong text-white text-xs font-semibold hover:bg-accent-strong/90 disabled:opacity-40"
+          >
+            {isExporting ? t("Exporting…") : t("Export")}
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
 </div>

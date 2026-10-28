@@ -1108,6 +1108,9 @@ pub async fn export_disk_files_csv(
     exclude: Option<String>,
     sort: Option<String>,
     limit: Option<usize>,
+    format: Option<String>,
+    include_dates: Option<bool>,
+    include_folders: Option<bool>,
 ) -> Result<scanner::disk_scan::DiskCsvExport, String> {
     let key = disk_cache_key(&path);
     let index = {
@@ -1123,6 +1126,9 @@ pub async fn export_disk_files_csv(
 
     let sort = sort.unwrap_or_else(|| "size".to_string());
     let limit = limit.unwrap_or(100_000);
+    let format = format.unwrap_or_else(|| "csv".to_string());
+    let include_dates = include_dates.unwrap_or(false);
+    let include_folders = include_folders.unwrap_or(false);
     tauri::async_runtime::spawn_blocking(move || {
         scanner::disk_scan::export_cached_files_csv(
             &index,
@@ -1134,6 +1140,9 @@ pub async fn export_disk_files_csv(
             exclude.as_deref(),
             &sort,
             limit,
+            &format,
+            include_dates,
+            include_folders,
         )
     })
     .await

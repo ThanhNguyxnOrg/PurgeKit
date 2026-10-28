@@ -92,8 +92,10 @@ const disk: Record<string, string> = {
   "Move this item to quarantine": "Chuyển mục này sang cách ly",
   "Quarantining…": "Đang cách ly…",
   "Quarantine": "Cách ly",
-  "Click to zoom or select · hover for details":
-    "Nhấp để phóng to hoặc chọn · di chuột để xem chi tiết",
+  "Click to select · double-click to zoom · hover for details":
+    "Nhấp để chọn · nhấp đúp để phóng to · di chuột để xem chi tiết",
+  "· click to select · double-click to zoom":
+    "· nhấp để chọn · nhấp đúp để phóng to",
   "folder": "thư mục",
   "(none)": "(không có)",
   "Search entire file paths…": "Tìm trong toàn bộ đường dẫn…",
@@ -236,6 +238,29 @@ const disk: Record<string, string> = {
   "Select one of the scanned roots to open it in Explorer.":
     "Chọn một trong các gốc đã quét để mở trong Explorer.",
   "Could not open folder: {message}": "Không thể mở thư mục: {message}",
+  "Export…": "Xuất…",
+  "Export files with CSV/TSV options": "Xuất tệp với tuỳ chọn CSV/TSV",
+  "Export file list": "Xuất danh sách tệp",
+  "Choose the scope, format and optional columns.":
+    "Chọn phạm vi, định dạng và các cột tuỳ chọn.",
+  "Close export options": "Đóng tuỳ chọn xuất",
+  "Scope": "Phạm vi",
+  "Current view ({count} files)": "Mục đang xem ({count} tệp)",
+  "All matching files (100k cap)": "Tất cả tệp khớp (giới hạn 100k)",
+  "Format": "Định dạng",
+  "CSV (comma separated)": "CSV (phân tách bằng dấu phẩy)",
+  "TSV (tab separated)": "TSV (phân tách bằng tab)",
+  "Include folder totals (direct files only)":
+    "Bao gồm tổng của thư mục (chỉ tệp trực tiếp)",
+  "Include created and last-accessed dates":
+    "Bao gồm ngày tạo và ngày truy cập gần nhất",
+  "Exporting…": "Đang xuất…",
+  " and {count} folders": " và {count} thư mục",
+  "Exported {count} of {total} files (100k cap){folders}.":
+    "Đã xuất {count}/{total} tệp (giới hạn 100k){folders}.",
+  "Exported {count} files{folders}.": "Đã xuất {count} tệp{folders}.",
+  "Zoom out one level": "Thu nhỏ một cấp",
+  "Up": "Lên",
 };
 
 export default disk;
