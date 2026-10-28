@@ -1209,6 +1209,122 @@
     }
   }
 
+  function escapeHtml(value: string): string {
+    return value
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function collectTopFolders(rootNode: DiskTreeNode, limit: number): DiskTreeNode[] {
+    const folders: DiskTreeNode[] = [];
+    const walk = (node: DiskTreeNode, depth: number) => {
+      if (!node.is_dir || depth > 8) return;
+      if (depth > 0) folders.push(node);
+      for (const child of node.children) {
+        if (child.is_dir) walk(child, depth + 1);
+      }
+    };
+    walk(rootNode, 0);
+    return folders
+      .sort((left, right) => nodeWeight(right) - nodeWeight(left))
+      .slice(0, limit);
+  }
+
+  function exportDiskHtml() {
+    if (!result) return;
+    const fileRows = result.top_files
+      .map(
+        (file) => `<tr>
+          <td>${escapeHtml(file.name)}</td>
+          <td class="path">${escapeHtml(file.path)}</td>
+          <td class="num">${escapeHtml(formatBytes(Math.max(file.allocated_bytes, file.size_bytes)))}</td>
+          <td class="num">${escapeHtml(formatBytes(file.size_bytes))}</td>
+          <td class="num">${escapeHtml(fileSharePercent(file))}%</td>
+          <td class="num">${escapeHtml(file.modified_epoch_ms ? formatModified(file.modified_epoch_ms) : "—")}</td>
+        </tr>`
+      )
+      .join("");
+    const folderRows = collectTopFolders(result.root, 100)
+      .map(
+        (folder) => `<tr>
+          <td>${escapeHtml(folder.name)}</td>
+          <td class="path">${escapeHtml(folder.path)}</td>
+          <td class="num">${escapeHtml(formatBytes(nodeWeight(folder)))}</td>
+          <td class="num">${folder.file_count.toLocaleString()}</td>
+        </tr>`
+      )
+      .join("");
+    const typeRows = result.file_types
+      .map(
+        (type) => `<tr>
+          <td>${escapeHtml(type.extension || t("(none)"))}</td>
+          <td class="num">${escapeHtml(formatBytes(type.size_bytes))}</td>
+          <td class="num">${type.file_count.toLocaleString()}</td>
+        </tr>`
+      )
+      .join("");
+    const duplicateRows = result.duplicate_groups
+      .slice(0, 50)
+      .map(
+        (group) => `<tr>
+          <td>${escapeHtml(group.name)}</td>
+          <td class="num">${group.file_count}</td>
+          <td class="num">${escapeHtml(formatBytes(group.size_bytes))}</td>
+          <td class="num">${escapeHtml(formatBytes(group.size_bytes * (group.file_count - 1)))}</td>
+        </tr>`
+      )
+      .join("");
+
+    const html = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PurgeKit disk report — ${escapeHtml(result.root_path)}</title>
+<style>
+:root{color-scheme:light}body{margin:0;padding:32px;background:#f4f1eb;color:#171a1f;font:14px/1.45 system-ui,Segoe UI,sans-serif}
+main{max-width:1100px;margin:auto}h1{font-size:24px;margin:0 0 4px}h2{font-size:15px;margin:28px 0 8px}p{color:#5c646e}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:18px 0}
+.card{background:#fff;border:1px solid #d8d2c8;border-radius:8px;padding:12px}.label{font:10px ui-monospace,monospace;text-transform:uppercase;letter-spacing:.08em;color:#707781}.value{font:600 19px ui-monospace,monospace;margin-top:4px;color:#c94e1b}
+table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #d8d2c8;border-radius:8px;overflow:hidden}
+th,td{padding:7px 10px;border-bottom:1px solid #e8e3da;text-align:left;vertical-align:top}th{background:#ede9e2;font:10px ui-monospace,monospace;text-transform:uppercase;letter-spacing:.06em;color:#4b525c}
+tr:last-child td{border-bottom:0}.num{font-family:ui-monospace,monospace;white-space:nowrap}.path{font-family:ui-monospace,monospace;font-size:11px;color:#5c646e;word-break:break-all}
+small{color:#707781}footer{margin-top:28px;font-size:11px;color:#707781}
+</style>
+</head>
+<body><main>
+<h1>PurgeKit disk report</h1>
+<p><strong>${escapeHtml(result.root_path)}</strong> · ${escapeHtml(result.engine.toUpperCase())} · generated ${escapeHtml(new Date().toLocaleString())}</p>
+<div class="grid">
+<div class="card"><div class="label">Allocated</div><div class="value">${escapeHtml(formatBytes(result.total_allocated))}</div></div>
+<div class="card"><div class="label">Logical</div><div class="value">${escapeHtml(formatBytes(result.total_size))}</div></div>
+<div class="card"><div class="label">Files</div><div class="value">${result.total_files.toLocaleString()}</div></div>
+<div class="card"><div class="label">Folders</div><div class="value">${result.total_dirs.toLocaleString()}</div></div>
+<div class="card"><div class="label">Volume free</div><div class="value">${escapeHtml(formatBytes(result.volume_free_bytes))}</div></div>
+<div class="card"><div class="label">Errors</div><div class="value">${result.errors.toLocaleString()}</div></div>
+</div>
+${result.duplicate_mode !== "off" ? `<p><small>Duplicate grouping: ${escapeHtml(result.duplicate_mode)} (name/size/date, contents not compared).</small></p>` : ""}
+<h2>Largest files</h2><table><thead><tr><th>File</th><th>Path</th><th>Size</th><th>Logical</th><th>Share</th><th>Modified</th></tr></thead><tbody>${fileRows || "<tr><td colspan=6>No files</td></tr>"}</tbody></table>
+<h2>Largest folders</h2><table><thead><tr><th>Folder</th><th>Path</th><th>Size</th><th>Files</th></tr></thead><tbody>${folderRows || "<tr><td colspan=4>No folders</td></tr>"}</tbody></table>
+<h2>File types</h2><table><thead><tr><th>Extension</th><th>Size</th><th>Files</th></tr></thead><tbody>${typeRows || "<tr><td colspan=3>No types</td></tr>"}</tbody></table>
+${duplicateRows ? `<h2>Duplicate groups (top 50)</h2><table><thead><tr><th>Name</th><th>Copies</th><th>Size each</th><th>Potential waste</th></tr></thead><tbody>${duplicateRows}</tbody></table>` : ""}
+<footer>PurgeKit · report contains the top 100 files/folders from this scan. Snapshot values are read-only.</footer>
+</main></body></html>`;
+
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `purgekit_disk_report_${new Date().toISOString().slice(0, 10)}.html`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    toast.show(t("Exported disk report as HTML."), "success");
+  }
+
   function duplicatesSelectedInGroup(group: DuplicateGroup): number {
     return group.files.filter((file) => duplicateSelection[file.path]).length;
   }
@@ -1769,6 +1885,12 @@
             {t("Save PNG")}
           </button>
         {/if}
+        <button
+          onclick={exportDiskHtml}
+          class="px-3 py-2 text-xs font-semibold text-text-secondary hover:text-text-primary"
+        >
+          {t("Export HTML")}
+        </button>
         <button
           onclick={openSelected}
           class="px-3 py-2 text-xs font-semibold text-text-secondary hover:text-text-primary flex items-center gap-1.5"

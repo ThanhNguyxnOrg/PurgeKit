@@ -9,6 +9,8 @@ const disk: Record<string, string> = {
   "under 64 KB": "dưới 64 KB",
   "under 1 MB": "dưới 1 MB",
   "Small files": "Tệp nhỏ",
+  "Export HTML": "Xuất HTML",
+  "Exported disk report as HTML.": "Đã xuất báo cáo dung lượng dưới dạng HTML.",
   "Groups match by file name and size (plus modified date if enabled). File contents are not compared; verify the files before purging.":
     "Các nhóm được ghép theo tên tệp và dung lượng (kèm ngày sửa đổi nếu bật). Nội dung tệp không được so sánh; hãy kiểm tra kỹ trước khi dọn.",
   "Disk Space": "Dung lượng ổ đĩa",
