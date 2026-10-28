@@ -147,6 +147,10 @@
   let fileInclude = $state("");
   let fileExclude = $state("");
   let fileLimit = $state(500);
+  let treemapShowNames = $state(true);
+  let treemapUseLogical = $state(false);
+  let treemapShowFree = $state(false);
+  let treemapGroupSmall = $state(0);
   let searchResult = $state<DiskFileSearchResult | null>(null);
   let isSearching = $state(false);
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -366,6 +370,10 @@
           fileExclude,
           fileLimit,
           fileScope,
+          treemapShowNames,
+          treemapUseLogical,
+          treemapShowFree,
+          treemapGroupSmall,
         })
       );
     } catch {}
@@ -394,11 +402,87 @@
       if ([100, 500, 1000, 2000].includes(Number(prefs.fileLimit))) {
         fileLimit = Number(prefs.fileLimit);
       }
+      if (typeof prefs.treemapShowNames === "boolean") {
+        treemapShowNames = prefs.treemapShowNames;
+      }
+      if (typeof prefs.treemapUseLogical === "boolean") {
+        treemapUseLogical = prefs.treemapUseLogical;
+      }
+      if (typeof prefs.treemapShowFree === "boolean") {
+        treemapShowFree = prefs.treemapShowFree;
+      }
+      if ([0, 1024, 65536, 1048576].includes(Number(prefs.treemapGroupSmall))) {
+        treemapGroupSmall = Number(prefs.treemapGroupSmall);
+      }
     } catch {}
   }
 
   function nodeWeight(node: DiskTreeNode): number {
     return Math.max(node.allocated_bytes, node.size_bytes);
+  }
+
+  function treemapWeight(node: DiskTreeNode): number {
+    return treemapUseLogical ? node.size_bytes : nodeWeight(node);
+  }
+
+  function isPseudoTreemapNode(node: DiskTreeNode): boolean {
+    return node.path.startsWith("::free::") || node.path.startsWith("::small::");
+  }
+
+  function treemapChildren(node: DiskTreeNode): DiskTreeNode[] {
+    let kids = [...node.children];
+    if (treemapGroupSmall > 0) {
+      const small = kids.filter(
+        (child) =>
+          !child.is_dir &&
+          treemapWeight(child) > 0 &&
+          treemapWeight(child) < treemapGroupSmall
+      );
+      if (small.length >= 2) {
+        kids = kids.filter((child) => !small.includes(child));
+        kids.push({
+          name: t("Small files"),
+          path: `::small::${node.path}`,
+          is_dir: false,
+          size_bytes: small.reduce((sum, child) => sum + child.size_bytes, 0),
+          allocated_bytes: small.reduce(
+            (sum, child) => sum + child.allocated_bytes,
+            0
+          ),
+          modified_epoch_ms: null,
+          attributes: "",
+          file_count: small.reduce((sum, child) => sum + child.file_count, 0),
+          children: [],
+        });
+      }
+    }
+    return kids.filter((child) => treemapWeight(child) > 0);
+  }
+
+  function treemapNodes(node: DiskTreeNode): DiskTreeNode[] {
+    const kids = treemapChildren(node);
+    if (
+      treemapShowFree &&
+      result &&
+      node.path === result.root_path &&
+      isDriveRoot(result.root_path)
+    ) {
+      const free = Math.max(0, result.volume_free_bytes);
+      if (free > 0) {
+        kids.push({
+          name: t("Free space"),
+          path: "::free::",
+          is_dir: false,
+          size_bytes: free,
+          allocated_bytes: free,
+          modified_epoch_ms: null,
+          attributes: "",
+          file_count: 0,
+          children: [],
+        });
+      }
+    }
+    return kids.sort((left, right) => treemapWeight(right) - treemapWeight(left));
   }
 
   function percentOfFocusedNode(node: DiskTreeNode): string {
@@ -796,13 +880,13 @@
       return output;
     }
 
-    const total = items.reduce((sum, item) => sum + nodeWeight(item), 0);
+    const total = items.reduce((sum, item) => sum + treemapWeight(item), 0);
     if (total <= 0) return output;
 
     let accumulated = 0;
     let splitIndex = 1;
     for (let index = 0; index < items.length - 1; index++) {
-      accumulated += nodeWeight(items[index]);
+      accumulated += treemapWeight(items[index]);
       if (accumulated >= total / 2) {
         splitIndex = index + 1;
         break;
@@ -811,7 +895,7 @@
 
     const first = items.slice(0, splitIndex);
     const second = items.slice(splitIndex);
-    const firstTotal = first.reduce((sum, item) => sum + nodeWeight(item), 0);
+    const firstTotal = first.reduce((sum, item) => sum + treemapWeight(item), 0);
     const ratio = Math.max(0.02, Math.min(0.98, firstTotal / total));
 
     if (w >= h) {
@@ -855,9 +939,9 @@
         continue;
       }
 
-      const kids = [...child.children]
-        .filter((kid) => nodeWeight(kid) > 0)
-        .sort((left, right) => nodeWeight(right) - nodeWeight(left));
+      const kids = treemapChildren(child).sort(
+        (left, right) => treemapWeight(right) - treemapWeight(left)
+      );
       if (kids.length === 0) continue;
 
       const hasLabel = depth === 0
@@ -911,9 +995,7 @@
     context.fillStyle = "#101318";
     context.fillRect(0, 0, width, height);
 
-    const children = [...node.children]
-      .filter((child) => nodeWeight(child) > 0)
-      .sort((left, right) => nodeWeight(right) - nodeWeight(left));
+    const children = treemapNodes(node);
 
     if (children.length === 0) {
       context.fillStyle = "#8a94a3";
@@ -930,7 +1012,10 @@
     layoutRects.forEach((rect, index) => {
       const highlighted =
         rect.node.path === hoverPath || rect.node.path === selectedNode?.path;
-      context.fillStyle = colorForNode(rect.node, index);
+      context.fillStyle =
+        rect.node.path === "::free::"
+          ? "#2E3946"
+          : colorForNode(rect.node, index);
       context.fillRect(rect.x, rect.y, rect.w, rect.h);
       if (rect.depth > 0) {
         // Deeper levels sit visually inside their folder instead of competing
@@ -943,9 +1028,11 @@
       context.lineWidth = highlighted ? 2 : 1;
       context.strokeRect(rect.x + 0.5, rect.y + 0.5, Math.max(0, rect.w - 1), Math.max(0, rect.h - 1));
 
-      const hasLabel = rect.depth === 0
-        ? rect.w > 70 && rect.h > 48
-        : rect.w > 54 && rect.h > 30;
+      const hasLabel =
+        treemapShowNames &&
+        (rect.depth === 0
+          ? rect.w > 70 && rect.h > 48
+          : rect.w > 54 && rect.h > 30);
       if (hasLabel) {
         context.save();
         context.beginPath();
@@ -960,7 +1047,7 @@
         if (rect.depth === 0) {
           context.fillStyle = "rgba(244, 246, 248, 0.7)";
           context.font = "10px ui-monospace, Consolas, monospace";
-          context.fillText(formatBytes(nodeWeight(rect.node)), rect.x + 7, rect.y + 33, rect.w - 14);
+          context.fillText(formatBytes(treemapWeight(rect.node)), rect.x + 7, rect.y + 33, rect.w - 14);
         }
         context.restore();
       }
@@ -974,7 +1061,7 @@
     const x = event.clientX - bounds.left;
     const y = event.clientY - bounds.top;
     const hit = rectAt(x, y);
-    if (!hit) return;
+    if (!hit || isPseudoTreemapNode(hit.node)) return;
 
     selectedNode = hit.node;
     if (hit.node.is_dir && hit.node.children.length > 0) {
@@ -1303,6 +1390,10 @@
     hoverPath;
     selectedNode;
     theme.colorBlind;
+    treemapShowNames;
+    treemapUseLogical;
+    treemapShowFree;
+    treemapGroupSmall;
     if (canvasEl && activeView === "treemap") {
       requestAnimationFrame(drawTreemap);
     }
@@ -1700,6 +1791,73 @@
             {#if index < focusStack.length - 1}<span class="text-text-muted">/</span>{/if}
           {/each}
           <span class="text-text-muted font-mono ml-2">{formatBytes(nodeWeight(focusNode || result.root))}</span>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-3 text-[11px] text-text-muted">
+          <label class="flex items-center gap-1.5 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={treemapShowNames}
+              onchange={(event) => {
+                treemapShowNames = event.currentTarget.checked;
+                saveDiskPreferences();
+              }}
+              class="rounded border-border-default text-accent focus:ring-accent bg-surface-bg cursor-pointer w-3.5 h-3.5"
+            />
+            {t("Labels")}
+          </label>
+          <div class="flex items-center rounded-md border border-border-default overflow-hidden" role="group" aria-label={t("Treemap size source")}>
+            <button
+              type="button"
+              onclick={() => {
+                treemapUseLogical = false;
+                saveDiskPreferences();
+              }}
+              aria-pressed={!treemapUseLogical}
+              class="px-2 py-1 font-semibold transition-colors {!treemapUseLogical ? 'bg-accent-subtle text-accent' : 'bg-surface-bg text-text-muted hover:text-text-primary'}"
+            >
+              {t("Allocated")}
+            </button>
+            <button
+              type="button"
+              onclick={() => {
+                treemapUseLogical = true;
+                saveDiskPreferences();
+              }}
+              aria-pressed={treemapUseLogical}
+              class="px-2 py-1 font-semibold border-l border-border-default transition-colors {treemapUseLogical ? 'bg-accent-subtle text-accent' : 'bg-surface-bg text-text-muted hover:text-text-primary'}"
+            >
+              {t("Logical")}
+            </button>
+          </div>
+          <label class="flex items-center gap-1.5 cursor-pointer select-none" title={t("Only shown when the treemap is focused on a drive root.")}>
+            <input
+              type="checkbox"
+              checked={treemapShowFree}
+              onchange={(event) => {
+                treemapShowFree = event.currentTarget.checked;
+                saveDiskPreferences();
+              }}
+              class="rounded border-border-default text-accent focus:ring-accent bg-surface-bg cursor-pointer w-3.5 h-3.5"
+            />
+            {t("Free space")}
+          </label>
+          <label class="flex items-center gap-1.5">
+            {t("Group files")}
+            <select
+              value={treemapGroupSmall}
+              onchange={(event) => {
+                treemapGroupSmall = Number(event.currentTarget.value);
+                saveDiskPreferences();
+              }}
+              class="px-1.5 py-1 rounded-md bg-surface-bg border border-border-default text-[11px] font-mono text-text-secondary outline-none cursor-pointer"
+            >
+              <option value={0}>{t("Off")}</option>
+              <option value={1024}>{t("under 1 KB")}</option>
+              <option value={65536}>{t("under 64 KB")}</option>
+              <option value={1048576}>{t("under 1 MB")}</option>
+            </select>
+          </label>
         </div>
 
         <div

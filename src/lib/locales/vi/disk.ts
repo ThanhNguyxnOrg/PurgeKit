@@ -1,4 +1,14 @@
 const disk: Record<string, string> = {
+  "Labels": "Nhãn",
+  "Treemap size source": "Nguồn kích thước bản đồ cây",
+  "Free space": "Dung lượng trống",
+  "Only shown when the treemap is focused on a drive root.":
+    "Chỉ hiển thị khi bản đồ cây đang được focus ở gốc ổ đĩa.",
+  "Group files": "Gộp tệp",
+  "under 1 KB": "dưới 1 KB",
+  "under 64 KB": "dưới 64 KB",
+  "under 1 MB": "dưới 1 MB",
+  "Small files": "Tệp nhỏ",
   "Groups match by file name and size (plus modified date if enabled). File contents are not compared; verify the files before purging.":
     "Các nhóm được ghép theo tên tệp và dung lượng (kèm ngày sửa đổi nếu bật). Nội dung tệp không được so sánh; hãy kiểm tra kỹ trước khi dọn.",
   "Disk Space": "Dung lượng ổ đĩa",
