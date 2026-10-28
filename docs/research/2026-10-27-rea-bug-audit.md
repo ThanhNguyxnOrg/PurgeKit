@@ -38,6 +38,8 @@
 | 14 | Med | UWP icons | A fully transparent Store logo PNG passed the “icon exists” check, so stub packages rendered a blank square. | PNG alpha bytes are inspected and invisible logos fall through to the executable/bounded walk. |
 | 15 | Low-Med | Theme contrast | Hardcoded `emerald/blue/amber/rose` classes and solid accent backgrounds produced weak badge text and washed-out button labels, especially in dark mode. | Semantic `success/info/warning/danger` tokens plus `*-strong` action colors; muted/secondary/border tokens were raised in both palettes. |
 | 16 | Med | Project deletion authority | The delete command accepted any path that passed the generic safety gate, so a compromised webview could remove an arbitrary non-protected folder. | Deletion is restricted to folders returned by the most recent project scan; unscanned paths fail without touching disk. |
+| 17 | Med | Large tree view | The 20k-node tree budget was spent depth-first; on a real 3.15 GB WizTree dump one huge subtree consumed it and only 2 of 49 top-level folders appeared. | Breadth-first budget with a regression test; all root folders are represented before deeper detail. |
+| 18 | Med | MFT file sizes | FILE_NAME sizes were stale/zero for hardlinked/system files, while named streams such as `$BadClus::$Bad` inflated totals to the whole volume. | Logical/allocated sizes now come from the unnamed `$DATA` attribute, with FILE_NAME only as fallback. |
 
 ## 3. Follow-up WizTree features implemented
 
@@ -49,6 +51,7 @@
 - **Geek install date:** registry dates are normalized and inferred from install-folder/uninstaller creation time when missing, then cached and exported.
 - **Treemap navigation:** double-click zooms a file into its parent and an Up control walks back out.
 - **WizTree `.MFT` import:** raw records plus the `VOLDATA2`/`NTFS_VOLUME_DATA_BUFFER`/drive-letter footer are loaded read-only, with volume size and MFT record numbers available to search and export.
+- **Large-dump fixes:** breadth-first tree budgeting keeps every top-level folder, and MFT file sizes use unnamed `$DATA` streams instead of stale FILE_NAME sizes or volume-sized named streams.
 
 ## 4. Deliberately deferred
 
@@ -59,9 +62,10 @@
 
 ## 5. Verification
 
-- `cargo test --lib`: **116 passed, 4 ignored** (host smoke tests only).
+- `cargo test --lib`: **117 passed, 4 ignored** (host smoke tests only).
 - `cargo check --bins`, `npm run check`, `npm run build`: clean.
 - Host icon coverage: 132/133 inventory rows have a logo; `vs_CoreEditorFonts` is a font component without an application icon. Startup Manager shows icons for 11/15 entries; the remaining four are stale Run values whose targets no longer exist and are flagged with a warning.
 - Host install dates: 137/138 inventory rows have a date after the fallback pass (registry, Store package folder, CLI, toolchain and portable paths); one registry entry has no readable install path.
-- UI verified through WebView2 CDP at 900×600, 1500×1000 and a 1600px emulated viewport: export dialog produced a 26-line TSV with file/folder rows, created/last-accessed, parent-percent, MFT-record and drive-size sections; the file-types view exported a CSV with full type totals; a WizTree-style `.MFT` sample loaded as read-only with 10,854 files / 978 folders, a 91.6 GiB volume and 38.1 GiB free from the footer, and MFT record 3365 visible in search/export; double-click zoom produced a `research` breadcrumb and Up returned to the root; an unscanned delete request was rejected while the folder stayed in place.
+- A real 3,155,165,289-byte WizTree `.MFT` dump was loaded end-to-end: 3,081,216 records, **1,409,381 files / 253,836 folders**, all **49** top-level folders, footer volume **403.17 GB** with **102.71 GB** free. The debug build took ~114 s; the file index/search/export carried MFT record numbers.
+- UI verified through WebView2 CDP at 900×600, 1500×1000 and a 1600px emulated viewport: export dialog produced a 26-line TSV with file/folder rows, created/last-accessed, parent-percent, MFT-record and drive-size sections; the file-types view exported a CSV with full type totals; a reconstructed WizTree-style `.MFT` loaded read-only with 10,854 files / 978 folders, a 91.6 GiB volume and 38.1 GiB free, and MFT record 3365 visible in search/export; double-click zoom produced a `research` breadcrumb and Up returned to the root; an unscanned delete request was rejected while the folder stayed in place.
 - The UI is English-only for now; the Vietnamese dictionary and `setMode()` remain wired for a later language release.
