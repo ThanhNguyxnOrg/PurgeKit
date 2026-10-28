@@ -24,6 +24,7 @@ pub fn run() {
             std::sync::atomic::AtomicBool::new(false),
         )))
         .manage(scanner::disk_scan::DiskFileCache::default())
+        .manage(scanner::project_sweeper::ProjectScanCache::default())
         .invoke_handler(tauri::generate_handler![
             commands::get_installed_apps,
             commands::get_dev_tools,

@@ -2245,11 +2245,22 @@ pub async fn run_bulk_silent_uninstall(
 #[tauri::command]
 pub async fn scan_project_directories(
     app: AppHandle,
+    cache: tauri::State<'_, scanner::project_sweeper::ProjectScanCache>,
     roots: Vec<String>,
     folder_types: Vec<String>,
 ) -> Result<Vec<ProjectFolder>, String> {
+    let allowed = cache.0.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        scanner::scan_project_folders(&app, &roots, &folder_types)
+        let folders = scanner::scan_project_folders(&app, &roots, &folder_types)?;
+        if let Ok(mut allowed) = allowed.lock() {
+            allowed.clear();
+            allowed.extend(
+                folders
+                    .iter()
+                    .map(|folder| scanner::project_sweeper::project_path_key(&folder.path)),
+            );
+        }
+        Ok(folders)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -2258,8 +2269,10 @@ pub async fn scan_project_directories(
 #[tauri::command]
 pub async fn delete_project_directories(
     app: AppHandle,
+    cache: tauri::State<'_, scanner::project_sweeper::ProjectScanCache>,
     paths: Vec<String>,
 ) -> Result<std::collections::HashMap<String, String>, String> {
+    let allowed = cache.0.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let mut results = std::collections::HashMap::new();
         let total = paths.len() as u32;
@@ -2272,6 +2285,20 @@ pub async fn delete_project_directories(
                 total,
                 message: format!("Deleting project directory: {}", path_str),
             });
+
+            let permitted = allowed
+                .lock()
+                .map(|allowed| {
+                    allowed.contains(&scanner::project_sweeper::project_path_key(path_str))
+                })
+                .unwrap_or(false);
+            if !permitted {
+                results.insert(
+                    path_str.clone(),
+                    "Failed: path is not part of the last project scan.".to_string(),
+                );
+                continue;
+            }
 
             match crate::locker::delete_file_with_escalation(path_str) {
                 crate::locker::DeleteResult::Deleted | crate::locker::DeleteResult::DeletedAfterUnlock | crate::locker::DeleteResult::ForceDeleted => {

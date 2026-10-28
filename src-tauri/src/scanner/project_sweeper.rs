@@ -1,8 +1,38 @@
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
+
+/// Paths produced by the most recent project scan. Deletion is only allowed
+/// for entries in this set, so a compromised webview cannot delete an
+/// arbitrary folder that merely passes the generic safety gate.
+#[derive(Default)]
+pub struct ProjectScanCache(pub Arc<Mutex<HashSet<String>>>);
+
+impl ProjectScanCache {
+    pub fn replace(&self, paths: impl IntoIterator<Item = String>) {
+        if let Ok(mut cache) = self.0.lock() {
+            cache.clear();
+            cache.extend(paths);
+        }
+    }
+
+    pub fn contains(&self, path: &str) -> bool {
+        self.0
+            .lock()
+            .map(|cache| cache.contains(&project_path_key(path)))
+            .unwrap_or(false)
+    }
+}
+
+pub fn project_path_key(path: &str) -> String {
+    crate::winutil::canonicalize_path_safety(path)
+        .to_string_lossy()
+        .trim_end_matches(['\\', '/'])
+        .to_lowercase()
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ProjectFolder {
@@ -285,5 +315,15 @@ mod tests {
         let node_modules_item = scan_results.iter().find(|f| f.name == "node_modules").unwrap();
         assert_eq!(node_modules_item.file_count, 2); // package.json and index.js
         assert!(node_modules_item.size_bytes > 0);
+    }
+
+    #[test]
+    fn deletion_cache_only_accepts_scanned_paths() {
+        let cache = ProjectScanCache::default();
+        cache.replace(vec![project_path_key(r"C:\Work\App\node_modules")]);
+        assert!(cache.contains(r"c:\work\app\node_modules\"));
+        assert!(cache.contains(r"C:\Work\App\node_modules"));
+        assert!(!cache.contains(r"C:\Work\App"));
+        assert!(!cache.contains(r"C:\Windows\System32"));
     }
 }
