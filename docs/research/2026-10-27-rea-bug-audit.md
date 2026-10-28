@@ -37,6 +37,7 @@
 | 13 | Med | Snapshot hygiene | Snapshots scanned `%APPDATA%\PurgeKit` and `%LOCALAPPDATA%\PurgeKit`, so they contained their own JSON files and quarantine/backup data. | PurgeKit data folders are excluded and reparse points are skipped. |
 | 14 | Med | UWP icons | A fully transparent Store logo PNG passed the “icon exists” check, so stub packages rendered a blank square. | PNG alpha bytes are inspected and invisible logos fall through to the executable/bounded walk. |
 | 15 | Low-Med | Theme contrast | Hardcoded `emerald/blue/amber/rose` classes and solid accent backgrounds produced weak badge text and washed-out button labels, especially in dark mode. | Semantic `success/info/warning/danger` tokens plus `*-strong` action colors; muted/secondary/border tokens were raised in both palettes. |
+| 16 | Med | Project deletion authority | The delete command accepted any path that passed the generic safety gate, so a compromised webview could remove an arbitrary non-protected folder. | Deletion is restricted to folders returned by the most recent project scan; unscanned paths fail without touching disk. |
 
 ## 3. Follow-up WizTree features implemented
 
@@ -44,6 +45,9 @@
 - **HTML report export:** self-contained printable report with summary, top 100 files/folders, file types and top duplicate groups.
 - **Bulk result reporting:** the backend returns a failed-app count, and the UI only reports success when every app succeeded; partial purge results are surfaced.
 - **Startup Manager icons:** Run values and Startup-folder shortcuts resolve their executable/shortcut target and render the real icon with the shared frame treatment. Absolute targets that no longer exist are flagged so a stale entry is not mistaken for a missing-icon bug.
+- **WizTree export options:** CSV/TSV, current-view/all scope, optional folder totals and created/last-accessed dates, verified against WizTree’s shipped English locale strings.
+- **Geek install date:** registry dates are normalized and inferred from install-folder/uninstaller creation time when missing, then cached and exported.
+- **Treemap navigation:** double-click zooms a file into its parent and an Up control walks back out.
 
 ## 4. Deliberately deferred
 
@@ -54,7 +58,9 @@
 
 ## 5. Verification
 
-- `cargo test --lib`: **110 passed, 4 ignored** (host smoke tests only).
+- `cargo test --lib`: **113 passed, 4 ignored** (host smoke tests only).
 - `cargo check --bins`, `npm run check`, `npm run build`: clean.
 - Host icon coverage: 132/133 inventory rows have a logo; `vs_CoreEditorFonts` is a font component without an application icon. Startup Manager shows icons for 11/15 entries; the remaining four are stale Run values whose targets no longer exist and are flagged with a warning.
-- UI verified through WebView2 CDP at 900×600 and 1500×1000, including light/dark contrast, CSV import, multi-root scanning and MFT dump reload. The UI is English-only for now; the Vietnamese dictionary and `setMode()` remain wired for a later language release.
+- Host install dates: 42/138 inventory rows have a date after the fallback pass; UWP/CLI/portable entries generally have no creation date source.
+- UI verified through WebView2 CDP at 900×600, 1500×1000 and a 1600px emulated viewport: export dialog produced a 24-line TSV with file and folder rows, created/last-accessed columns and a `.tsv` download name; double-click zoom produced a `research` breadcrumb and Up returned to the root; an unscanned delete request was rejected while the folder stayed in place.
+- The UI is English-only for now; the Vietnamese dictionary and `setMode()` remain wired for a later language release.
