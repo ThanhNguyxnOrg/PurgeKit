@@ -17,12 +17,9 @@ class I18nController {
   );
 
   init() {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved === "auto" || saved === "en" || saved === "vi") {
-        this.mode = saved;
-      }
-    } catch {}
+    // English-only for now; the dictionaries and setMode() stay ready for a
+    // future language release.
+    this.mode = "en";
     this.apply();
   }
 

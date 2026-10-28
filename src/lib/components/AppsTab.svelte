@@ -289,11 +289,11 @@
   function getAvatarStyle(name: string): string {
     const charCode = name.charCodeAt(0) || 0;
     const colors = [
-      "bg-emerald-950/40 text-emerald-400 border-emerald-800/30",
-      "bg-blue-950/40 text-blue-400 border-blue-800/30",
+      "bg-success/15 text-success border-success/25",
+      "bg-info/15 text-info border-info/25",
       "bg-brand-purple/10 text-brand-purple border-brand-purple/20",
-      "bg-amber-950/40 text-amber-400 border-amber-800/30",
-      "bg-rose-950/40 text-rose-400 border-rose-800/30",
+      "bg-warning/15 text-warning border-warning/25",
+      "bg-danger/15 text-danger border-danger/25",
     ];
     return colors[charCode % colors.length];
   }
@@ -1012,9 +1012,9 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                   </td>
                   <!-- Name -->
                   <td class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 font-sans font-medium flex items-center gap-3">
-                    <div class="w-8 h-8 rounded-lg border flex items-center justify-center overflow-hidden transition-colors shadow-sm bg-surface-bg border-border-default flex-shrink-0">
+                    <div class="app-icon-frame w-8 h-8 rounded-lg border flex items-center justify-center overflow-hidden transition-colors shadow-sm bg-surface-bg border-border-default flex-shrink-0">
                       {#if app.icon_base64}
-                        <img src="data:image/png;base64,{app.icon_base64}" class="w-6 h-6 object-contain" alt="" />
+                        <img src="data:image/png;base64,{app.icon_base64}" class="app-icon w-6 h-6 object-contain" alt="" />
                       {:else}
                         <div class="w-full h-full flex items-center justify-center font-mono text-xs {getAvatarStyle(app.display_name)}">
                           {app.display_name.charAt(0).toUpperCase()}
@@ -1026,7 +1026,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                         <span class="text-text-primary group-hover:text-accent transition-colors max-w-[180px] md:max-w-[280px] truncate" title={app.display_name}>{app.display_name}</span>
                         {#if app.is_verified}
                           <span class="inline-flex items-center" title={t("Verified Publisher Certificate")}>
-                            <svg class="w-3.5 h-3.5 text-emerald-400 fill-emerald-400/20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <svg class="w-3.5 h-3.5 text-success fill-success/20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
                               <path d="m9 11 2 2 4-4"/>
                             </svg>
@@ -1069,20 +1069,20 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                   <td class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5">
                     <span class="px-2 py-0.5 rounded text-[10px] font-mono border
                       {appSource(app) === 'store'
-                        ? 'bg-blue-950/30 text-blue-400 border-blue-800/40'
+                        ? 'bg-info/10 text-info border-info/25'
                         : appSource(app) === 'cli'
                           ? 'bg-brand-purple/10 text-brand-purple border-brand-purple/20'
                           : appSource(app) === 'toolchain'
-                            ? 'bg-emerald-950/30 text-emerald-400 border-emerald-800/40'
+                            ? 'bg-success/10 text-success border-success/25'
                             : appSource(app) === 'portable'
-                              ? 'bg-amber-950/30 text-amber-400 border-amber-800/40'
+                              ? 'bg-warning/10 text-warning border-warning/25'
                               : app.hive === 'HKCU'
                                 ? 'bg-brand-purple/10 text-brand-purple border-brand-purple/20'
                                 : 'bg-surface-bg text-text-secondary border-border-default'}">
                       {appSource(app) === 'registry' ? app.hive : appSource(app).toUpperCase()}
                     </span>
                     {#if app.is_update}
-                      <span class="ml-1 px-1 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-950/30 text-amber-300 border border-amber-800/40">{t("UPDATE")}</span>
+                      <span class="ml-1 px-1 py-0.5 rounded text-[9px] font-mono font-bold bg-warning/10 text-warning border border-warning/25">{t("UPDATE")}</span>
                     {/if}
                   </td>
                   
@@ -1093,7 +1093,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                         <button
                           onclick={() => openPreflight(app)}
                           title={t("Uninstall this global package and review owned leftovers")}
-                          class="px-2.5 py-1.5 rounded-lg bg-brand-purple/10 hover:bg-brand-purple text-brand-purple hover:text-white transition-all border border-brand-purple/20 flex items-center gap-1.5 text-xs font-semibold active:scale-95 cursor-pointer"
+                          class="px-2.5 py-1.5 rounded-lg bg-brand-purple/10 hover:bg-brand-purple-strong text-brand-purple hover:text-white transition-all border border-brand-purple/20 flex items-center gap-1.5 text-xs font-semibold active:scale-95 cursor-pointer"
                         >
                           <Trash2 class="w-3.5 h-3.5" />
                           {t("Uninstall package")}
@@ -1102,7 +1102,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                         <button
                           onclick={() => openPreflight(app)}
                           title={t("Uninstall this toolchain version")}
-                          class="px-2.5 py-1.5 rounded-lg bg-emerald-950/30 hover:bg-emerald-600 text-emerald-300 hover:text-white transition-all border border-emerald-800/40 flex items-center gap-1.5 text-xs font-semibold active:scale-95 cursor-pointer"
+                          class="px-2.5 py-1.5 rounded-lg bg-success/10 hover:bg-success-strong text-success hover:text-white transition-all border border-success/25 flex items-center gap-1.5 text-xs font-semibold active:scale-95 cursor-pointer"
                         >
                           <Trash2 class="w-3.5 h-3.5" />
                           {t("Uninstall")}
@@ -1111,7 +1111,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                         <button
                           onclick={() => openPreflight(app)}
                           title={t("Remove this unregistered portable application folder")}
-                          class="px-2.5 py-1.5 rounded-lg bg-amber-950/30 hover:bg-amber-600 text-amber-300 hover:text-white transition-all border border-amber-800/40 flex items-center gap-1.5 text-xs font-semibold active:scale-95 cursor-pointer"
+                          class="px-2.5 py-1.5 rounded-lg bg-warning/10 hover:bg-warning-strong text-warning hover:text-white transition-all border border-warning/25 flex items-center gap-1.5 text-xs font-semibold active:scale-95 cursor-pointer"
                         >
                           <Trash2 class="w-3.5 h-3.5" />
                           {t("Remove folder")}
@@ -1129,7 +1129,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                         <button
                           onclick={() => openPreflight(app)}
                           title={t("Uninstall and Deep Clean Remnants")}
-                          class="px-2.5 py-1.5 rounded-lg bg-danger/10 hover:bg-danger text-danger hover:text-white transition-all border border-danger/20 flex items-center gap-1.5 text-xs font-semibold active:scale-95 cursor-pointer"
+                          class="px-2.5 py-1.5 rounded-lg bg-danger/10 hover:bg-danger-strong text-danger hover:text-white transition-all border border-danger/20 flex items-center gap-1.5 text-xs font-semibold active:scale-95 cursor-pointer"
                         >
                           <Trash2 class="w-3.5 h-3.5" />
                           {t("Uninstall")}
@@ -1138,7 +1138,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                         <button
                           onclick={() => removeUninstallEntry(app)}
                           title={t("Remove only the orphaned uninstall registry entry")}
-                          class="px-2.5 py-1.5 rounded-lg bg-amber-950/30 hover:bg-amber-600 text-amber-300 hover:text-white transition-all border border-amber-800/40 flex items-center gap-1.5 text-xs font-semibold active:scale-95 cursor-pointer"
+                          class="px-2.5 py-1.5 rounded-lg bg-warning/10 hover:bg-warning-strong text-warning hover:text-white transition-all border border-warning/25 flex items-center gap-1.5 text-xs font-semibold active:scale-95 cursor-pointer"
                         >
                           <Database class="w-3.5 h-3.5" />
                           {t("Remove Entry")}
@@ -1183,9 +1183,9 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
 
         <div class="flex-1 overflow-y-auto p-6 space-y-4">
           <div class="flex items-start gap-3">
-            <div class="w-10 h-10 rounded-lg border border-border-default bg-app-bg flex items-center justify-center overflow-hidden flex-shrink-0">
+            <div class="app-icon-frame w-10 h-10 rounded-lg border border-border-default bg-app-bg flex items-center justify-center overflow-hidden flex-shrink-0">
               {#if preflightApp.icon_base64}
-                <img src="data:image/png;base64,{preflightApp.icon_base64}" class="w-8 h-8 object-contain" alt="" />
+                <img src="data:image/png;base64,{preflightApp.icon_base64}" class="app-icon w-8 h-8 object-contain" alt="" />
               {:else}
                 <span class="font-mono text-sm {getAvatarStyle(preflightApp.display_name)}">{preflightApp.display_name.charAt(0).toUpperCase()}</span>
               {/if}
@@ -1211,7 +1211,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
               <span>{t("Administrator rights are required. Restart PurgeKit as Administrator to continue.")}</span>
               <button
                 onclick={restartAsAdmin}
-                class="self-start px-2.5 py-1.5 rounded-lg bg-accent hover:bg-accent-hover text-white text-[11px] font-semibold transition-colors"
+                class="self-start px-2.5 py-1.5 rounded-lg bg-accent-strong hover:bg-accent-strong/90 text-white text-[11px] font-semibold transition-colors"
               >
                 {t("Restart as Administrator")}
               </button>
@@ -1258,10 +1258,10 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
               <p class="text-text-primary break-all">{t("Run the registered uninstaller:")} <span class="font-mono">{preflightApp.uninstall_string || t("no uninstall string")}</span></p>
             {/if}
             {#if preflightApp.requires_admin && isAdmin}
-              <p class="text-amber-300">{t("Administrator rights are required for this operation.")}</p>
+              <p class="text-warning">{t("Administrator rights are required for this operation.")}</p>
             {/if}
             {#if preflightApp.is_active}
-              <p class="text-amber-300">{t("WARNING: this toolchain is currently ACTIVE. Removing it can break existing projects.")}</p>
+              <p class="text-warning">{t("WARNING: this toolchain is currently ACTIVE. Removing it can break existing projects.")}</p>
             {/if}
           </div>
 
@@ -1273,7 +1273,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
               <p class="text-text-primary">{t("Backup/quarantine before delete:")} <b>{preflightSettings.backup_before_delete ? t("On") : t("Off")}</b></p>
               <p class="text-text-primary">{t("Create restore point:")} <b>{preflightSettings.create_restore_point ? t("On") : t("Off")}</b></p>
               {#if !preflightSettings.backup_before_delete}
-                <p class="text-amber-300">{t("Backup is off. Removed files may not be restorable.")}</p>
+                <p class="text-warning">{t("Backup is off. Removed files may not be restorable.")}</p>
               {/if}
             {:else}
               <p class="text-text-muted">{t("Could not read settings; backend defaults apply.")}</p>
@@ -1289,7 +1289,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
               <button
                 onclick={() => forceRemovePreflight()}
                 disabled={isForceRemoving || (preflightApp.requires_admin && !isAdmin)}
-                class="px-3 py-1.5 rounded-lg bg-danger/10 hover:bg-danger text-danger hover:text-white border border-danger/20 text-xs font-semibold transition-all disabled:opacity-40"
+                class="px-3 py-1.5 rounded-lg bg-danger/10 hover:bg-danger-strong text-danger hover:text-white border border-danger/20 text-xs font-semibold transition-all disabled:opacity-40"
               >
                 {isForceRemoving ? t("Force removing…") : t("Force Remove")}
               </button>
@@ -1308,7 +1308,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
           <button
             onclick={confirmPreflight}
             disabled={isForceRemoving || isPreflightLoading || (preflightApp.requires_admin && !isAdmin)}
-            class="flex items-center gap-1.5 px-5 py-2 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white transition-all active:scale-95 disabled:opacity-50"
+            class="flex items-center gap-1.5 px-5 py-2 rounded-lg text-xs font-semibold bg-accent-strong hover:bg-accent-strong/90 text-white transition-all active:scale-95 disabled:opacity-50"
           >
             <Trash2 class="w-3.5 h-3.5" />
             {appSource(preflightApp) === "portable" ? t("Remove folder") : t("Continue")}
@@ -1476,10 +1476,10 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                               <span class="text-[9px] font-mono text-text-muted">{formatSize(item.size)}</span>
                             {/if}
                             <span class="text-[9px] font-mono px-1 rounded border font-semibold
-                              {item.confidence === 'VeryHigh' ? 'bg-emerald-950/30 text-emerald-400 border-emerald-800/40' : ''}
-                              {item.confidence === 'High' ? 'bg-blue-950/30 text-blue-400 border-blue-800/40' : ''}
-                              {item.confidence === 'Medium' ? 'bg-amber-950/30 text-amber-400 border-amber-800/40' : ''}
-                              {item.confidence === 'Low' ? 'bg-rose-950/30 text-rose-400 border-rose-800/40' : ''}"
+                              {item.confidence === 'VeryHigh' ? 'bg-success/10 text-success border-success/25' : ''}
+                              {item.confidence === 'High' ? 'bg-info/10 text-info border-info/25' : ''}
+                              {item.confidence === 'Medium' ? 'bg-warning/10 text-warning border-warning/25' : ''}
+                              {item.confidence === 'Low' ? 'bg-danger/10 text-danger border-danger/25' : ''}"
                             >
                               {item.confidence} ({item.score}%)
                             </span>
@@ -1510,7 +1510,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
               <button
                 onclick={performPurge}
                 disabled={isPurging || remnants.filter(r => selectedRemnants[r.path]).length === 0}
-                class="flex items-center gap-2 px-5 py-2 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white disabled:opacity-50 active:scale-95 transition-all shadow"
+                class="flex items-center gap-2 px-5 py-2 rounded-lg text-xs font-semibold bg-accent-strong hover:bg-accent-strong/90 text-white disabled:opacity-50 active:scale-95 transition-all shadow"
               >
                 {#if isPurging}
                   <RefreshCw class="w-3.5 h-3.5 animate-spin" />
@@ -1583,7 +1583,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
             </button>
             <button
               onclick={startBulkUninstall}
-              class="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold bg-accent hover:bg-accent-hover text-white transition-all active:scale-95 shadow cursor-pointer"
+              class="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold bg-accent-strong hover:bg-accent-strong/90 text-white transition-all active:scale-95 shadow cursor-pointer"
             >
               <Trash2 class="w-3.5 h-3.5" />
               {t("Bulk Silent Uninstall")}
@@ -1667,7 +1667,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
           {:else if bulkUninstallStep === "remnants_list"}
             <!-- Residual Clean list -->
             <div class="space-y-3">
-              <div class="p-4 rounded-lg bg-amber-950/20 border border-amber-900/40 text-amber-300 text-xs flex gap-3 leading-relaxed">
+              <div class="p-4 rounded-lg bg-warning/10 border border-warning/25 text-warning text-xs flex gap-3 leading-relaxed">
                 <span class="text-base">⚠️</span>
                 <div>
                   <h4 class="font-bold">{t("Remaining Leftovers Detected")}</h4>
@@ -1737,10 +1737,10 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                           <span class="text-[9px] font-mono text-text-muted">{formatSize(item.size)}</span>
                         {/if}
                         <span class="text-[9px] font-mono px-1 rounded border font-semibold
-                          {item.confidence === 'VeryHigh' ? 'bg-emerald-950/30 text-emerald-400 border-emerald-800/40' : ''}
-                          {item.confidence === 'High' ? 'bg-blue-950/30 text-blue-400 border-blue-800/40' : ''}
-                          {item.confidence === 'Medium' ? 'bg-amber-950/30 text-amber-400 border-amber-800/40' : ''}
-                          {item.confidence === 'Low' ? 'bg-rose-950/30 text-rose-400 border-rose-800/40' : ''}"
+                          {item.confidence === 'VeryHigh' ? 'bg-success/10 text-success border-success/25' : ''}
+                          {item.confidence === 'High' ? 'bg-info/10 text-info border-info/25' : ''}
+                          {item.confidence === 'Medium' ? 'bg-warning/10 text-warning border-warning/25' : ''}
+                          {item.confidence === 'Low' ? 'bg-danger/10 text-danger border-danger/25' : ''}"
                         >
                           {item.confidence} ({item.score}%)
                         </span>
@@ -1805,7 +1805,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
               <button
                 onclick={performBulkRemnantsPurge}
                 disabled={isPurging}
-                class="flex items-center gap-1.5 px-5 py-2 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+                class="flex items-center gap-1.5 px-5 py-2 rounded-lg text-xs font-semibold bg-accent-strong hover:bg-accent-strong/90 text-white transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
               >
                 {#if isPurging}
                   <RefreshCw class="w-3.5 h-3.5 animate-spin" />
@@ -1818,7 +1818,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
             {:else}
               <button
                 onclick={closeBulkModal}
-                class="px-6 py-2 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white transition-all active:scale-95 cursor-pointer"
+                class="px-6 py-2 rounded-lg text-xs font-semibold bg-accent-strong hover:bg-accent-strong/90 text-white transition-all active:scale-95 cursor-pointer"
               >
                 {t("Done")}
               </button>

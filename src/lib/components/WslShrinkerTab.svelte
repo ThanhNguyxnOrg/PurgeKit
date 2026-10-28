@@ -329,7 +329,7 @@
                   class="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold transition-all border shadow-sm cursor-pointer disabled:opacity-40
                     {!isAdmin 
                       ? 'bg-surface-bg border-border-default text-text-secondary hover:bg-elevated-bg' 
-                      : 'bg-accent hover:bg-accent-hover text-white border-accent'}"
+                      : 'bg-accent-strong hover:bg-accent-strong/90 text-white border-accent'}"
                   title={!isAdmin ? t("Requires Administrator privileges") : t("Compact disk now")}
                 >
                   <Trash2 class="w-3.5 h-3.5" />
@@ -387,7 +387,7 @@
         <button
           onclick={closeCompactModal}
           disabled={compactPhase !== "Completed" && compactPhase !== "Failed"}
-          class="px-5 py-2.5 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white active:scale-95 disabled:opacity-50 transition-all shadow cursor-pointer"
+          class="px-5 py-2.5 rounded-lg text-xs font-semibold bg-accent-strong hover:bg-accent-strong/90 text-white active:scale-95 disabled:opacity-50 transition-all shadow cursor-pointer"
         >
           {compactPhase === "Completed" || compactPhase === "Failed" ? t("Close Terminal") : t("Compacting Disk...")}
         </button>

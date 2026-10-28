@@ -1585,7 +1585,7 @@ ${duplicateRows ? `<h2>Duplicate groups (top 50)</h2><table><thead><tr><th>Name<
           <button
             onclick={cancelScan}
             disabled={isCancelling}
-            class="px-3 py-2 rounded-lg bg-danger/10 hover:bg-danger text-danger hover:text-white border border-danger/20 text-xs font-semibold transition-all disabled:opacity-40"
+            class="px-3 py-2 rounded-lg bg-danger/10 hover:bg-danger-strong text-danger hover:text-white border border-danger/20 text-xs font-semibold transition-all disabled:opacity-40"
           >
             <Square class="w-3.5 h-3.5 inline mr-1" />
             {isCancelling ? t("Stopping…") : t("Cancel")}
@@ -1603,7 +1603,7 @@ ${duplicateRows ? `<h2>Duplicate groups (top 50)</h2><table><thead><tr><th>Name<
           <button
             onclick={scanDisk}
             disabled={isImporting}
-            class="flex items-center gap-2 px-4 py-2 rounded-lg bg-accent hover:bg-accent-hover text-white text-xs font-semibold transition-all active:scale-95 disabled:opacity-40"
+            class="flex items-center gap-2 px-4 py-2 rounded-lg bg-accent-strong hover:bg-accent-strong/90 text-white text-xs font-semibold transition-all active:scale-95 disabled:opacity-40"
           >
             <Play class="w-3.5 h-3.5" />
             {scanTargets.length > 1
@@ -1738,7 +1738,7 @@ ${duplicateRows ? `<h2>Duplicate groups (top 50)</h2><table><thead><tr><th>Name<
                 <button
                   onclick={() => loadSavedDump(dump)}
                   disabled={isScanning || loadingDumpPath === dump.path}
-                  class="px-2.5 py-1.5 rounded-md bg-accent/10 hover:bg-accent hover:text-white border border-accent/20 text-accent text-[10px] font-semibold transition-colors disabled:opacity-40"
+                  class="px-2.5 py-1.5 rounded-md bg-accent/10 hover:bg-accent-strong hover:text-white border border-accent/20 text-accent text-[10px] font-semibold transition-colors disabled:opacity-40"
                 >
                   {loadingDumpPath === dump.path ? t("Loading…") : t("Load")}
                 </button>
@@ -2039,7 +2039,7 @@ ${duplicateRows ? `<h2>Duplicate groups (top 50)</h2><table><thead><tr><th>Name<
                 onclick={quarantineSelected}
                 disabled={isQuarantining || isSnapshotView}
                 title={isSnapshotView ? t("Snapshots are read-only") : t("Move this item to quarantine")}
-                class="px-2.5 py-1.5 rounded-md bg-danger/10 hover:bg-danger text-danger hover:text-white border border-danger/20 text-[11px] font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                class="px-2.5 py-1.5 rounded-md bg-danger/10 hover:bg-danger-strong text-danger hover:text-white border border-danger/20 text-[11px] font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {isQuarantining ? t("Quarantining…") : t("Quarantine")}
               </button>
@@ -2387,7 +2387,7 @@ ${duplicateRows ? `<h2>Duplicate groups (top 50)</h2><table><thead><tr><th>Name<
                 <button
                   onclick={quarantineSelectedDuplicates}
                   disabled={selectedDuplicateCount === 0 || isQuarantining}
-                  class="px-2.5 py-1.5 rounded-md bg-danger/10 hover:bg-danger text-danger hover:text-white border border-danger/20 text-[11px] font-semibold disabled:opacity-40 transition-colors"
+                  class="px-2.5 py-1.5 rounded-md bg-danger/10 hover:bg-danger-strong text-danger hover:text-white border border-danger/20 text-[11px] font-semibold disabled:opacity-40 transition-colors"
                 >
                   {isQuarantining ? t("Quarantining…") : t("Quarantine {count}", { count: selectedDuplicateCount })}
                 </button>

@@ -130,7 +130,7 @@
       <button
         onclick={cleanSelectedPaths}
         disabled={isSaving || Object.keys(selectedIndices).filter(k => selectedIndices[Number(k)]).length === 0}
-        class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-danger hover:bg-danger/80 disabled:opacity-50 active:scale-95 transition-all text-white shadow cursor-pointer"
+        class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-danger-strong hover:bg-danger-strong/90 disabled:opacity-50 active:scale-95 transition-all text-white shadow cursor-pointer"
       >
         <Trash2 class="w-3.5 h-3.5" />
         {t("Clean Selected Paths")}
@@ -246,12 +246,12 @@
                         {t("Broken")}
                       </span>
                     {:else if p.is_duplicate}
-                      <span class="px-2 py-0.5 rounded bg-amber-950/30 text-amber-400 border border-amber-800/40 flex items-center gap-1 w-max">
+                      <span class="px-2 py-0.5 rounded bg-warning/10 text-warning border border-warning/25 flex items-center gap-1 w-max">
                         <ShieldAlert class="w-3.5 h-3.5" />
                         {t("Duplicate")}
                       </span>
                     {:else}
-                      <span class="px-2 py-0.5 rounded bg-emerald-950/30 text-emerald-400 border border-emerald-800/40 flex items-center gap-1 w-max">
+                      <span class="px-2 py-0.5 rounded bg-success/10 text-success border border-success/25 flex items-center gap-1 w-max">
                         <CheckCircle2 class="w-3.5 h-3.5" />
                         {t("Valid")}
                       </span>

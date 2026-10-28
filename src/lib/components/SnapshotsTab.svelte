@@ -175,7 +175,7 @@
       {#if !isTracking}
         <button
           onclick={() => showTrackModal = true}
-          class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-brand-purple hover:bg-purple-600 text-white active:scale-95 transition-all shadow"
+          class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-brand-purple-strong hover:bg-brand-purple-strong/90 text-white active:scale-95 transition-all shadow"
         >
           <Activity class="w-3.5 h-3.5" />
           {t("Install Monitor")}
@@ -183,7 +183,7 @@
       {/if}
       <button
         onclick={() => showCreateModal = true}
-        class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white active:scale-95 transition-all shadow"
+        class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent-strong hover:bg-accent-strong/90 text-white active:scale-95 transition-all shadow"
       >
         <Camera class="w-3.5 h-3.5" />
         {t("Create Snapshot")}
@@ -202,20 +202,20 @@
   <!-- Content Area -->
   <div class="flex-1 overflow-y-auto p-6 space-y-6">
     {#if isTracking}
-      <div class="p-4 rounded-lg bg-red-950/20 border border-red-500/30 flex items-center justify-between animate-fade-in shadow-lg">
+      <div class="p-4 rounded-lg bg-danger/10 border border-danger/30 flex items-center justify-between animate-fade-in shadow-lg">
         <div class="flex items-center gap-3">
           <span class="relative flex h-3 w-3">
-            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-            <span class="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-danger opacity-75"></span>
+            <span class="relative inline-flex rounded-full h-3 w-3 bg-danger"></span>
           </span>
-          <span class="text-xs font-bold text-red-400">
+          <span class="text-xs font-bold text-danger">
             {t("Installation Monitor Active: Tracking changes for \"{name}\"... Please run your software installer now.", { name: trackSessionName })}
           </span>
         </div>
         <button
           onclick={handleStopTracking}
           disabled={isStoppingTrack}
-          class="px-4 py-2 rounded-lg text-xs font-bold bg-red-600 hover:bg-red-500 text-white active:scale-95 transition-all shadow flex items-center gap-1.5"
+          class="px-4 py-2 rounded-lg text-xs font-bold bg-danger-strong hover:bg-danger-strong/90 text-white active:scale-95 transition-all shadow flex items-center gap-1.5"
         >
           {#if isStoppingTrack}
             <RefreshCw class="w-3.5 h-3.5 animate-spin" />
@@ -317,7 +317,7 @@
                   </div>
                   <button 
                     onclick={() => handleDeleteSnapshot(snap.id)}
-                    class="p-1 rounded bg-transparent text-text-muted hover:text-danger hover:bg-danger/10 border border-transparent hover:border-danger/20 transition-all opacity-0 group-hover:opacity-100"
+                    class="p-1 rounded bg-transparent text-text-muted hover:text-danger hover:bg-danger-strong/10 border border-transparent hover:border-danger/20 transition-all opacity-0 group-hover:opacity-100"
                     title={t("Delete snapshot")}
                   >
                     <Trash2 class="w-3.5 h-3.5" />
@@ -395,7 +395,7 @@
           <button
             onclick={handleCompare}
             disabled={isComparing || !selectedBefore || !selectedAfter || selectedBefore === selectedAfter}
-            class="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white disabled:opacity-50 active:scale-95 transition-all shadow"
+            class="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold bg-accent-strong hover:bg-accent-strong/90 text-white disabled:opacity-50 active:scale-95 transition-all shadow"
           >
             {#if isComparing}
               <RefreshCw class="w-3.5 h-3.5 animate-spin" />
@@ -501,7 +501,7 @@
           <button
             onclick={handleCreateSnapshot}
             disabled={isCreating || !newSnapshotName.trim()}
-            class="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white disabled:opacity-50 active:scale-95 transition-all shadow"
+            class="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold bg-accent-strong hover:bg-accent-strong/90 text-white disabled:opacity-50 active:scale-95 transition-all shadow"
           >
             {#if isCreating}
               <RefreshCw class="w-3.5 h-3.5 animate-spin" />
@@ -548,7 +548,7 @@
           <button
             onclick={handleStartTracking}
             disabled={isStartingTrack || !trackSessionName.trim()}
-            class="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold bg-brand-purple hover:bg-purple-600 text-white disabled:opacity-50 active:scale-95 transition-all shadow"
+            class="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold bg-brand-purple-strong hover:bg-brand-purple-strong/90 text-white disabled:opacity-50 active:scale-95 transition-all shadow"
           >
             {#if isStartingTrack}
               <RefreshCw class="w-3.5 h-3.5 animate-spin" />

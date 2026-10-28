@@ -370,7 +370,7 @@
         <button
           onclick={cleanAllCaches}
           disabled={isLoading || tools.filter(x => x.detected && x.cache_size && x.cache_size > 0).length === 0}
-          class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white disabled:opacity-50 active:scale-95 transition-all shadow"
+          class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent-strong hover:bg-accent-strong/90 text-white disabled:opacity-50 active:scale-95 transition-all shadow"
         >
           <Trash2 class="w-3.5 h-3.5" />
           {t("Purge All Caches")}
@@ -580,7 +580,7 @@
                          onload={(e) => (e.currentTarget as HTMLImageElement).style.opacity = '1'}
                          class="w-6 h-6 object-contain opacity-0 transition-opacity duration-150 relative z-10" 
                          alt="" />
-                    <div class="absolute inset-0 flex items-center justify-center font-mono text-[10px] bg-red-950/20 text-red-400 border border-red-800/20 w-full h-full">
+                    <div class="absolute inset-0 flex items-center justify-center font-mono text-[10px] bg-danger/10 text-danger border border-danger/25 w-full h-full">
                       {pkg.name.charAt(0).toUpperCase()}
                     </div>
                   </div>
@@ -590,16 +590,16 @@
                        <span class="font-bold text-xs font-mono text-text-primary truncate" title={pkg.name}>{pkg.name}</span>
                        <span class="text-[10px] font-mono text-text-muted bg-app-bg px-1.5 py-0.5 rounded border border-border-default">v{pkg.version}</span>
                        <span class="text-[9px] uppercase px-1.5 py-0.5 rounded font-mono font-semibold
-                         {pkg.manager === 'npm' ? 'bg-red-500/10 text-red-400 border border-red-500/20' : ''}
-                         {pkg.manager === 'yarn' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : ''}
-                         {pkg.manager === 'pnpm' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : ''}
+                         {pkg.manager === 'npm' ? 'bg-danger/10 text-danger border border-danger/20' : ''}
+                         {pkg.manager === 'yarn' ? 'bg-info/10 text-info border border-info/20' : ''}
+                         {pkg.manager === 'pnpm' ? 'bg-warning/10 text-warning border border-warning/20' : ''}
                          {pkg.manager === 'bun' ? 'bg-pink-500/10 text-pink-400 border border-pink-500/20' : ''}
-                         {pkg.manager === 'pip' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : ''}
+                         {pkg.manager === 'pip' ? 'bg-success/10 text-success border border-success/20' : ''}
                          {pkg.manager === 'cargo' ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20' : ''}
                          {pkg.manager === 'go' ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20' : ''}
                          {pkg.manager === 'dotnet' ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' : ''}
                          {pkg.manager === 'composer' ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20' : ''}
-                         {pkg.manager === 'deno' ? 'bg-slate-500/10 text-slate-300 border border-slate-500/20' : ''}"
+                         {pkg.manager === 'deno' ? 'bg-surface-bg text-text-secondary border border-border-default' : ''}"
                        >
                          {pkg.manager}
                        </span>
@@ -615,7 +615,7 @@
                   <span class="text-xs font-bold font-mono text-text-secondary whitespace-nowrap">{formatSize(pkg.size_bytes)}</span>
                   <button
                     onclick={() => uninstallPackage(pkg)}
-                    class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold bg-danger/10 hover:bg-danger text-danger hover:text-white transition-all duration-150 active:scale-95 border border-danger/20"
+                    class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold bg-danger/10 hover:bg-danger-strong text-danger hover:text-white transition-all duration-150 active:scale-95 border border-danger/20"
                   >
                     <Trash2 class="w-3 h-3" />
                     {t("Uninstall")}
@@ -691,7 +691,7 @@
                         <span class="font-bold text-xs font-mono text-text-primary truncate" title={tc.version}>{tc.version}</span>
                         <span class="text-[9px] uppercase px-1.5 py-0.5 rounded font-mono font-semibold
                           {tc.manager === 'rustup' ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20' : ''}
-                          {tc.manager === 'nvm' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : ''}
+                          {tc.manager === 'nvm' ? 'bg-info/10 text-info border border-info/20' : ''}
                           {tc.manager === 'fnm' ? 'bg-pink-500/10 text-pink-400 border border-pink-500/20' : ''}"
                         >
                           {tc.manager}
@@ -712,7 +712,7 @@
                     <button
                       onclick={() => uninstallToolchain(tc)}
                       disabled={uninstallingToolchains[tc.path]}
-                      class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold bg-danger/10 hover:bg-danger text-danger hover:text-white transition-all duration-150 active:scale-95 border border-danger/20 disabled:opacity-50 cursor-pointer"
+                      class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold bg-danger/10 hover:bg-danger-strong text-danger hover:text-white transition-all duration-150 active:scale-95 border border-danger/20 disabled:opacity-50 cursor-pointer"
                     >
                       {#if uninstallingToolchains[tc.path]}
                         <RefreshCw class="w-3 h-3 animate-spin" />
@@ -922,10 +922,10 @@
                         <span class="text-[9px] font-mono text-text-muted">{formatSize(item.size)}</span>
                       {/if}
                       <span class="text-[9px] font-mono px-1 rounded border font-semibold
-                        {item.confidence === 'VeryHigh' ? 'bg-emerald-950/30 text-emerald-400 border-emerald-800/40' : ''}
-                        {item.confidence === 'High' ? 'bg-blue-950/30 text-blue-400 border-blue-800/40' : ''}
-                        {item.confidence === 'Medium' ? 'bg-amber-950/30 text-amber-400 border-amber-800/40' : ''}
-                        {item.confidence === 'Low' ? 'bg-rose-950/30 text-rose-400 border-rose-800/40' : ''}"
+                        {item.confidence === 'VeryHigh' ? 'bg-success/10 text-success border-success/25' : ''}
+                        {item.confidence === 'High' ? 'bg-info/10 text-info border-info/25' : ''}
+                        {item.confidence === 'Medium' ? 'bg-warning/10 text-warning border-warning/25' : ''}
+                        {item.confidence === 'Low' ? 'bg-danger/10 text-danger border-danger/25' : ''}"
                       >
                         {item.confidence} ({item.score}%)
                       </span>
@@ -954,7 +954,7 @@
             <button
               onclick={performPurge}
               disabled={isPurging || remnants.filter(r => selectedRemnants[r.path]).length === 0}
-              class="flex items-center gap-2 px-5 py-2 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white disabled:opacity-50 active:scale-95 transition-all shadow"
+              class="flex items-center gap-2 px-5 py-2 rounded-lg text-xs font-semibold bg-accent-strong hover:bg-accent-strong/90 text-white disabled:opacity-50 active:scale-95 transition-all shadow"
             >
               {#if isPurging}
                 <RefreshCw class="w-3.5 h-3.5 animate-spin" />
@@ -970,7 +970,7 @@
         <footer class="p-6 border-t border-border-default flex justify-end bg-sidebar-bg">
           <button
             onclick={closeRemnantsModal}
-            class="px-5 py-2 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white active:scale-95 transition-all shadow"
+            class="px-5 py-2 rounded-lg text-xs font-semibold bg-accent-strong hover:bg-accent-strong/90 text-white active:scale-95 transition-all shadow"
           >
             {t("Close")}
           </button>

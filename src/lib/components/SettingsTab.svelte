@@ -1,12 +1,12 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Shield, HardDrive, Info, Heart, RefreshCw, Bug, ExternalLink, CheckCircle, Trash2, Lightbulb, Database, Sun, Moon, Monitor, Languages } from "@lucide/svelte";
+  import { Shield, HardDrive, Info, Heart, RefreshCw, Bug, ExternalLink, CheckCircle, Trash2, Lightbulb, Database, Sun, Moon, Monitor } from "@lucide/svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { invoke } from "@tauri-apps/api/core";
   import { getVersion } from "@tauri-apps/api/app";
   import { toast } from "../toast.svelte";
   import { theme } from "../theme.svelte";
-  import { i18n, t } from "../i18n.svelte";
+  import { t } from "../i18n.svelte";
 
   let scanLevel = $state("safe");
   let autoBackup = $state(true);
@@ -338,27 +338,6 @@
           class="w-4 h-4 rounded accent-accent bg-app-bg border-border-default focus:ring-accent/30 cursor-pointer shrink-0"
         />
       </label>
-      <div class="flex items-center justify-between gap-4 p-3 rounded-lg bg-app-bg border border-border-default">
-        <span class="flex flex-col">
-          <span class="text-xs font-bold text-text-primary flex items-center gap-2">
-            <Languages class="w-3.5 h-3.5 text-accent" />
-            {t("Language")}
-          </span>
-          <span class="text-[10px] text-text-muted mt-0.5">
-            {t("UI language. More languages can be added through dictionaries.")}
-          </span>
-        </span>
-        <select
-          value={i18n.mode}
-          onchange={(event) => i18n.setMode(event.currentTarget.value as "auto" | "en" | "vi")}
-          aria-label={t("Interface language")}
-          class="px-3 py-2 rounded-lg bg-surface-bg border border-border-default text-xs font-semibold text-text-primary outline-none cursor-pointer"
-        >
-          <option value="auto">{t("Auto (system)")} — {i18n.resolved === "vi" ? "Tiếng Việt" : "English"}</option>
-          <option value="en">English</option>
-          <option value="vi">Tiếng Việt</option>
-        </select>
-      </div>
     </section>
 
     <!-- Scanner settings -->
@@ -454,7 +433,7 @@
           </div>
           <button
             onclick={restartAsAdmin}
-            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent hover:bg-accent-hover text-white text-[11px] font-semibold transition-colors"
+            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent-strong hover:bg-accent-strong/90 text-white text-[11px] font-semibold transition-colors"
           >
             <RefreshCw class="w-3.5 h-3.5" />
             {t("Restart as Administrator")}
@@ -484,7 +463,7 @@
         <button
           onclick={clearDerivedCache}
           disabled={isClearingCache || !cacheSummary || cacheSummary.entries === 0}
-          class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-danger/10 hover:bg-danger text-danger hover:text-white border border-danger/20 text-[11px] font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-danger/10 hover:bg-danger-strong text-danger hover:text-white border border-danger/20 text-[11px] font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <Trash2 class="w-3.5 h-3.5" />
           {isClearingCache ? t("Clearing…") : t("Clear cache")}
@@ -529,13 +508,13 @@
               <div class="flex items-center gap-2">
                 <button
                   onclick={() => restoreQuarantine(item.id)}
-                  class="px-2.5 py-1.5 rounded-lg bg-accent/10 hover:bg-accent hover:text-white text-accent border border-accent/20 transition-all font-semibold active:scale-95 cursor-pointer text-[11px]"
+                  class="px-2.5 py-1.5 rounded-lg bg-accent/10 hover:bg-accent-strong hover:text-white text-accent border border-accent/20 transition-all font-semibold active:scale-95 cursor-pointer text-[11px]"
                 >
                   {t("Restore")}
                 </button>
                 <button
                   onclick={() => deleteQuarantine(item.id)}
-                  class="p-1.5 rounded-lg bg-danger/10 hover:bg-danger hover:text-white text-danger border border-danger/20 transition-all active:scale-95 cursor-pointer"
+                  class="p-1.5 rounded-lg bg-danger/10 hover:bg-danger-strong hover:text-white text-danger border border-danger/20 transition-all active:scale-95 cursor-pointer"
                   title={t("Delete permanently")}
                 >
                   <Trash2 class="w-3.5 h-3.5" />
@@ -612,7 +591,7 @@
             <button
               onclick={checkUpdates}
               disabled={isCheckingUpdates}
-              class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white disabled:opacity-50 active:scale-95 transition-all shadow cursor-pointer"
+              class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-accent-strong hover:bg-accent-strong/90 text-white disabled:opacity-50 active:scale-95 transition-all shadow cursor-pointer"
             >
               <RefreshCw class="w-3.5 h-3.5 {isCheckingUpdates ? 'animate-spin' : ''}" />
               {isCheckingUpdates ? t("Reading...") : t("Version")}
@@ -651,7 +630,7 @@
     <div class="flex justify-end pt-4">
       <button
         onclick={handleSave}
-        class="px-5 py-2.5 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white active:scale-95 transition-all shadow cursor-pointer"
+        class="px-5 py-2.5 rounded-lg text-xs font-semibold bg-accent-strong hover:bg-accent-strong/90 text-white active:scale-95 transition-all shadow cursor-pointer"
       >
         {t("Save Changes")}
       </button>

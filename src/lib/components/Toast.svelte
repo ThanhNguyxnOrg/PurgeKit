@@ -8,21 +8,21 @@
   {#each toast.toasts as t (t.id)}
     <div
       class="flex items-start gap-3 p-4 rounded-xl border backdrop-blur-md shadow-lg transition-all duration-300 pointer-events-auto
-        {t.type === 'success' ? 'bg-emerald-950/80 border-emerald-800/40 text-emerald-300' : ''}
-        {t.type === 'error' ? 'bg-rose-950/80 border-rose-800/40 text-rose-300' : ''}
-        {t.type === 'warning' ? 'bg-amber-950/80 border-amber-800/40 text-amber-300' : ''}
-        {t.type === 'info' ? 'bg-blue-950/80 border-blue-800/40 text-blue-300' : ''}
+        {t.type === 'success' ? 'bg-surface-bg/95 border-success/40 text-success' : ''}
+        {t.type === 'error' ? 'bg-surface-bg/95 border-danger/40 text-danger' : ''}
+        {t.type === 'warning' ? 'bg-surface-bg/95 border-warning/40 text-warning' : ''}
+        {t.type === 'info' ? 'bg-surface-bg/95 border-info/40 text-info' : ''}
        animate-fade-in-up"
     >
       <div class="mt-0.5 flex-shrink-0">
         {#if t.type === 'success'}
-          <CheckCircle class="w-5 h-5 text-emerald-400" />
+          <CheckCircle class="w-5 h-5 text-success" />
         {:else if t.type === 'error'}
-          <AlertOctagon class="w-5 h-5 text-rose-400" />
+          <AlertOctagon class="w-5 h-5 text-danger" />
         {:else if t.type === 'warning'}
-          <AlertTriangle class="w-5 h-5 text-amber-400" />
+          <AlertTriangle class="w-5 h-5 text-warning" />
         {:else}
-          <Info class="w-5 h-5 text-blue-400" />
+          <Info class="w-5 h-5 text-info" />
         {/if}
       </div>
       <div class="flex-1 min-w-0">

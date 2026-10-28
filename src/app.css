@@ -5,16 +5,17 @@
   --color-sidebar-bg: #101318;
   --color-surface-bg: #15191F;
   --color-elevated-bg: #1C222A;
+  --color-icon-frame: #202832;
   --color-overlay-bg: rgba(8, 10, 13, 0.72);
 
-  --color-border-default: #2A313B;
+  --color-border-default: #303844;
   --color-border-subtle: #1B2028;
   --color-border-strong: #46505F;
 
-  --color-text-primary: #F4F5F7;
-  --color-text-secondary: #B2BAC6;
-  --color-text-muted: #8C96A5;
-  --color-text-disabled: #606A78;
+  --color-text-primary: #F7F8FA;
+  --color-text-secondary: #C6CDD7;
+  --color-text-muted: #9DA7B5;
+  --color-text-disabled: #747E8C;
 
   --color-accent: #F26B3A;
   --color-accent-hover: #DB582B;
@@ -23,6 +24,12 @@
   --color-success: #5FD39A;
   --color-warning: #F2B84B;
   --color-danger: #F26868;
+  --color-danger-strong: #B23F3F;
+  --color-accent-strong: #C24A1A;
+  --color-success-strong: #2F8F66;
+  --color-warning-strong: #9A640C;
+  --color-info-strong: #2C7E8C;
+  --color-brand-purple-strong: #7A55C7;
   --color-info: #5BC8D8;
   --color-brand-purple: #B28CFF;
 
@@ -40,16 +47,17 @@ html[data-theme="light"] {
   --color-sidebar-bg: #EDE9E2;
   --color-surface-bg: #FFFFFF;
   --color-elevated-bg: #F6F3EE;
+  --color-icon-frame: #303A46;
   --color-overlay-bg: rgba(255, 255, 255, 0.78);
 
-  --color-border-default: #D8D2C8;
+  --color-border-default: #CFC8BD;
   --color-border-subtle: #E8E3DA;
   --color-border-strong: #B4AC9E;
 
-  --color-text-primary: #171A1F;
-  --color-text-secondary: #4B525C;
-  --color-text-muted: #707781;
-  --color-text-disabled: #9AA0A8;
+  --color-text-primary: #14171C;
+  --color-text-secondary: #3C434D;
+  --color-text-muted: #5B636F;
+  --color-text-disabled: #878F9A;
 
   --color-accent: #C94E1B;
   --color-accent-hover: #B34214;
@@ -58,6 +66,12 @@ html[data-theme="light"] {
   --color-success: #17835A;
   --color-warning: #96620A;
   --color-danger: #C03939;
+  --color-danger-strong: #A82F2F;
+  --color-accent-strong: #B34214;
+  --color-success-strong: #11704C;
+  --color-warning-strong: #7D5306;
+  --color-info-strong: #176B75;
+  --color-brand-purple-strong: #5B3AA8;
   --color-info: #1B7F8C;
   --color-brand-purple: #6F4BC7;
 
@@ -77,7 +91,15 @@ html[data-theme="light"] .instrument-panel {
 
 html[data-theme="light"] ::selection {
   background-color: rgba(201, 78, 27, 0.22);
-  color: #171A1F;
+  color: #14171C;
+}
+
+.app-icon {
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.55));
+}
+
+.app-icon-frame {
+  background-color: var(--color-icon-frame);
 }
 
 html[data-colorblind="true"] {

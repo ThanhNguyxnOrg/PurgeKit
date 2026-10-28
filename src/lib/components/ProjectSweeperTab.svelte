@@ -51,13 +51,13 @@
 
   // Folder types to sweep
   let folderTypes = $state([
-    { id: "node_modules", label: "NodeJS Dependencies (node_modules)", checked: true, badge: "NodeJS", color: "text-red-400 bg-red-950/20 border-red-800/20" },
+    { id: "node_modules", label: "NodeJS Dependencies (node_modules)", checked: true, badge: "NodeJS", color: "text-danger bg-danger/10 border-danger/20" },
     { id: "target", label: "Rust Build Artifacts (target)", checked: true, badge: "Rust", color: "text-orange-400 bg-orange-950/20 border-orange-800/20" },
-    { id: "venv", label: "Python Virtual Env (venv)", checked: true, badge: "Python", color: "text-blue-400 bg-blue-950/20 border-blue-800/20" },
-    { id: ".venv", label: "Python Virtual Env (.venv)", checked: true, badge: "Python", color: "text-blue-400 bg-blue-950/20 border-blue-800/20" },
+    { id: "venv", label: "Python Virtual Env (venv)", checked: true, badge: "Python", color: "text-info bg-info/10 border-info/20" },
+    { id: ".venv", label: "Python Virtual Env (.venv)", checked: true, badge: "Python", color: "text-info bg-info/10 border-info/20" },
     { id: ".vs", label: "VS Cache & Output (.vs)", checked: true, badge: "C++", color: "text-purple-400 bg-purple-950/20 border-purple-800/20" },
-    { id: "bin", label: "C# / .NET Binaries (bin)", checked: false, badge: "C#", color: "text-emerald-400 bg-emerald-950/20 border-emerald-800/20" },
-    { id: "obj", label: "C# / .NET Objects (obj)", checked: false, badge: "C#", color: "text-emerald-400 bg-emerald-950/20 border-emerald-800/20" },
+    { id: "bin", label: "C# / .NET Binaries (bin)", checked: false, badge: "C#", color: "text-success bg-success/10 border-success/20" },
+    { id: "obj", label: "C# / .NET Objects (obj)", checked: false, badge: "C#", color: "text-success bg-success/10 border-success/20" },
     { id: "build", label: "Java/Gradle Build Output (build)", checked: false, badge: "Gradle", color: "text-cyan-400 bg-cyan-950/20 border-cyan-800/20" },
     { id: ".gradle", label: "Gradle Cache (.gradle)", checked: false, badge: "Gradle", color: "text-cyan-400 bg-cyan-950/20 border-cyan-800/20" },
     { id: ".svelte-kit", label: "SvelteKit Cache (.svelte-kit)", checked: false, badge: "Svelte", color: "text-pink-400 bg-pink-950/20 border-pink-800/20" },
@@ -340,7 +340,7 @@
         <button
           onclick={startScan}
           disabled={roots.length === 0}
-          class="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white disabled:opacity-50 active:scale-95 transition-all shadow cursor-pointer"
+          class="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-accent-strong hover:bg-accent-strong/90 text-white disabled:opacity-50 active:scale-95 transition-all shadow cursor-pointer"
         >
           <Play class="w-3.5 h-3.5 fill-current" />
           {t("Start Sweep Scan")}
@@ -377,7 +377,7 @@
                 <span class="truncate pr-3 text-text-secondary select-all" title={root}>{root}</span>
                 <button
                   onclick={() => removeRootPath(root)}
-                  class="p-1 rounded hover:bg-danger/20 text-text-muted hover:text-danger transition-colors cursor-pointer"
+                  class="p-1 rounded hover:bg-danger-strong/20 text-text-muted hover:text-danger transition-colors cursor-pointer"
                   title={t("Remove Path")}
                 >
                   <X class="w-3.5 h-3.5" />
@@ -620,7 +620,7 @@
         <button
           onclick={purgeSelected}
           disabled={deleting}
-          class="flex items-center gap-2 px-5 py-2 rounded-lg text-xs font-bold bg-danger hover:bg-danger-hover text-white active:scale-95 transition-all shadow-lg cursor-pointer disabled:opacity-50"
+          class="flex items-center gap-2 px-5 py-2 rounded-lg text-xs font-bold bg-danger-strong hover:bg-danger-strong/90 text-white active:scale-95 transition-all shadow-lg cursor-pointer disabled:opacity-50"
         >
           {#if deleting}
             <RefreshCw class="w-3.5 h-3.5 animate-spin" />
@@ -691,7 +691,7 @@
                 {status}
               </span>
             {:else if status === "ScheduledForReboot"}
-              <span class="px-2 py-0.5 rounded bg-blue-950/20 border border-blue-800/30 text-blue-400 text-[10px] font-semibold font-mono">
+              <span class="px-2 py-0.5 rounded bg-info/10 border border-info/25 text-info text-[10px] font-semibold font-mono">
                 {t("Boot-Pending")}
               </span>
             {:else}
@@ -707,7 +707,7 @@
       <footer class="p-6 border-t border-border-default flex justify-end bg-sidebar-bg">
         <button
           onclick={() => showReportModal = false}
-          class="px-5 py-2.5 rounded-lg text-xs font-semibold bg-accent hover:bg-accent-hover text-white active:scale-95 transition-all shadow cursor-pointer"
+          class="px-5 py-2.5 rounded-lg text-xs font-semibold bg-accent-strong hover:bg-accent-strong/90 text-white active:scale-95 transition-all shadow cursor-pointer"
         >
           {t("Close Report")}
         </button>
