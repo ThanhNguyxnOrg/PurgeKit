@@ -9,7 +9,8 @@ use std::time::Instant;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use mft::attribute::MftAttributeType;
+use mft::attribute::header::ResidentialHeader;
+use mft::attribute::{MftAttributeContent, MftAttributeType};
 use mft::{MftEntry, MftParser};
 use ntfs::{Ntfs, NtfsReadSeek};
 
@@ -169,19 +170,58 @@ fn record_from_entry(entry: &MftEntry) -> Option<MftRecord> {
         return None;
     }
     let is_dir = entry.is_dir();
+    let (data_logical, data_allocated) = if is_dir {
+        (0, 0)
+    } else {
+        entry
+            .iter_attributes_matching(Some(vec![MftAttributeType::DATA]))
+            .filter_map(Result::ok)
+            // File size refers to the unnamed $DATA stream; named streams such
+            // as $BadClus::$Bad would otherwise inflate sparse system files to
+            // the whole volume size.
+            .filter(|attribute| attribute.header.name.is_empty())
+            .fold((0u64, 0u64), |(logical, allocated), attribute| {
+                match &attribute.header.residential_header {
+                    ResidentialHeader::NonResident(non_resident) => (
+                        logical.saturating_add(non_resident.file_size),
+                        allocated.saturating_add(non_resident.allocated_length),
+                    ),
+                    ResidentialHeader::Resident(_) => {
+                        if let MftAttributeContent::AttrX80(data) = &attribute.data {
+                            let length = data.data().len() as u64;
+                            (
+                                logical.saturating_add(length),
+                                allocated.saturating_add(length),
+                            )
+                        } else {
+                            (logical, allocated)
+                        }
+                    }
+                }
+            })
+    };
 
     Some(MftRecord {
         name,
         parent: name_attr.parent.entry,
         is_dir,
-        size_bytes: if is_dir { 0 } else { name_attr.logical_size },
+        // FILE_NAME sizes can be stale or zero for hardlinked/system files;
+        // prefer the $DATA attributes that actually describe the file.
+        size_bytes: if is_dir {
+            0
+        } else if data_logical > 0 {
+            data_logical
+        } else {
+            name_attr.logical_size
+        },
         allocated_bytes: if is_dir {
             0
+        } else if data_allocated > 0 {
+            data_allocated
         } else if name_attr.physical_size > 0 {
             // physical_size already accounts for compression and sparse runs.
             name_attr.physical_size
         } else {
-            // Resident data lives inside the MFT record itself.
             name_attr.logical_size
         },
         modified_epoch_ms,
