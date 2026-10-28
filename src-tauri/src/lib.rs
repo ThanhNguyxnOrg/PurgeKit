@@ -43,6 +43,7 @@ pub fn run() {
             commands::dump_mft_scan,
             commands::list_mft_dumps,
             commands::load_mft_dump,
+            commands::load_wiztree_mft,
             commands::get_mft_dump_dir,
             commands::scan_disk_space,
             commands::scan_disk_space_multi,

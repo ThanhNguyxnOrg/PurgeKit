@@ -60,7 +60,7 @@
     elapsed_ms: number;
     errors: number;
     truncated: boolean;
-    engine: "mft" | "traversal" | "csv" | "multi" | "mft-dump";
+    engine: "mft" | "traversal" | "csv" | "multi" | "mft-dump" | "mft-file";
     duplicate_mode: "off" | "name_size" | "name_size_date";
     protected_roots?: string[];
   }
@@ -136,6 +136,9 @@
   let mftDumps = $state<MftDumpInfo[]>([]);
   let isLoadingMftDumps = $state(false);
   let loadingDumpPath = $state<string | null>(null);
+  let wiztreeMftPath = $state("");
+  let wiztreeMftDrive = $state("");
+  let isLoadingWiztreeMft = $state(false);
   let progress = $state<DiskProgress | null>(null);
   let errorMessage = $state("");
   let canvasEl = $state<HTMLCanvasElement | null>(null);
@@ -180,7 +183,7 @@
   let primaryScanTarget = $derived(scanTargets[0] ?? "");
 
   let isSnapshotView = $derived(
-    result?.engine === "csv" || result?.engine === "mft-dump"
+    result?.engine === "csv" || result?.engine === "mft-dump" || result?.engine === "mft-file"
   );
 
   let selectedDuplicateCount = $derived(
@@ -866,6 +869,65 @@
       isScanning = false;
       isCancelling = false;
       loadingDumpPath = null;
+    }
+  }
+
+  async function loadWiztreeMftFile() {
+    if (isScanning) return;
+    const mftPath = wiztreeMftPath.trim();
+    if (!mftPath) {
+      toast.show(t("Enter the path to a WizTree .MFT file."), "warning");
+      return;
+    }
+    const drive = wiztreeMftDrive.trim();
+    if (drive && (drive.length !== 1 || !/^[a-zA-Z]$/.test(drive))) {
+      toast.show(t("The drive must be a single letter such as C."), "warning");
+      return;
+    }
+
+    const confirmed = confirm(
+      t("Load {name}?", { name: mftPath }) +
+      "\n\n" +
+      t("This is a read-only MFT dump. Quarantine and cleanup are disabled until you rescan the drive.")
+    );
+    if (!confirmed) return;
+
+    isScanning = true;
+    isCancelling = false;
+    isLoadingWiztreeMft = true;
+    errorMessage = "";
+    resetScanView();
+
+    try {
+      const scanResult = await invoke<DiskScanResult>("load_wiztree_mft", {
+        path: mftPath,
+        drive: drive || null,
+        maxDepth: 8,
+        maxChildren: 100,
+        duplicateMode,
+      });
+      lastScanHadDuplicates = scanResult.duplicate_mode !== "off";
+      result = scanResult;
+      focusStack = [scanResult.root];
+      focusNode = scanResult.root;
+      activeView = "treemap";
+      pathInput = scanResult.root_path;
+      showMftDumps = false;
+      saveDiskPreferences();
+      toast.show(
+        t("Loaded {count} files from the MFT dump. This view is read-only.", {
+          count: scanResult.total_files.toLocaleString(),
+        }),
+        "success"
+      );
+    } catch (e: any) {
+      const message = e.toString();
+      errorMessage = message;
+      toast.show(t("Could not load .MFT file: {message}", { message }), "error");
+    } finally {
+      isScanning = false;
+      isCancelling = false;
+      isLoadingWiztreeMft = false;
     }
   }
 
@@ -1810,6 +1872,36 @@ ${duplicateRows ? `<h2>Duplicate groups (top 50)</h2><table><thead><tr><th>Name<
             {/each}
           </div>
         {/if}
+        <div class="border-t border-border-default pt-2 space-y-2">
+          <span class="text-[11px] font-mono uppercase tracking-wider text-text-muted">{t("WizTree .MFT file")}</span>
+          <p class="text-[11px] text-text-muted">
+            {t("Load a raw .MFT dump; the drive letter is read from its footer or filename.")}
+          </p>
+          <div class="flex flex-wrap items-center gap-2">
+            <input
+              bind:value={wiztreeMftPath}
+              placeholder="C:\\Dumps\\C.MFT"
+              aria-label={t("MFT file path")}
+              class="flex-1 min-w-[220px] px-2.5 py-1.5 rounded-md bg-app-bg border border-border-default focus:border-accent/50 focus:ring-1 focus:ring-accent/30 outline-none text-[11px] font-mono text-text-primary placeholder:text-text-muted"
+            />
+            <input
+              bind:value={wiztreeMftDrive}
+              maxlength="1"
+              placeholder="C"
+              aria-label={t("Drive letter")}
+              title={t("Optional drive letter; WizTree footers already contain it")}
+              class="w-12 px-2 py-1.5 rounded-md bg-app-bg border border-border-default focus:border-accent/50 outline-none text-[11px] font-mono text-center text-text-primary placeholder:text-text-muted uppercase"
+            />
+            <button
+              type="button"
+              onclick={loadWiztreeMftFile}
+              disabled={isScanning || isLoadingWiztreeMft || !wiztreeMftPath.trim()}
+              class="px-2.5 py-1.5 rounded-md bg-accent/10 hover:bg-accent-strong hover:text-white border border-accent/20 text-accent text-[10px] font-semibold transition-colors disabled:opacity-40"
+            >
+              {isLoadingWiztreeMft ? t("Loading…") : t("Load .MFT")}
+            </button>
+          </div>
+        </div>
       </div>
     {/if}
 
@@ -1863,7 +1955,7 @@ ${duplicateRows ? `<h2>Duplicate groups (top 50)</h2><table><thead><tr><th>Name<
         </div>
         <div class="px-4 py-3.5">
           <span class="readout-label">
-            {result.engine === "csv" ? t("Import time") : result.engine === "mft-dump" ? t("Load time") : t("Scan time")}
+            {result.engine === "csv" ? t("Import time") : result.engine === "mft-dump" || result.engine === "mft-file" ? t("Load time") : t("Scan time")}
           </span>
           <p class="readout text-2xl font-semibold text-text-primary mt-1">
             {(result.elapsed_ms / 1000).toFixed(2)}<span class="text-base text-text-muted">s</span>
@@ -1874,8 +1966,13 @@ ${duplicateRows ? `<h2>Duplicate groups (top 50)</h2><table><thead><tr><th>Name<
         </div>
         <div class="px-4 py-3.5">
           <span class="readout-label">{t("Volume free")}</span>
-          <p class="readout text-2xl font-semibold text-data-green mt-1">{formatBytes(result.volume_free_bytes)}</p>
-          <p class="text-[11px] text-text-muted mt-1">{t("of {size}", { size: formatBytes(result.volume_total_bytes) })}</p>
+          {#if result.volume_total_bytes > 0}
+            <p class="readout text-2xl font-semibold text-data-green mt-1">{formatBytes(result.volume_free_bytes)}</p>
+            <p class="text-[11px] text-text-muted mt-1">{t("of {size}", { size: formatBytes(result.volume_total_bytes) })}</p>
+          {:else}
+            <p class="readout text-2xl font-semibold text-text-muted mt-1">—</p>
+            <p class="text-[11px] text-text-muted mt-1">{t("Unknown for this dump")}</p>
+          {/if}
         </div>
       </div>
 
@@ -1883,7 +1980,7 @@ ${duplicateRows ? `<h2>Duplicate groups (top 50)</h2><table><thead><tr><th>Name<
         <span class="px-2 py-1 rounded border font-mono
           {result.engine === 'mft'
             ? 'bg-data-cyan/10 text-data-cyan border-data-cyan/30'
-            : result.engine === 'csv' || result.engine === 'mft-dump'
+            : result.engine === 'csv' || result.engine === 'mft-dump' || result.engine === 'mft-file'
               ? 'bg-warning/10 text-warning border-warning/30'
               : result.engine === 'multi'
                 ? 'bg-accent/10 text-accent border-accent/30'
@@ -1894,9 +1991,11 @@ ${duplicateRows ? `<h2>Duplicate groups (top 50)</h2><table><thead><tr><th>Name<
               ? t("CSV IMPORT")
               : result.engine === "mft-dump"
                 ? t("MFT DUMP")
-                : result.engine === "multi"
-                  ? t("MULTI-ROOT")
-                  : t("TRAVERSAL FALLBACK")}
+                : result.engine === "mft-file"
+                  ? t("MFT FILE")
+                  : result.engine === "multi"
+                    ? t("MULTI-ROOT")
+                    : t("TRAVERSAL FALLBACK")}
         </span>
         {#if isSnapshotView}
           <span class="text-text-muted">

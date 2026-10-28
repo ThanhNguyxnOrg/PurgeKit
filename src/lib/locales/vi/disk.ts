@@ -261,6 +261,26 @@ const disk: Record<string, string> = {
   "Export types": "Xuất loại tệp",
   "Export file types to a CSV file": "Xuất các loại tệp ra tệp CSV",
   "Exported {count} file types.": "Đã xuất {count} loại tệp.",
+  "WizTree .MFT file": "Tệp .MFT của WizTree",
+  "Load a raw .MFT dump; the drive letter is read from its footer or filename.":
+    "Tải bản kết xuất .MFT thô; ký tự ổ đĩa được đọc từ phần cuối tệp hoặc tên tệp.",
+  "MFT file path": "Đường dẫn tệp MFT",
+  "Drive letter": "Ký tự ổ đĩa",
+  "Optional drive letter; WizTree footers already contain it":
+    "Ký tự ổ đĩa tuỳ chọn; phần cuối tệp WizTree đã chứa thông tin này",
+  "Load .MFT": "Tải .MFT",
+  "Enter the path to a WizTree .MFT file.":
+    "Nhập đường dẫn tới tệp .MFT của WizTree.",
+  "The drive must be a single letter such as C.":
+    "Ký tự ổ đĩa phải là một chữ cái, ví dụ C.",
+  "This is a read-only MFT dump. Quarantine and cleanup are disabled until you rescan the drive.":
+    "Đây là bản kết xuất MFT chỉ đọc. Cách ly và dọn dẹp bị tắt cho đến khi bạn quét lại ổ đĩa.",
+  "Loaded {count} files from the MFT dump. This view is read-only.":
+    "Đã tải {count} tệp từ bản kết xuất MFT. Chế độ xem này chỉ đọc.",
+  "Could not load .MFT file: {message}":
+    "Không thể tải tệp .MFT: {message}",
+  "MFT FILE": "TỆP MFT",
+  "Unknown for this dump": "Không có trong bản kết xuất này",
   "Exporting…": "Đang xuất…",
   " and {count} folders": " và {count} thư mục",
   "Exported {count} of {total} files (100k cap){folders}.":

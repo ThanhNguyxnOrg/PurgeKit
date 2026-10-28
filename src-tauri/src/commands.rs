@@ -794,6 +794,74 @@ pub async fn load_mft_dump(
     Ok(result)
 }
 
+fn drive_root_from_dump(drive: Option<String>, path: &str) -> Result<String, String> {
+    let explicit = drive
+        .map(|value| value.trim().trim_end_matches([':', '\\', '/']).to_string())
+        .filter(|value| !value.is_empty());
+    let letter = match explicit {
+        Some(value) => value,
+        None => scanner::mft_scan::wiztree_mft_drive(path)
+            .map(|letter| letter.to_string())
+            .or_else(|| {
+                std::path::Path::new(path)
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .map(|stem| stem.to_string())
+            })
+            .unwrap_or_default(),
+    };
+    let mut chars = letter.chars();
+    let Some(first) = chars.next() else {
+        return Err("Enter the drive letter that this MFT dump belongs to.".to_string());
+    };
+    if chars.next().is_some() || !first.is_ascii_alphabetic() {
+        return Err("The drive must be a single letter such as C.".to_string());
+    }
+    Ok(format!("{}:\\", first.to_ascii_uppercase()))
+}
+
+#[tauri::command]
+pub async fn load_wiztree_mft(
+    app: AppHandle,
+    state: tauri::State<'_, scanner::DiskScanState>,
+    cache: tauri::State<'_, scanner::disk_scan::DiskFileCache>,
+    path: String,
+    drive: Option<String>,
+    max_depth: Option<u32>,
+    max_children: Option<usize>,
+    duplicate_mode: Option<String>,
+) -> Result<scanner::DiskScanResult, String> {
+    let root = drive_root_from_dump(drive, &path)?;
+    state.0.store(false, Ordering::Relaxed);
+    let cancel = state.0.clone();
+    let cache = cache.0.clone();
+
+    let mut result = tauri::async_runtime::spawn_blocking(move || {
+        let (find_duplicates, duplicate_include_date) = match duplicate_mode.as_deref() {
+            Some("name_size_date") => (true, true),
+            Some("name_size") => (true, false),
+            _ => (false, false),
+        };
+        scanner::mft_scan::load_wiztree_mft(
+            &path,
+            &root,
+            max_depth.unwrap_or(8),
+            max_children.unwrap_or(100),
+            find_duplicates,
+            duplicate_include_date,
+            &cancel,
+            |progress| {
+                let _ = app.emit("disk-scan-progress", progress);
+            },
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    store_disk_index(&cache, &mut result);
+    Ok(result)
+}
+
 #[tauri::command]
 pub fn get_derived_cache_summary() -> scanner::derived_cache::DerivedCacheSummary {
     scanner::derived_cache::summary()

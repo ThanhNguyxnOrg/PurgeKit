@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::fs::{self, File};
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf, Prefix};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
@@ -9,14 +10,16 @@ use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use mft::attribute::MftAttributeType;
-use mft::MftEntry;
+use mft::{MftEntry, MftParser};
 use ntfs::{Ntfs, NtfsReadSeek};
 
 use super::disk_scan::{
-    attribute_letters, finalize_scan, DiskScanProgress, DiskScanResult, FlatNode,
+    attribute_letters, finalize_scan, DiskScanProgress, DiskScanResult, DiskVolumeStat, FlatNode,
 };
 
 const MFT_DUMP_VERSION: u32 = 2;
+const WIZTREE_FOOTER_MAGIC: &[u8; 8] = b"VOLDATA2";
+const WIZTREE_FOOTER_SIZE: u64 = 0x69;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct MftDumpFile {
@@ -135,6 +138,57 @@ struct MftRecord {
     attributes: String,
 }
 
+fn record_from_entry(entry: &MftEntry) -> Option<MftRecord> {
+    if !entry.is_allocated() {
+        return None;
+    }
+    let name_attr = entry.find_best_name_attribute()?;
+    let standard_info = entry
+        .iter_attributes_matching(Some(vec![MftAttributeType::StandardInformation]))
+        .filter_map(Result::ok)
+        .find_map(|attribute| attribute.data.into_standard_info());
+    let modified_epoch_ms = standard_info
+        .as_ref()
+        .map(|info| info.modified)
+        .unwrap_or(name_attr.modified)
+        .as_millisecond();
+    let modified_epoch_ms = u64::try_from(modified_epoch_ms).ok();
+    let attributes = attribute_letters(
+        standard_info
+            .as_ref()
+            .map(|info| info.file_flags.bits())
+            .unwrap_or_else(|| name_attr.flags.bits()),
+    );
+    let name = name_attr.name;
+    if name.is_empty() {
+        return None;
+    }
+    // The volume root record names itself "."; keep record 5 so the tree has a
+    // root, but discard dot entries elsewhere.
+    if (name == "." || name == "..") && entry.header.record_number != 5 {
+        return None;
+    }
+    let is_dir = entry.is_dir();
+
+    Some(MftRecord {
+        name,
+        parent: name_attr.parent.entry,
+        is_dir,
+        size_bytes: if is_dir { 0 } else { name_attr.logical_size },
+        allocated_bytes: if is_dir {
+            0
+        } else if name_attr.physical_size > 0 {
+            // physical_size already accounts for compression and sparse runs.
+            name_attr.physical_size
+        } else {
+            // Resident data lives inside the MFT record itself.
+            name_attr.logical_size
+        },
+        modified_epoch_ms,
+        attributes,
+    })
+}
+
 fn parse_scan_target(root: &str) -> Option<(char, Vec<String>)> {
     let path = Path::new(root);
     let mut components = path.components();
@@ -175,6 +229,128 @@ fn find_subtree_root(
         current = child;
     }
     Some(current)
+}
+
+struct MftTree {
+    root_path: String,
+    nodes: Vec<FlatNode>,
+    file_total: u64,
+    dir_total: u64,
+}
+
+fn build_mft_tree(
+    mut records: HashMap<u64, MftRecord>,
+    root: &str,
+    target_components: &[String],
+) -> Result<MftTree, String> {
+    let mut children_by_parent: HashMap<u64, Vec<u64>> = HashMap::new();
+    for (record_number, record) in &records {
+        children_by_parent
+            .entry(record.parent)
+            .or_default()
+            .push(*record_number);
+    }
+    for children in children_by_parent.values_mut() {
+        children.sort_unstable();
+    }
+
+    let root_record_id = find_subtree_root(&records, &children_by_parent, target_components)
+        .ok_or_else(|| "The selected folder was not found in the MFT".to_string())?;
+    let Some(root_record) = records.remove(&root_record_id) else {
+        return Err("MFT root record was not found".to_string());
+    };
+    if !root_record.is_dir {
+        return Err("MFT root record is not a directory".to_string());
+    }
+
+    let root_path = root
+        .trim_end_matches(|character| character == '\\' || character == '/')
+        .to_string()
+        + "\\";
+    let root_name = if root_path.len() <= 3 {
+        root_path.clone()
+    } else {
+        Path::new(&root_path)
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| root_path.clone())
+    };
+
+    let mut nodes = vec![FlatNode {
+        name: root_name,
+        path: root_path.clone(),
+        parent: None,
+        is_dir: true,
+        size_bytes: 0,
+        allocated_bytes: 0,
+        modified_epoch_ms: root_record.modified_epoch_ms,
+        created_epoch_ms: None,
+        accessed_epoch_ms: None,
+        mft_record: Some(root_record_id),
+        attributes: root_record.attributes.clone(),
+        file_count: 0,
+        extension: String::new(),
+    }];
+
+    let mut queue: VecDeque<(u64, usize, String)> = VecDeque::new();
+    queue.push_back((root_record_id, 0, root_path.clone()));
+    let mut visited: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    visited.insert(root_record_id);
+    let mut file_total = 0u64;
+    let mut dir_total = 0u64;
+
+    while let Some((parent_record, parent_index, parent_path)) = queue.pop_front() {
+        let Some(children) = children_by_parent.get(&parent_record) else {
+            continue;
+        };
+
+        for child_record in children {
+            if !visited.insert(*child_record) {
+                continue;
+            }
+            let Some(record) = records.get(child_record) else {
+                continue;
+            };
+            let child_path = Path::new(&parent_path)
+                .join(&record.name)
+                .to_string_lossy()
+                .to_string();
+            let child_index = nodes.len();
+            nodes.push(FlatNode {
+                name: record.name.clone(),
+                path: child_path.clone(),
+                parent: Some(parent_index),
+                is_dir: record.is_dir,
+                size_bytes: record.size_bytes,
+                allocated_bytes: record.allocated_bytes,
+                modified_epoch_ms: record.modified_epoch_ms,
+                created_epoch_ms: None,
+                accessed_epoch_ms: None,
+                mft_record: Some(*child_record),
+                attributes: record.attributes.clone(),
+                file_count: if record.is_dir { 0 } else { 1 },
+                extension: if record.is_dir {
+                    String::new()
+                } else {
+                    extension_for(&child_path)
+                },
+            });
+
+            if record.is_dir {
+                dir_total += 1;
+                queue.push_back((*child_record, child_index, child_path));
+            } else {
+                file_total += 1;
+            }
+        }
+    }
+
+    Ok(MftTree {
+        root_path,
+        nodes,
+        file_total,
+        dir_total,
+    })
 }
 
 fn extension_for(path: &str) -> String {
@@ -329,54 +505,11 @@ where
         // from_buffer consumes the record; allocate the next read buffer only
         // after the parsed entry no longer needs it.
         buffer = vec![0u8; record_size];
-        if !entry.is_allocated() {
-            continue;
-        }
-
-        let Some(name_attr) = entry.find_best_name_attribute() else {
+        let Some(record) = record_from_entry(&entry) else {
             continue;
         };
-        let standard_info = entry
-            .iter_attributes_matching(Some(vec![MftAttributeType::StandardInformation]))
-            .filter_map(Result::ok)
-            .find_map(|attribute| attribute.data.into_standard_info());
-        let modified_epoch_ms = standard_info
-            .as_ref()
-            .map(|info| info.modified)
-            .unwrap_or(name_attr.modified)
-            .as_millisecond();
-        let modified_epoch_ms = u64::try_from(modified_epoch_ms).ok();
-        let attributes = attribute_letters(
-            standard_info
-                .as_ref()
-                .map(|info| info.file_flags.bits())
-                .unwrap_or_else(|| name_attr.flags.bits()),
-        );
-        let name = name_attr.name;
-        if name.is_empty() || name == "." || name == ".." {
-            continue;
-        }
 
-        let is_dir = entry.is_dir();
-        let record = MftRecord {
-            name,
-            parent: name_attr.parent.entry,
-            is_dir,
-            size_bytes: if is_dir { 0 } else { name_attr.logical_size },
-            allocated_bytes: if is_dir {
-                0
-            } else if name_attr.physical_size > 0 {
-                // physical_size already accounts for compression and sparse runs.
-                name_attr.physical_size
-            } else {
-                // Resident data lives inside the MFT record itself.
-                name_attr.logical_size
-            },
-            modified_epoch_ms,
-            attributes,
-        };
-
-        if is_dir {
+        if record.is_dir {
             parsed_dirs += 1;
         } else {
             parsed_files += 1;
@@ -395,123 +528,23 @@ where
         }
     }
 
-    let mut children_by_parent: HashMap<u64, Vec<u64>> = HashMap::new();
-    for (record_number, record) in &records {
-        children_by_parent
-            .entry(record.parent)
-            .or_default()
-            .push(*record_number);
-    }
-    for children in children_by_parent.values_mut() {
-        children.sort_unstable();
-    }
-
-    let root_record_id = find_subtree_root(&records, &children_by_parent, &target_components)
-        .ok_or_else(|| "The selected folder was not found in the MFT".to_string())?;
-    let Some(root_record) = records.remove(&root_record_id) else {
-        return Err("MFT root record was not found".to_string());
-    };
-    if !root_record.is_dir {
-        return Err("MFT root record is not a directory".to_string());
-    }
-
-    let root_path = root
-        .trim_end_matches(|character| character == '\\' || character == '/')
-        .to_string()
-        + "\\";
-    let root_name = if root_path.len() <= 3 {
-        root_path.clone()
-    } else {
-        Path::new(&root_path)
-            .file_name()
-            .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or_else(|| root_path.clone())
-    };
-
-    let mut nodes = vec![FlatNode {
-        name: root_name,
-        path: root_path.clone(),
-        parent: None,
-        is_dir: true,
-        size_bytes: 0,
-        allocated_bytes: 0,
-        modified_epoch_ms: root_record.modified_epoch_ms,
-        created_epoch_ms: None,
-        accessed_epoch_ms: None,
-        mft_record: Some(root_record_id),
-        attributes: root_record.attributes.clone(),
-        file_count: 0,
-        extension: String::new(),
-    }];
-
-    let mut queue: VecDeque<(u64, usize, String)> = VecDeque::new();
-    queue.push_back((root_record_id, 0, root_path.clone()));
-    let mut visited: std::collections::HashSet<u64> = std::collections::HashSet::new();
-    visited.insert(root_record_id);
-    let mut file_total = 0u64;
-    let mut dir_total = 0u64;
-
-    while let Some((parent_record, parent_index, parent_path)) = queue.pop_front() {
-        let Some(children) = children_by_parent.get(&parent_record) else {
-            continue;
-        };
-
-        for child_record in children {
-            if !visited.insert(*child_record) {
-                continue;
-            }
-            let Some(record) = records.get(child_record) else {
-                continue;
-            };
-            let child_path = Path::new(&parent_path)
-                .join(&record.name)
-                .to_string_lossy()
-                .to_string();
-            let child_index = nodes.len();
-            nodes.push(FlatNode {
-                name: record.name.clone(),
-                path: child_path.clone(),
-                parent: Some(parent_index),
-                is_dir: record.is_dir,
-                size_bytes: record.size_bytes,
-                allocated_bytes: record.allocated_bytes,
-                modified_epoch_ms: record.modified_epoch_ms,
-                created_epoch_ms: None,
-                accessed_epoch_ms: None,
-                mft_record: Some(*child_record),
-                attributes: record.attributes.clone(),
-                file_count: if record.is_dir { 0 } else { 1 },
-                extension: if record.is_dir {
-                    String::new()
-                } else {
-                    extension_for(&child_path)
-                },
-            });
-
-            if record.is_dir {
-                dir_total += 1;
-                queue.push_back((*child_record, child_index, child_path));
-            } else {
-                file_total += 1;
-            }
-        }
-    }
+    let tree = build_mft_tree(records, root, &target_components)?;
 
     append_progress(
         &mut on_progress,
         root,
-        file_total,
-        dir_total,
+        tree.file_total,
+        tree.dir_total,
         scanned_bytes,
     );
 
     if let Some(dump_path) = dump_path {
-        write_mft_dump(dump_path, &root_path, &nodes)?;
+        write_mft_dump(dump_path, &tree.root_path, &tree.nodes)?;
     }
 
     Ok(finalize_scan(
-        nodes,
-        root_path,
+        tree.nodes,
+        tree.root_path,
         max_depth,
         max_children,
         find_duplicates,
@@ -527,6 +560,241 @@ fn modified_millis(time: std::io::Result<std::time::SystemTime>) -> Option<u64> 
     time.ok()
         .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|duration| duration.as_millis() as u64)
+}
+
+fn has_mft_record_signature(buffer: &[u8], offset: usize) -> bool {
+    buffer
+        .get(offset..offset + 4)
+        .map(|signature| signature == b"FILE" || signature == b"BAAD")
+        .unwrap_or(false)
+}
+
+struct WizTreeFooter {
+    drive_letter: Option<char>,
+    data_length: u64,
+    total_bytes: u64,
+    free_bytes: u64,
+}
+
+fn read_wiztree_footer(
+    file: &mut File,
+    length: u64,
+) -> Result<Option<WizTreeFooter>, String> {
+    if length < WIZTREE_FOOTER_SIZE {
+        return Ok(None);
+    }
+    file.seek(SeekFrom::Start(length - WIZTREE_FOOTER_SIZE))
+        .map_err(|e| e.to_string())?;
+    let mut footer = vec![0u8; WIZTREE_FOOTER_SIZE as usize];
+    file.read_exact(&mut footer).map_err(|e| e.to_string())?;
+    if footer.get(0..8) != Some(WIZTREE_FOOTER_MAGIC) {
+        return Ok(None);
+    }
+
+    let read_u64 = |offset: usize| -> u64 {
+        let mut bytes = [0u8; 8];
+        bytes.copy_from_slice(&footer[offset..offset + 8]);
+        u64::from_le_bytes(bytes)
+    };
+    let read_u32 = |offset: usize| -> u32 {
+        let mut bytes = [0u8; 4];
+        bytes.copy_from_slice(&footer[offset..offset + 4]);
+        u32::from_le_bytes(bytes)
+    };
+
+    // The 0x60 bytes after the magic are an NTFS_VOLUME_DATA_BUFFER.
+    let metadata = 8usize;
+    let total_clusters = read_u64(metadata + 16);
+    let free_clusters = read_u64(metadata + 24);
+    let bytes_per_cluster = read_u32(metadata + 44) as u64;
+    let drive_letter = footer
+        .last()
+        .copied()
+        .filter(|byte| byte.is_ascii_alphabetic())
+        .map(|byte| (byte as char).to_ascii_uppercase());
+
+    Ok(Some(WizTreeFooter {
+        drive_letter,
+        data_length: length - WIZTREE_FOOTER_SIZE,
+        total_bytes: total_clusters.saturating_mul(bytes_per_cluster),
+        free_bytes: free_clusters.saturating_mul(bytes_per_cluster),
+    }))
+}
+
+pub fn wiztree_mft_drive(path: &str) -> Option<char> {
+    let mut file = File::open(path).ok()?;
+    let length = file.metadata().ok()?.len();
+    read_wiztree_footer(&mut file, length)
+        .ok()
+        .flatten()?
+        .drive_letter
+}
+
+/// WizTree writes raw `$MFT` records; some versions may prefix the records
+/// with a small header. Find the first record-aligned "FILE"/"BAAD" signature
+/// instead of assuming the data starts at byte zero.
+fn detect_mft_data_offset(file: &mut File, length: u64) -> Result<u64, String> {
+    let probe_len = usize::try_from(length.min(1_048_576)).unwrap_or(0);
+    let mut probe = vec![0u8; probe_len];
+    file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
+    file.read_exact(&mut probe).map_err(|e| e.to_string())?;
+
+    if has_mft_record_signature(&probe, 0) {
+        return Ok(0);
+    }
+    for offset in 0..probe_len.saturating_sub(4) {
+        if !has_mft_record_signature(&probe, offset) {
+            continue;
+        }
+        for record_size in [1024usize, 4096] {
+            let next = offset + record_size;
+            if next + 4 <= probe_len {
+                if has_mft_record_signature(&probe, next) {
+                    return Ok(offset as u64);
+                }
+            } else if next as u64 >= length {
+                return Ok(offset as u64);
+            }
+        }
+    }
+
+    Err(
+        "This file does not look like a raw NTFS MFT dump: no FILE/BAAD records were found."
+            .to_string(),
+    )
+}
+
+pub fn load_wiztree_mft<F>(
+    path: &str,
+    root: &str,
+    max_depth: u32,
+    max_children: usize,
+    find_duplicates: bool,
+    duplicate_include_date: bool,
+    cancel: &AtomicBool,
+    mut on_progress: F,
+) -> Result<DiskScanResult, String>
+where
+    F: FnMut(DiskScanProgress),
+{
+    let started = Instant::now();
+    let (_, target_components) = parse_scan_target(root)
+        .ok_or_else(|| "Choose a drive root such as C:\\ for this MFT dump.".to_string())?;
+    if !target_components.is_empty() {
+        return Err("WizTree MFT dumps represent an entire drive; choose a drive root.".to_string());
+    }
+
+    let mut file = File::open(path).map_err(|error| format!("Could not open the MFT file: {}", error))?;
+    let length = file.metadata().map_err(|e| e.to_string())?.len();
+    let footer = read_wiztree_footer(&mut file, length)?;
+    let (footer_drive, data_length, total_bytes, free_bytes) = match footer {
+        Some(footer) => (
+            footer.drive_letter,
+            footer.data_length,
+            footer.total_bytes,
+            footer.free_bytes,
+        ),
+        None => (None, length, 0, 0),
+    };
+    if let (Some(letter), Some(root_letter)) = (footer_drive, root.chars().next()) {
+        if !letter.eq_ignore_ascii_case(&root_letter) {
+            return Err(format!(
+                "This MFT dump belongs to drive {}:, not {}:.",
+                letter, root_letter.to_ascii_uppercase()
+            ));
+        }
+    }
+    let data_offset = detect_mft_data_offset(&mut file, data_length)?;
+    file.seek(SeekFrom::Start(data_offset))
+        .map_err(|e| e.to_string())?;
+
+    let mut parser = MftParser::from_read_seek(
+        BufReader::with_capacity(1_048_576, file),
+        Some(data_length.saturating_sub(data_offset)),
+    )
+    .map_err(|error| format!("Could not decode the MFT file: {}", error))?;
+    let total_records = parser.get_entry_count();
+    if total_records == 0 {
+        return Err("The MFT file contains no records.".to_string());
+    }
+
+    let mut records: HashMap<u64, MftRecord> = HashMap::new();
+    let mut parsed_files = 0u64;
+    let mut parsed_dirs = 0u64;
+    let mut scanned_bytes = 0u64;
+    let mut errors = 0u64;
+
+    for record_number in 0..total_records {
+        if record_number % 512 == 0 && cancel.load(Ordering::Relaxed) {
+            return Err("Disk scan cancelled".to_string());
+        }
+        let entry = match parser.get_entry(record_number) {
+            Ok(entry) => entry,
+            Err(_) => {
+                errors += 1;
+                continue;
+            }
+        };
+        let Some(record) = record_from_entry(&entry) else {
+            continue;
+        };
+        if record.is_dir {
+            parsed_dirs += 1;
+        } else {
+            parsed_files += 1;
+            scanned_bytes = scanned_bytes.saturating_add(record.size_bytes);
+        }
+        records.insert(record_number, record);
+
+        if record_number % 4096 == 0 {
+            append_progress(
+                &mut on_progress,
+                root,
+                parsed_files,
+                parsed_dirs,
+                scanned_bytes,
+            );
+        }
+    }
+
+    let tree = build_mft_tree(records, root, &target_components)?;
+    append_progress(
+        &mut on_progress,
+        root,
+        tree.file_total,
+        tree.dir_total,
+        scanned_bytes,
+    );
+
+    let tree_root_path = tree.root_path.clone();
+    let mut result = finalize_scan(
+        tree.nodes,
+        tree.root_path,
+        max_depth,
+        max_children,
+        find_duplicates,
+        duplicate_include_date,
+        false,
+        errors,
+        started,
+        "mft-file",
+    );
+    // A dump may come from another machine; its footer carries the volume size
+    // when available.
+    result.volume_total_bytes = total_bytes;
+    result.volume_free_bytes = free_bytes;
+    if let Some(index) = result.file_index.as_mut() {
+        index.volumes = if total_bytes > 0 {
+            vec![DiskVolumeStat {
+                path: tree_root_path,
+                total_bytes,
+                free_bytes,
+            }]
+        } else {
+            Vec::new()
+        };
+    }
+    Ok(result)
 }
 
 pub fn dump_directory() -> PathBuf {
@@ -687,6 +955,35 @@ mod tests {
             find_subtree_root(&records, &children, &["missing".to_string()]),
             None
         );
+    }
+
+    #[test]
+    fn reads_wiztree_footer_drive_and_data_length() {
+        let path = std::env::temp_dir().join(format!(
+            "purgekit_wiztree_footer_{}.mft",
+            std::process::id()
+        ));
+        let mut bytes = vec![0xAAu8; 2048];
+        bytes.extend_from_slice(WIZTREE_FOOTER_MAGIC);
+        let mut metadata = [0u8; 0x60];
+        metadata[16..24].copy_from_slice(&1000u64.to_le_bytes());
+        metadata[24..32].copy_from_slice(&250u64.to_le_bytes());
+        metadata[44..48].copy_from_slice(&4096u32.to_le_bytes());
+        bytes.extend_from_slice(&metadata);
+        bytes.push(b'D');
+        fs::write(&path, &bytes).unwrap();
+
+        assert_eq!(wiztree_mft_drive(path.to_str().unwrap()), Some('D'));
+        let mut file = File::open(&path).unwrap();
+        let footer = read_wiztree_footer(&mut file, bytes.len() as u64)
+            .unwrap()
+            .expect("footer");
+        assert_eq!(footer.drive_letter, Some('D'));
+        assert_eq!(footer.data_length, 2048);
+        assert_eq!(footer.total_bytes, 4_096_000);
+        assert_eq!(footer.free_bytes, 1_024_000);
+
+        let _ = fs::remove_file(&path);
     }
 
     #[test]
