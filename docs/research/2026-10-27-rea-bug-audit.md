@@ -36,14 +36,20 @@
 | 12 | Med | Store identity | Store rows showed package-derived names (`10511Claudia Wey inknotespro`) and publisher IDs. | Localized Start-menu names and `PublisherDisplayName` are used when available. |
 | 13 | Med | Snapshot hygiene | Snapshots scanned `%APPDATA%\PurgeKit` and `%LOCALAPPDATA%\PurgeKit`, so they contained their own JSON files and quarantine/backup data. | PurgeKit data folders are excluded and reparse points are skipped. |
 
-## 3. Deliberately deferred
+## 3. Follow-up WizTree features implemented
 
-- **Content hashing for duplicates.** WizTree groups by name/size/date and does not read file contents; hashing would change performance and semantics. Instead the UI now states clearly that contents are not compared and asks the user to verify before purging.
-- **Percent of Parent / Percent of Drive / Items / Folders columns, free-space treemap, MFT/CSV schema compatibility.** These are WizTree features, not correctness bugs. PurgeKit’s current equivalents are Share %, file counts, allocated size, CSV import/export and `.pkmft` dump/load.
+- **Treemap controls:** label toggle, allocated/logical weighting, free-space tile at drive roots (using the volume's reported free bytes), and grouping files below 1 KB / 64 KB / 1 MB. All options persist with the disk preferences; synthetic free/small tiles cannot be zoomed or quarantined.
+- **HTML report export:** self-contained printable report with summary, top 100 files/folders, file types and top duplicate groups.
+- **Bulk result reporting:** the backend returns a failed-app count, and the UI only reports success when every app succeeded; partial purge results are surfaced.
+
+## 4. Deliberately deferred
+
+- **Content hashing for duplicates.** WizTree groups by name/size/date and does not read file contents; hashing would change performance and semantics. The UI now states clearly that contents are not compared and asks the user to verify before purging.
+- **Percent of Parent / Percent of Drive / Items / Folders columns and MFT/CSV schema compatibility.** These are WizTree features, not correctness bugs. PurgeKit’s current equivalents are Share %, file counts, allocated size, CSV import/export and `.pkmft` dump/load.
 - **Provisioned Store packages** remain out of scope: enumerating or removing them can affect other users and servicing.
 - **Live elevated validation** of folder-MFT, MFT dump and multi-process uninstall waits still requires an Administrator session.
 
-## 4. Verification
+## 5. Verification
 
 - `cargo test --lib`: **108 passed, 4 ignored** (host smoke tests only).
 - `cargo check --bins`, `npm run check`, `npm run build`: clean.
