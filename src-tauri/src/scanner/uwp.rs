@@ -249,6 +249,16 @@ fn clean_uwp_display_name(name: &str) -> String {
     final_name
 }
 
+fn png_has_visible_pixels(bytes: &[u8]) -> bool {
+    let Ok(image) = image::load_from_memory_with_format(bytes, image::ImageFormat::Png) else {
+        return false;
+    };
+    image
+        .to_rgba8()
+        .pixels()
+        .any(|pixel| pixel[3] > 8)
+}
+
 fn manifest_logo_candidates(install_location: &Path) -> Vec<String> {
     let Ok(content) = fs::read_to_string(install_location.join("AppxManifest.xml")) else {
         return Vec::new();
@@ -409,7 +419,7 @@ fn get_uwp_icon_base64(install_location: &str) -> Option<String> {
             continue;
         };
         if let Ok(bytes) = fs::read(asset) {
-            if !bytes.is_empty() {
+            if !bytes.is_empty() && png_has_visible_pixels(&bytes) {
                 return Some(general_purpose::STANDARD.encode(&bytes));
             }
         }
@@ -494,6 +504,11 @@ fn get_uwp_icon_base64(install_location: &str) -> Option<String> {
     if in_windows_apps {
         if let Ok(base64) = windows_icons::get_icon_base64_by_path(path) {
             if !base64.is_empty() {
+                if let Ok(bytes) = general_purpose::STANDARD.decode(&base64) {
+                    if !png_has_visible_pixels(&bytes) {
+                        return None;
+                    }
+                }
                 return Some(base64);
             }
         }
@@ -507,7 +522,7 @@ fn encode_package_icon(path: &Path) -> Option<String> {
         .is_some_and(|extension| extension.eq_ignore_ascii_case("png"))
     {
         let bytes = fs::read(path).ok()?;
-        if bytes.is_empty() {
+        if bytes.is_empty() || !png_has_visible_pixels(&bytes) {
             return None;
         }
         return Some(general_purpose::STANDARD.encode(&bytes));
@@ -522,6 +537,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rejects_fully_transparent_icons() {
+        use image::{ImageFormat, Rgba, RgbaImage};
+        use std::io::Cursor;
+
+        let encode = |image: RgbaImage| {
+            let mut bytes = Cursor::new(Vec::new());
+            image.write_to(&mut bytes, ImageFormat::Png).unwrap();
+            bytes.into_inner()
+        };
+        let transparent = encode(RgbaImage::from_pixel(4, 4, Rgba([255, 255, 255, 0])));
+        let opaque = encode(RgbaImage::from_pixel(4, 4, Rgba([255, 255, 255, 255])));
+        assert!(!png_has_visible_pixels(&transparent));
+        assert!(png_has_visible_pixels(&opaque));
+    }
+
+    fn test_png(color: [u8; 4]) -> Vec<u8> {
+        use image::{ImageFormat, Rgba, RgbaImage};
+        use std::io::Cursor;
+
+        let mut bytes = Cursor::new(Vec::new());
+        RgbaImage::from_pixel(8, 8, Rgba(color))
+            .write_to(&mut bytes, ImageFormat::Png)
+            .unwrap();
+        bytes.into_inner()
+    }
+
+    #[test]
     fn resolves_manifest_icon_variants() {
         let root = std::env::temp_dir().join("purgekit_uwp_icon_manifest_test");
         let _ = fs::remove_dir_all(&root);
@@ -531,16 +573,18 @@ mod tests {
             r#"<Package><Properties><Logo>Assets\StoreLogo.png</Logo></Properties><Applications><Application><uap:VisualElements Square44x44Logo="Assets\Square44x44Logo.png" /></Application></Applications></Package>"#,
         )
         .unwrap();
+        let exact_icon = test_png([230, 40, 30, 255]);
+        let fallback_icon = test_png([20, 120, 220, 255]);
         fs::write(
             root.join("Assets").join("Square44x44Logo.scale-100.png"),
-            [1u8, 2, 3],
+            &exact_icon,
         )
         .unwrap();
-        fs::write(root.join("Assets").join("StoreLogo.png"), [4u8, 5, 6]).unwrap();
+        fs::write(root.join("Assets").join("StoreLogo.png"), &fallback_icon).unwrap();
 
         let encoded = get_uwp_icon_base64(root.to_str().unwrap()).expect("manifest icon");
         let decoded = general_purpose::STANDARD.decode(encoded).unwrap();
-        assert_eq!(decoded, vec![1, 2, 3]);
+        assert_eq!(decoded, exact_icon);
 
         let _ = fs::remove_dir_all(&root);
     }
@@ -646,13 +690,15 @@ mod tests {
             r#"<Package><Properties><Logo>ms-resource://StoreLogo</Logo></Properties><Applications><Application><uap:VisualElements Square44x44Logo="Assets\Exact.png" /></Application></Applications></Package>"#,
         )
         .unwrap();
-        fs::write(root.join("Assets\\Exact.png"), [1u8, 2, 3]).unwrap();
-        fs::write(root.join("Assets\\Exact.scale-100.png"), [4u8, 5, 6]).unwrap();
+        let exact_icon = test_png([230, 40, 30, 255]);
+        let fallback_icon = test_png([20, 120, 220, 255]);
+        fs::write(root.join("Assets\\Exact.png"), &exact_icon).unwrap();
+        fs::write(root.join("Assets\\Exact.scale-100.png"), &fallback_icon).unwrap();
 
         let exact = get_uwp_icon_base64(root.to_str().unwrap()).expect("exact icon");
         assert_eq!(
             general_purpose::STANDARD.decode(exact).unwrap(),
-            vec![1, 2, 3]
+            exact_icon
         );
 
         fs::write(

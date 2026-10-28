@@ -36,6 +36,7 @@ is_elevated = "0.1"
 clap = { version = "4", features = ["derive"] }
 csv = "1"
 flate2 = "1.1.10"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [target.'cfg(windows)'.dependencies]
 ntfs = "0.4"
