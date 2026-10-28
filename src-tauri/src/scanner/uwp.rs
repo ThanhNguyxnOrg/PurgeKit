@@ -137,6 +137,7 @@ try { $startApps = @(Get-StartApps | Select-Object Name, AppID) } catch {};
         );
 
         let icon_base64 = get_uwp_icon_base64(&loc);
+        let install_date = crate::scanner::registry::path_created_date(&loc);
 
         apps.push(InstalledApp {
             id: package_family.clone(),
@@ -155,7 +156,7 @@ try { $startApps = @(Get-StartApps | Select-Object Name, AppID) } catch {};
             modify_path: None,
             release_type: None,
             install_location: Some(loc),
-            install_date: None, // PowerShell Get-AppxPackage does not easily return install date without slower commands
+            install_date,
             display_icon: None, // Store app icons are resolved using AppxManifest.xml, which we can implement later
             icon_base64,
             estimated_size: None, // Can calculate size from directory later

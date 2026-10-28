@@ -587,7 +587,7 @@ fn normalize_install_date(raw: Option<&str>) -> Option<String> {
     Some(trimmed.to_string())
 }
 
-fn path_created_date(path: &str) -> Option<String> {
+pub(crate) fn path_created_date(path: &str) -> Option<String> {
     let clean = path.trim().trim_matches('"');
     if clean.is_empty() {
         return None;
