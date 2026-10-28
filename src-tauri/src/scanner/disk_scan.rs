@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -698,47 +698,7 @@ fn metadata_attributes(_metadata: &fs::Metadata) -> String {
     String::new()
 }
 
-fn build_tree_node(
-    index: usize,
-    depth: u32,
-    max_depth: u32,
-    max_children: usize,
-    nodes: &[FlatNode],
-    children: &[Vec<usize>],
-    budget: &mut TreeBudget,
-) -> DiskTreeNode {
-    let node = &nodes[index];
-    let mut child_nodes = Vec::new();
-
-    if node.is_dir && depth < max_depth && budget.remaining > 0 {
-        let mut child_ids = children[index].clone();
-        child_ids.sort_by_key(|child| {
-            Reverse(nodes[*child].allocated_bytes.max(nodes[*child].size_bytes))
-        });
-
-        let total_children = child_ids.len();
-        for child in child_ids.into_iter().take(max_children) {
-            if budget.remaining == 0 {
-                budget.truncated = true;
-                break;
-            }
-            budget.remaining -= 1;
-            child_nodes.push(build_tree_node(
-                child,
-                depth + 1,
-                max_depth,
-                max_children,
-                nodes,
-                children,
-                budget,
-            ));
-        }
-
-        if total_children > max_children {
-            budget.truncated = true;
-        }
-    }
-
+fn flat_to_tree_node(node: &FlatNode) -> DiskTreeNode {
     DiskTreeNode {
         name: node.name.clone(),
         path: node.path.clone(),
@@ -748,8 +708,78 @@ fn build_tree_node(
         modified_epoch_ms: node.modified_epoch_ms,
         attributes: node.attributes.clone(),
         file_count: node.file_count,
-        children: child_nodes,
+        children: Vec::new(),
     }
+}
+
+struct TreeArenaNode {
+    node: DiskTreeNode,
+    source: usize,
+    child_indices: Vec<usize>,
+}
+
+fn materialize_tree(index: usize, arena: &[TreeArenaNode]) -> DiskTreeNode {
+    let mut node = arena[index].node.clone();
+    node.children = arena[index]
+        .child_indices
+        .iter()
+        .map(|child| materialize_tree(*child, arena))
+        .collect();
+    node
+}
+
+/// Spend the tree budget breadth-first so every shallow folder is represented
+/// before one huge subtree can consume all remaining nodes.
+fn build_tree_breadth_first(
+    root_index: usize,
+    max_depth: u32,
+    max_children: usize,
+    nodes: &[FlatNode],
+    children: &[Vec<usize>],
+    budget: &mut TreeBudget,
+) -> DiskTreeNode {
+    let mut arena = vec![TreeArenaNode {
+        node: flat_to_tree_node(&nodes[root_index]),
+        source: root_index,
+        child_indices: Vec::new(),
+    }];
+    let mut queue: VecDeque<(usize, u32)> = VecDeque::new();
+    queue.push_back((0, 0));
+
+    while let Some((arena_index, depth)) = queue.pop_front() {
+        let source = arena[arena_index].source;
+        let node = &nodes[source];
+        if !node.is_dir || depth >= max_depth || budget.remaining == 0 {
+            continue;
+        }
+
+        let mut child_ids = children[source].clone();
+        child_ids.sort_by_key(|child| {
+            Reverse(nodes[*child].allocated_bytes.max(nodes[*child].size_bytes))
+        });
+        let total_children = child_ids.len();
+        for child in child_ids.into_iter().take(max_children) {
+            if budget.remaining == 0 {
+                budget.truncated = true;
+                break;
+            }
+            budget.remaining -= 1;
+            let child_index = arena.len();
+            arena.push(TreeArenaNode {
+                node: flat_to_tree_node(&nodes[child]),
+                source: child,
+                child_indices: Vec::new(),
+            });
+            arena[arena_index].child_indices.push(child_index);
+            queue.push_back((child_index, depth + 1));
+        }
+
+        if total_children > max_children {
+            budget.truncated = true;
+        }
+    }
+
+    materialize_tree(0, &arena)
 }
 
 pub fn scan_disk_tree<F>(
@@ -997,8 +1027,7 @@ pub(crate) fn finalize_scan(
         remaining: node_budget,
         truncated: false,
     };
-    let root_node = build_tree_node(
-        0,
+    let root_node = build_tree_breadth_first(
         0,
         max_depth,
         max_children,
@@ -1450,6 +1479,48 @@ mod tests {
         assert_eq!(by_date.duplicate_mode, "name_size_date");
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn tree_budget_is_spent_breadth_first() {
+        fn node(name: &str, is_dir: bool, size: u64) -> FlatNode {
+            FlatNode {
+                name: name.to_string(),
+                path: format!(r"C:\{}", name),
+                parent: Some(0),
+                is_dir,
+                size_bytes: size,
+                allocated_bytes: size,
+                modified_epoch_ms: None,
+                created_epoch_ms: None,
+                accessed_epoch_ms: None,
+                mft_record: None,
+                attributes: if is_dir { "D".to_string() } else { "A".to_string() },
+                file_count: if is_dir { 0 } else { 1 },
+                extension: String::new(),
+            }
+        }
+
+        let mut nodes = vec![
+            node("root", true, 0),
+            node("big", true, 1000),
+            node("small", true, 10),
+            node("big1", false, 100),
+            node("big2", false, 100),
+            node("big3", false, 100),
+        ];
+        nodes[0].parent = None;
+        let mut children = vec![vec![1, 2], vec![3, 4, 5], vec![], vec![], vec![], vec![]];
+        children[1].sort_unstable();
+        let mut budget = TreeBudget {
+            remaining: 3,
+            truncated: false,
+        };
+
+        let root = build_tree_breadth_first(0, 8, 100, &nodes, &children, &mut budget);
+        assert_eq!(root.children.len(), 2);
+        assert!(root.children.iter().any(|child| child.name == "small"));
+        assert!(budget.truncated);
     }
 
     #[test]
