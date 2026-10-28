@@ -48,6 +48,7 @@
 - **WizTree export options:** CSV/TSV, current-view/all scope, optional folder totals and created/last-accessed dates, verified against WizTree’s shipped English locale strings.
 - **Geek install date:** registry dates are normalized and inferred from install-folder/uninstaller creation time when missing, then cached and exported.
 - **Treemap navigation:** double-click zooms a file into its parent and an Up control walks back out.
+- **WizTree `.MFT` import:** raw records plus the `VOLDATA2`/`NTFS_VOLUME_DATA_BUFFER`/drive-letter footer are loaded read-only, with volume size and MFT record numbers available to search and export.
 
 ## 4. Deliberately deferred
 
@@ -58,9 +59,9 @@
 
 ## 5. Verification
 
-- `cargo test --lib`: **115 passed, 4 ignored** (host smoke tests only).
+- `cargo test --lib`: **116 passed, 4 ignored** (host smoke tests only).
 - `cargo check --bins`, `npm run check`, `npm run build`: clean.
 - Host icon coverage: 132/133 inventory rows have a logo; `vs_CoreEditorFonts` is a font component without an application icon. Startup Manager shows icons for 11/15 entries; the remaining four are stale Run values whose targets no longer exist and are flagged with a warning.
 - Host install dates: 137/138 inventory rows have a date after the fallback pass (registry, Store package folder, CLI, toolchain and portable paths); one registry entry has no readable install path.
-- UI verified through WebView2 CDP at 900×600, 1500×1000 and a 1600px emulated viewport: export dialog produced a 26-line TSV with file/folder rows, created/last-accessed, parent-percent, MFT-record and drive-size sections; the file-types view exported a CSV with full type totals; double-click zoom produced a `research` breadcrumb and Up returned to the root; an unscanned delete request was rejected while the folder stayed in place.
+- UI verified through WebView2 CDP at 900×600, 1500×1000 and a 1600px emulated viewport: export dialog produced a 26-line TSV with file/folder rows, created/last-accessed, parent-percent, MFT-record and drive-size sections; the file-types view exported a CSV with full type totals; a WizTree-style `.MFT` sample loaded as read-only with 10,854 files / 978 folders, a 91.6 GiB volume and 38.1 GiB free from the footer, and MFT record 3365 visible in search/export; double-click zoom produced a `research` breadcrumb and Up returned to the root; an unscanned delete request was rejected while the folder stayed in place.
 - The UI is English-only for now; the Vietnamese dictionary and `setMode()` remain wired for a later language release.
