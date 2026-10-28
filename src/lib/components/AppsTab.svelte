@@ -1043,8 +1043,13 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                         {/if}
                       </div>
                       <span class="text-[10px] text-text-muted font-mono mt-0.5 max-w-[200px] truncate" title={app.registry_path}>
-                        {app.id}{#if app.install_date} · {t("Installed {date}", { date: app.install_date })}{/if}
+                        {app.id}
                       </span>
+                      {#if app.install_date}
+                        <span class="text-[9px] text-text-muted font-mono mt-0.5" title={t("Installed")}>
+                          {t("Installed {date}", { date: app.install_date })}
+                        </span>
+                      {/if}
                       {#if app.categories && app.categories.length > 0}
                         <span class="text-[9px] text-text-muted font-sans mt-0.5 truncate" title={app.categories.join(", ")}>
                           {app.categories.slice(0, 2).join(" · ")}
@@ -1052,7 +1057,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                       {/if}
                     </div>
                   </td>
-                  
+
                   <!-- Publisher -->
                   <td class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 text-text-secondary max-w-[150px] truncate hidden xl:table-cell">
                     {app.publisher || t("Unknown")}
@@ -1067,7 +1072,7 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                   <td class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 text-text-secondary font-mono text-xs hidden 2xl:table-cell whitespace-nowrap">
                     {app.install_date || "—"}
                   </td>
-                  
+
                   <!-- Size -->
                   <td class="py-4 px-2 lg:px-3 xl:px-4 2xl:px-5 text-text-secondary font-mono text-xs">
                     {formatSize(app.estimated_size)}
