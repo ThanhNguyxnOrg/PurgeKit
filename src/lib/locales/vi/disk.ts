@@ -264,6 +264,8 @@ const disk: Record<string, string> = {
   "WizTree .MFT file": "Tệp .MFT của WizTree",
   "Load a raw .MFT dump; the drive letter is read from its footer or filename.":
     "Tải bản kết xuất .MFT thô; ký tự ổ đĩa được đọc từ phần cuối tệp hoặc tên tệp.",
+  "Large dumps can take several minutes; progress appears above.":
+    "Bản kết xuất lớn có thể mất vài phút; tiến độ hiển thị ở phía trên.",
   "MFT file path": "Đường dẫn tệp MFT",
   "Drive letter": "Ký tự ổ đĩa",
   "Optional drive letter; WizTree footers already contain it":

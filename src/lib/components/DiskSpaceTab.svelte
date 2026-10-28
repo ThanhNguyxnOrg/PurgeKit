@@ -1877,6 +1877,9 @@ ${duplicateRows ? `<h2>Duplicate groups (top 50)</h2><table><thead><tr><th>Name<
           <p class="text-[11px] text-text-muted">
             {t("Load a raw .MFT dump; the drive letter is read from its footer or filename.")}
           </p>
+          <p class="text-[11px] text-text-muted">
+            {t("Large dumps can take several minutes; progress appears above.")}
+          </p>
           <div class="flex flex-wrap items-center gap-2">
             <input
               bind:value={wiztreeMftPath}

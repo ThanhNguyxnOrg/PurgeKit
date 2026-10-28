@@ -214,7 +214,7 @@ struct MftRecord {
     size_bytes: u64,
     allocated_bytes: u64,
     modified_epoch_ms: Option<u64>,
-    attributes: String,
+    attributes: u32,
 }
 
 fn record_from_entry(entry: &MftEntry) -> Option<MftRecord> {
@@ -232,12 +232,10 @@ fn record_from_entry(entry: &MftEntry) -> Option<MftRecord> {
         .unwrap_or(name_attr.modified)
         .as_millisecond();
     let modified_epoch_ms = u64::try_from(modified_epoch_ms).ok();
-    let attributes = attribute_letters(
-        standard_info
-            .as_ref()
-            .map(|info| info.file_flags.bits())
-            .unwrap_or_else(|| name_attr.flags.bits()),
-    );
+    let attributes = standard_info
+        .as_ref()
+        .map(|info| info.file_flags.bits())
+        .unwrap_or_else(|| name_attr.flags.bits());
     let name = name_attr.name;
     if name.is_empty() {
         return None;
@@ -405,7 +403,7 @@ fn build_mft_tree(
         created_epoch_ms: None,
         accessed_epoch_ms: None,
         mft_record: Some(root_record_id),
-        attributes: root_record.attributes.clone(),
+        attributes: attribute_letters(root_record.attributes),
         file_count: 0,
         extension: String::new(),
     }];
@@ -445,7 +443,7 @@ fn build_mft_tree(
                 created_epoch_ms: None,
                 accessed_epoch_ms: None,
                 mft_record: Some(*child_record),
-                attributes: record.attributes.clone(),
+                attributes: attribute_letters(record.attributes),
                 file_count: if record.is_dir { 0 } else { 1 },
                 extension: if record.is_dir {
                     String::new()
@@ -1027,7 +1025,7 @@ mod tests {
             size_bytes: if is_dir { 0 } else { 10 },
             allocated_bytes: if is_dir { 0 } else { 10 },
             modified_epoch_ms: None,
-            attributes: String::new(),
+            attributes: 0,
         }
     }
 
