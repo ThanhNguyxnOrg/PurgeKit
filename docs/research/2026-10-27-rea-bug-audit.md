@@ -35,12 +35,15 @@
 | 11 | Med | Admin detection | Remnant admin checks and quarantine restore used `contains("WINDOWS")`/`contains("PROGRAM FILES")`, blocking normal user paths such as `…\Windows Themes`. | Boundary-aware path checks are shared by both flows. |
 | 12 | Med | Store identity | Store rows showed package-derived names (`10511Claudia Wey inknotespro`) and publisher IDs. | Localized Start-menu names and `PublisherDisplayName` are used when available. |
 | 13 | Med | Snapshot hygiene | Snapshots scanned `%APPDATA%\PurgeKit` and `%LOCALAPPDATA%\PurgeKit`, so they contained their own JSON files and quarantine/backup data. | PurgeKit data folders are excluded and reparse points are skipped. |
+| 14 | Med | UWP icons | A fully transparent Store logo PNG passed the “icon exists” check, so stub packages rendered a blank square. | PNG alpha bytes are inspected and invisible logos fall through to the executable/bounded walk. |
+| 15 | Low-Med | Theme contrast | Hardcoded `emerald/blue/amber/rose` classes and solid accent backgrounds produced weak badge text and washed-out button labels, especially in dark mode. | Semantic `success/info/warning/danger` tokens plus `*-strong` action colors; muted/secondary/border tokens were raised in both palettes. |
 
 ## 3. Follow-up WizTree features implemented
 
 - **Treemap controls:** label toggle, allocated/logical weighting, free-space tile at drive roots (using the volume's reported free bytes), and grouping files below 1 KB / 64 KB / 1 MB. All options persist with the disk preferences; synthetic free/small tiles cannot be zoomed or quarantined.
 - **HTML report export:** self-contained printable report with summary, top 100 files/folders, file types and top duplicate groups.
 - **Bulk result reporting:** the backend returns a failed-app count, and the UI only reports success when every app succeeded; partial purge results are surfaced.
+- **Startup Manager icons:** Run values and Startup-folder shortcuts resolve their executable/shortcut target and render the real icon with the shared frame treatment. Absolute targets that no longer exist are flagged so a stale entry is not mistaken for a missing-icon bug.
 
 ## 4. Deliberately deferred
 
@@ -51,7 +54,7 @@
 
 ## 5. Verification
 
-- `cargo test --lib`: **108 passed, 4 ignored** (host smoke tests only).
+- `cargo test --lib`: **110 passed, 4 ignored** (host smoke tests only).
 - `cargo check --bins`, `npm run check`, `npm run build`: clean.
-- Host icon coverage: 132/133 inventory rows have a logo; `vs_CoreEditorFonts` is a font component without an application icon.
-- UI verified through WebView2 CDP at 900×600 and 1500×1000, including English/Vietnamese switching, CSV import, multi-root scanning and MFT dump reload.
+- Host icon coverage: 132/133 inventory rows have a logo; `vs_CoreEditorFonts` is a font component without an application icon. Startup Manager shows icons for 11/15 entries; the remaining four are stale Run values whose targets no longer exist and are flagged with a warning.
+- UI verified through WebView2 CDP at 900×600 and 1500×1000, including light/dark contrast, CSV import, multi-root scanning and MFT dump reload. The UI is English-only for now; the Vietnamese dictionary and `setMode()` remain wired for a later language release.
