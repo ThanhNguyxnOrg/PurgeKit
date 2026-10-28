@@ -254,6 +254,13 @@ const disk: Record<string, string> = {
     "Bao gồm tổng của thư mục (chỉ tệp trực tiếp)",
   "Include created and last-accessed dates":
     "Bao gồm ngày tạo và ngày truy cập gần nhất",
+  "Include percentage of parent": "Bao gồm phần trăm so với thư mục cha",
+  "Include MFT record numbers (MFT scans)":
+    "Bao gồm số bản ghi MFT (khi quét MFT)",
+  "Include drive size information": "Bao gồm thông tin dung lượng ổ đĩa",
+  "Export types": "Xuất loại tệp",
+  "Export file types to a CSV file": "Xuất các loại tệp ra tệp CSV",
+  "Exported {count} file types.": "Đã xuất {count} loại tệp.",
   "Exporting…": "Đang xuất…",
   " and {count} folders": " và {count} thư mục",
   "Exported {count} of {total} files (100k cap){folders}.":

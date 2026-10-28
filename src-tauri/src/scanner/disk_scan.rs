@@ -41,6 +41,8 @@ pub struct DiskFile {
     pub modified_epoch_ms: Option<u64>,
     pub created_epoch_ms: Option<u64>,
     pub accessed_epoch_ms: Option<u64>,
+    #[serde(default)]
+    pub mft_record: Option<u64>,
     pub attributes: String,
 }
 
@@ -92,13 +94,22 @@ pub struct CachedDiskFile {
     pub modified_epoch_ms: Option<u64>,
     pub created_epoch_ms: Option<u64>,
     pub accessed_epoch_ms: Option<u64>,
+    pub mft_record: Option<u64>,
     pub attributes: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DiskVolumeStat {
+    pub path: String,
+    pub total_bytes: u64,
+    pub free_bytes: u64,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct DiskFileIndex {
     pub root_path: String,
     pub files: Vec<CachedDiskFile>,
+    pub volumes: Vec<DiskVolumeStat>,
     pub complete: bool,
 }
 
@@ -248,6 +259,7 @@ fn disk_file_from_cached(file: &CachedDiskFile) -> DiskFile {
         modified_epoch_ms: file.modified_epoch_ms,
         created_epoch_ms: file.created_epoch_ms,
         accessed_epoch_ms: file.accessed_epoch_ms,
+        mft_record: file.mft_record,
         attributes: file.attributes.clone(),
     }
 }
@@ -322,6 +334,9 @@ pub fn export_cached_files_csv(
     format: &str,
     include_dates: bool,
     include_folders: bool,
+    include_parent_percent: bool,
+    include_mft: bool,
+    include_drive_info: bool,
 ) -> DiskCsvExport {
     let mut matches = cached_matches(index, query, extension, prefix, filter_mode, include, exclude);
     let total = matches.len();
@@ -346,26 +361,52 @@ pub fn export_cached_files_csv(
         }
     };
 
+    let mut parent_totals: HashMap<String, u64> = HashMap::new();
+    if include_parent_percent {
+        for file in &index.files {
+            if let Some(parent) = Path::new(&file.path).parent() {
+                *parent_totals
+                    .entry(parent.to_string_lossy().to_string())
+                    .or_insert(0) += weight_of(file);
+            }
+        }
+    }
+    let parent_percent_of = |file: &CachedDiskFile| -> String {
+        let Some(parent) = Path::new(&file.path).parent() else {
+            return String::new();
+        };
+        let parent_weight = parent_totals
+            .get(&parent.to_string_lossy().to_string())
+            .copied()
+            .unwrap_or(0);
+        if parent_weight == 0 {
+            String::new()
+        } else {
+            format!(
+                "{:.1}",
+                (weight_of(file) as f64 / parent_weight as f64) * 100.0
+            )
+        }
+    };
+
     let mut folders: std::collections::BTreeMap<String, (u64, u64, usize)> =
         std::collections::BTreeMap::new();
 
-    let mut header = vec![
-        "Name",
-        "Path",
-        "Type",
-        "Extension",
-        "Modified",
-    ];
+    let mut header = vec!["Name", "Path"];
+    if include_mft {
+        header.push("MftRecord");
+    }
+    header.extend(["Type", "Extension", "Modified"]);
     if include_dates {
         header.push("Created");
         header.push("LastAccessed");
     }
-    header.extend([
-        "Attributes",
-        "SharePercent",
-        "LogicalBytes",
-        "AllocatedBytes",
-    ]);
+    header.push("Attributes");
+    header.push("SharePercent");
+    if include_parent_percent {
+        header.push("ParentPercent");
+    }
+    header.extend(["LogicalBytes", "AllocatedBytes"]);
     if include_folders {
         header.push("DirectFiles");
     }
@@ -398,23 +439,30 @@ pub fn export_cached_files_csv(
             }
         }
 
-        let mut row = vec![
-            name.to_string(),
-            file.path.clone(),
+        let mut row = vec![name.to_string(), file.path.clone()];
+        if include_mft {
+            row.push(
+                file.mft_record
+                    .map(|record| record.to_string())
+                    .unwrap_or_default(),
+            );
+        }
+        row.extend([
             "File".to_string(),
             extension,
             formatted_date(file.modified_epoch_ms),
-        ];
+        ]);
         if include_dates {
             row.push(formatted_date(file.created_epoch_ms));
             row.push(formatted_date(file.accessed_epoch_ms));
         }
-        row.extend([
-            file.attributes.clone(),
-            format!("{:.1}", share_of(weight)),
-            file.size_bytes.to_string(),
-            file.allocated_bytes.to_string(),
-        ]);
+        row.push(file.attributes.clone());
+        row.push(format!("{:.1}", share_of(weight)));
+        if include_parent_percent {
+            row.push(parent_percent_of(file));
+        }
+        row.push(file.size_bytes.to_string());
+        row.push(file.allocated_bytes.to_string());
         if include_folders {
             row.push("1".to_string());
         }
@@ -432,24 +480,112 @@ pub fn export_cached_files_csv(
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_else(|| path.clone());
-        let mut row = vec![
-            name,
-            path.clone(),
+        let mut row = vec![name, path.clone()];
+        if include_mft {
+            row.push(String::new());
+        }
+        row.extend([
             "Folder".to_string(),
             String::new(),
             String::new(),
-        ];
+        ]);
         if include_dates {
             row.push(String::new());
             row.push(String::new());
         }
-        row.extend([
-            String::from("D"),
-            format!("{:.1}", share_of((*allocated).max(*logical))),
+        row.push(String::from("D"));
+        row.push(format!("{:.1}", share_of((*allocated).max(*logical))));
+        if include_parent_percent {
+            row.push(String::new());
+        }
+        row.push(logical.to_string());
+        row.push(allocated.to_string());
+        if include_folders {
+            row.push(direct_files.to_string());
+        }
+        content.push_str(
+            &row.iter()
+                .map(|field| delimited_field(field, delimiter))
+                .collect::<Vec<_>>()
+                .join(&delimiter.to_string()),
+        );
+        content.push('\n');
+    }
+
+    if include_drive_info && !index.volumes.is_empty() {
+        content.push('\n');
+        let drive_header = ["Drive", "TotalBytes", "FreeBytes", "UsedBytes"];
+        content.push_str(
+            &drive_header
+                .iter()
+                .map(|field| delimited_field(field, delimiter))
+                .collect::<Vec<_>>()
+                .join(&delimiter.to_string()),
+        );
+        content.push('\n');
+        for volume in &index.volumes {
+            let used = volume.total_bytes.saturating_sub(volume.free_bytes);
+            let row = [
+                volume.path.clone(),
+                volume.total_bytes.to_string(),
+                volume.free_bytes.to_string(),
+                used.to_string(),
+            ];
+            content.push_str(
+                &row.iter()
+                    .map(|field| delimited_field(field, delimiter))
+                    .collect::<Vec<_>>()
+                    .join(&delimiter.to_string()),
+            );
+            content.push('\n');
+        }
+    }
+
+    DiskCsvExport {
+        content,
+        exported: matches.len(),
+        folders: folders.len(),
+        total,
+        truncated,
+    }
+}
+
+pub fn export_cached_file_types_csv(index: &DiskFileIndex, format: &str) -> DiskCsvExport {
+    let delimiter = if format.eq_ignore_ascii_case("tsv") { '\t' } else { ',' };
+    let mut types: HashMap<String, (u64, u64, u64)> = HashMap::new();
+    for file in &index.files {
+        let extension = file_extension(&file.path).unwrap_or_else(|| "(none)".to_string());
+        let entry = types.entry(extension).or_insert((0, 0, 0));
+        entry.0 += file.size_bytes;
+        entry.1 += file.allocated_bytes;
+        entry.2 += 1;
+    }
+
+    let mut types: Vec<(String, u64, u64, u64)> = types
+        .into_iter()
+        .map(|(extension, (logical, allocated, count))| (extension, logical, allocated, count))
+        .collect();
+    types.sort_by_key(|(_, logical, allocated, _)| {
+        std::cmp::Reverse((*allocated).max(*logical))
+    });
+
+    let header = ["Extension", "FileCount", "LogicalBytes", "AllocatedBytes"];
+    let mut content = String::from("\u{feff}");
+    content.push_str(
+        &header
+            .iter()
+            .map(|field| delimited_field(field, delimiter))
+            .collect::<Vec<_>>()
+            .join(&delimiter.to_string()),
+    );
+    content.push('\n');
+    for (extension, logical, allocated, count) in &types {
+        let row = [
+            extension.clone(),
+            count.to_string(),
             logical.to_string(),
             allocated.to_string(),
-            direct_files.to_string(),
-        ]);
+        ];
         content.push_str(
             &row.iter()
                 .map(|field| delimited_field(field, delimiter))
@@ -461,10 +597,10 @@ pub fn export_cached_files_csv(
 
     DiskCsvExport {
         content,
-        exported: matches.len(),
-        folders: folders.len(),
-        total,
-        truncated,
+        exported: types.len(),
+        folders: 0,
+        total: types.len(),
+        truncated: false,
     }
 }
 
@@ -480,6 +616,8 @@ pub(crate) struct FlatNode {
     pub(crate) modified_epoch_ms: Option<u64>,
     pub(crate) created_epoch_ms: Option<u64>,
     pub(crate) accessed_epoch_ms: Option<u64>,
+    #[serde(default)]
+    pub(crate) mft_record: Option<u64>,
     pub(crate) attributes: String,
     pub(crate) file_count: u64,
     pub(crate) extension: String,
@@ -665,6 +803,7 @@ where
         modified_epoch_ms: modified_millis(&root_metadata),
         created_epoch_ms: created_millis(&root_metadata),
         accessed_epoch_ms: accessed_millis(&root_metadata),
+        mft_record: None,
         attributes: metadata_attributes(&root_metadata),
         file_count: 0,
         extension: String::new(),
@@ -750,6 +889,7 @@ where
             modified_epoch_ms: modified_millis(&metadata),
             created_epoch_ms: created_millis(&metadata),
             accessed_epoch_ms: accessed_millis(&metadata),
+            mft_record: None,
             attributes: metadata_attributes(&metadata),
             file_count: if is_dir { 0 } else { 1 },
             extension: extension.clone(),
@@ -892,6 +1032,7 @@ pub(crate) fn finalize_scan(
                 modified_epoch_ms: node.modified_epoch_ms,
                 created_epoch_ms: node.created_epoch_ms,
                 accessed_epoch_ms: node.accessed_epoch_ms,
+                mft_record: node.mft_record,
                 attributes: node.attributes.clone(),
             });
         } else {
@@ -934,6 +1075,7 @@ pub(crate) fn finalize_scan(
                 modified_epoch_ms: node.modified_epoch_ms,
                 created_epoch_ms: node.created_epoch_ms,
                 accessed_epoch_ms: node.accessed_epoch_ms,
+                mft_record: node.mft_record,
                 attributes: node.attributes.clone(),
             }
         })
@@ -987,6 +1129,7 @@ pub(crate) fn finalize_scan(
                             modified_epoch_ms: node.modified_epoch_ms,
                             created_epoch_ms: node.created_epoch_ms,
                             accessed_epoch_ms: node.accessed_epoch_ms,
+                            mft_record: node.mft_record,
                             attributes: node.attributes.clone(),
                         }
                     })
@@ -1042,8 +1185,17 @@ pub(crate) fn finalize_scan(
         },
         protected_roots: vec![root_path.clone()],
         file_index: Some(DiskFileIndex {
-            root_path,
+            root_path: root_path.clone(),
             files: indexed_files,
+            volumes: if engine == "csv" {
+                Vec::new()
+            } else {
+                vec![DiskVolumeStat {
+                    path: root_path.clone(),
+                    total_bytes: volume_total_bytes,
+                    free_bytes: volume_free_bytes,
+                }]
+            },
             complete: index_complete,
         }),
     }
@@ -1138,6 +1290,7 @@ pub fn merge_disk_scans(results: Vec<DiskScanResult>, label: &str) -> Result<Dis
     let mut file_types: HashMap<String, (u64, u64)> = HashMap::new();
     let mut protected_roots = Vec::new();
     let mut volumes: HashMap<String, (u64, u64)> = HashMap::new();
+    let mut volume_stats: Vec<DiskVolumeStat> = Vec::new();
     let mut total_files = 0u64;
     let mut total_dirs = 0u64;
     let mut total_size = 0u64;
@@ -1150,6 +1303,7 @@ pub fn merge_disk_scans(results: Vec<DiskScanResult>, label: &str) -> Result<Dis
     for mut result in results {
         if let Some(index) = result.file_index.take() {
             index_complete &= index.complete;
+            volume_stats.extend(index.volumes);
             files.extend(index.files);
         } else {
             index_complete = false;
@@ -1244,6 +1398,7 @@ pub fn merge_disk_scans(results: Vec<DiskScanResult>, label: &str) -> Result<Dis
         file_index: Some(DiskFileIndex {
             root_path,
             files,
+            volumes: volume_stats,
             complete: index_complete,
         }),
     })
@@ -1566,6 +1721,9 @@ mod tests {
             "csv",
             false,
             false,
+            false,
+            false,
+            false,
         );
         assert_eq!(exported.total, 2);
         assert_eq!(exported.exported, 2);
@@ -1589,6 +1747,9 @@ mod tests {
             "csv",
             false,
             false,
+            false,
+            false,
+            false,
         );
         assert_eq!(limited.exported, 1);
         assert!(limited.truncated);
@@ -1604,6 +1765,9 @@ mod tests {
             "name",
             10,
             "csv",
+            false,
+            false,
+            false,
             false,
             false,
         );
@@ -1624,6 +1788,9 @@ mod tests {
             "csv",
             false,
             false,
+            false,
+            false,
+            false,
         );
         assert_eq!(excluded.total, 1);
         assert!(excluded.content.contains("beta,quoted.txt"));
@@ -1641,6 +1808,9 @@ mod tests {
             "tsv",
             true,
             true,
+            true,
+            true,
+            true,
         );
         assert_eq!(with_folders.folders, 1);
         assert!(with_folders.content.contains("\tFile\t"));
@@ -1648,8 +1818,88 @@ mod tests {
         assert!(with_folders.content.contains("Created"));
         assert!(with_folders.content.contains("LastAccessed"));
         assert!(with_folders.content.contains("DirectFiles"));
+        assert!(with_folders.content.contains("ParentPercent"));
+        assert!(with_folders.content.contains("MftRecord"));
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn exports_mft_record_numbers_when_requested() {
+        let index = DiskFileIndex {
+            root_path: r"C:\".to_string(),
+            files: vec![CachedDiskFile {
+                path: r"C:\Temp\sample.bin".to_string(),
+                size_bytes: 16,
+                allocated_bytes: 16,
+                modified_epoch_ms: Some(1_700_000_000_000),
+                created_epoch_ms: None,
+                accessed_epoch_ms: None,
+                mft_record: Some(42),
+                attributes: "A".to_string(),
+            }],
+            volumes: vec![DiskVolumeStat {
+                path: r"C:\".to_string(),
+                total_bytes: 1000,
+                free_bytes: 250,
+            }],
+            complete: true,
+        };
+
+        let exported = export_cached_files_csv(
+            &index, "", None, None, None, None, None, "name", 10, "csv", false, false,
+            false, true, true,
+        );
+        assert!(exported.content.contains("Name,Path,MftRecord,Type"));
+        assert!(exported.content.contains("C:\\Temp\\sample.bin,42,File"));
+        assert!(exported.content.contains("Drive,TotalBytes,FreeBytes,UsedBytes"));
+    }
+
+    #[test]
+    fn exports_file_type_totals() {
+        let index = DiskFileIndex {
+            root_path: r"C:\".to_string(),
+            files: vec![
+                CachedDiskFile {
+                    path: r"C:\a.txt".to_string(),
+                    size_bytes: 10,
+                    allocated_bytes: 16,
+                    modified_epoch_ms: None,
+                    created_epoch_ms: None,
+                    accessed_epoch_ms: None,
+                    mft_record: None,
+                    attributes: "A".to_string(),
+                },
+                CachedDiskFile {
+                    path: r"C:\b.txt".to_string(),
+                    size_bytes: 20,
+                    allocated_bytes: 32,
+                    modified_epoch_ms: None,
+                    created_epoch_ms: None,
+                    accessed_epoch_ms: None,
+                    mft_record: None,
+                    attributes: "A".to_string(),
+                },
+                CachedDiskFile {
+                    path: r"C:\c.bin".to_string(),
+                    size_bytes: 5,
+                    allocated_bytes: 8,
+                    modified_epoch_ms: None,
+                    created_epoch_ms: None,
+                    accessed_epoch_ms: None,
+                    mft_record: None,
+                    attributes: "A".to_string(),
+                },
+            ],
+            volumes: vec![],
+            complete: true,
+        };
+
+        let exported = export_cached_file_types_csv(&index, "csv");
+        assert_eq!(exported.exported, 2);
+        assert!(exported.content.contains("Extension,FileCount,LogicalBytes,AllocatedBytes"));
+        assert!(exported.content.contains("txt,2,30,48"));
+        assert!(exported.content.contains("bin,1,5,8"));
     }
 
     #[test]

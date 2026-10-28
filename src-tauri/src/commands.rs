@@ -1111,6 +1111,9 @@ pub async fn export_disk_files_csv(
     format: Option<String>,
     include_dates: Option<bool>,
     include_folders: Option<bool>,
+    include_parent_percent: Option<bool>,
+    include_mft: Option<bool>,
+    include_drive_info: Option<bool>,
 ) -> Result<scanner::disk_scan::DiskCsvExport, String> {
     let key = disk_cache_key(&path);
     let index = {
@@ -1129,6 +1132,9 @@ pub async fn export_disk_files_csv(
     let format = format.unwrap_or_else(|| "csv".to_string());
     let include_dates = include_dates.unwrap_or(false);
     let include_folders = include_folders.unwrap_or(false);
+    let include_parent_percent = include_parent_percent.unwrap_or(false);
+    let include_mft = include_mft.unwrap_or(false);
+    let include_drive_info = include_drive_info.unwrap_or(false);
     tauri::async_runtime::spawn_blocking(move || {
         scanner::disk_scan::export_cached_files_csv(
             &index,
@@ -1143,7 +1149,35 @@ pub async fn export_disk_files_csv(
             &format,
             include_dates,
             include_folders,
+            include_parent_percent,
+            include_mft,
+            include_drive_info,
         )
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn export_disk_file_types_csv(
+    cache: tauri::State<'_, scanner::disk_scan::DiskFileCache>,
+    path: String,
+    format: Option<String>,
+) -> Result<scanner::disk_scan::DiskCsvExport, String> {
+    let key = disk_cache_key(&path);
+    let index = {
+        let indexes = cache
+            .0
+            .lock()
+            .map_err(|_| "Disk file index is unavailable".to_string())?;
+        indexes
+            .get(&key)
+            .cloned()
+            .ok_or_else(|| "Scan this path before exporting its file types.".to_string())?
+    };
+    let format = format.unwrap_or_else(|| "csv".to_string());
+    tauri::async_runtime::spawn_blocking(move || {
+        scanner::disk_scan::export_cached_file_types_csv(&index, &format)
     })
     .await
     .map_err(|e| e.to_string())

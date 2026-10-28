@@ -389,6 +389,7 @@ pub fn import_scan_csv(
                     modified_epoch_ms: None,
                     created_epoch_ms: None,
                     accessed_epoch_ms: None,
+                    mft_record: None,
                     attributes: "D".to_string(),
                     file_count: 0,
                     extension: String::new(),
@@ -468,6 +469,7 @@ pub fn import_scan_csv(
                         modified_epoch_ms: modified,
                         created_epoch_ms: created,
                         accessed_epoch_ms: accessed,
+                        mft_record: None,
                         attributes: attributes.clone(),
                         file_count: 1,
                         extension: super::disk_scan::file_extension(&current_path)
@@ -520,6 +522,7 @@ pub fn import_scan_csv(
                     modified_epoch_ms: if is_last { modified } else { None },
                     created_epoch_ms: if is_last { created } else { None },
                     accessed_epoch_ms: if is_last { accessed } else { None },
+                    mft_record: None,
                     attributes: directory_attributes,
                     file_count: 0,
                     extension: String::new(),

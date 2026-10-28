@@ -150,6 +150,9 @@
   let exportFormat = $state<"csv" | "tsv">("csv");
   let exportIncludeDates = $state(false);
   let exportIncludeFolders = $state(false);
+  let exportIncludeParentPercent = $state(false);
+  let exportIncludeMft = $state(false);
+  let exportIncludeDriveInfo = $state(false);
   let isExporting = $state(false);
   let fileScope = $state<"all" | "folder">("all");
   let fileFilterMode = $state<"name" | "path">("name");
@@ -1202,6 +1205,9 @@
         format: exportFormat,
         includeDates: exportIncludeDates,
         includeFolders: exportIncludeFolders,
+        includeParentPercent: exportIncludeParentPercent,
+        includeMft: exportIncludeMft,
+        includeDriveInfo: exportIncludeDriveInfo,
       });
       const mime = exportFormat === "tsv"
         ? "text/tab-separated-values;charset=utf-8"
@@ -1236,6 +1242,28 @@
       toast.show(t("Export failed: {message}", { message: e.toString() }), "error");
     } finally {
       isExporting = false;
+    }
+  }
+
+  async function exportFileTypesCsv() {
+    if (!result) return;
+    try {
+      const exported = await invoke<DiskCsvExport>("export_disk_file_types_csv", {
+        path: result.root_path,
+        format: "csv",
+      });
+      const blob = new Blob([exported.content], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `purgekit_file_types_${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      toast.show(t("Exported {count} file types.", { count: exported.exported.toLocaleString() }), "success");
+    } catch (e: any) {
+      toast.show(t("Export failed: {message}", { message: e.toString() }), "error");
     }
   }
 
@@ -2359,6 +2387,17 @@ ${duplicateRows ? `<h2>Duplicate groups (top 50)</h2><table><thead><tr><th>Name<
           </div>
         </div>
       {:else if activeView === "types"}
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <span class="text-[11px] font-mono uppercase tracking-wider text-text-muted">{t("File types")}</span>
+          <button
+            type="button"
+            onclick={exportFileTypesCsv}
+            class="px-3 py-2 rounded-lg bg-surface-bg border border-border-default hover:bg-elevated-bg text-xs font-semibold text-text-secondary hover:text-text-primary transition-colors"
+            title={t("Export file types to a CSV file")}
+          >
+            {t("Export types")}
+          </button>
+        </div>
         <div class="border border-border-default rounded-lg bg-surface-bg/40 p-2 space-y-1">
           {#each result.file_types as type}
             <button
@@ -2574,6 +2613,18 @@ ${duplicateRows ? `<h2>Duplicate groups (top 50)</h2><table><thead><tr><th>Name<
           <label class="flex items-center gap-2 text-xs text-text-secondary cursor-pointer">
             <input type="checkbox" bind:checked={exportIncludeDates} class="accent-accent" />
             {t("Include created and last-accessed dates")}
+          </label>
+          <label class="flex items-center gap-2 text-xs text-text-secondary cursor-pointer">
+            <input type="checkbox" bind:checked={exportIncludeParentPercent} class="accent-accent" />
+            {t("Include percentage of parent")}
+          </label>
+          <label class="flex items-center gap-2 text-xs text-text-secondary cursor-pointer">
+            <input type="checkbox" bind:checked={exportIncludeMft} class="accent-accent" />
+            {t("Include MFT record numbers (MFT scans)")}
+          </label>
+          <label class="flex items-center gap-2 text-xs text-text-secondary cursor-pointer">
+            <input type="checkbox" bind:checked={exportIncludeDriveInfo} class="accent-accent" />
+            {t("Include drive size information")}
           </label>
         </div>
 
