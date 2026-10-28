@@ -2028,25 +2028,33 @@ pub struct BulkUninstallProgress {
     pub message: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct BulkUninstallOutcome {
+    pub remnants: Vec<RemnantItem>,
+    pub failed: u32,
+}
+
 #[tauri::command]
 pub async fn run_bulk_silent_uninstall(
     app: AppHandle,
     app_ids: Vec<String>,
     auto_purge: bool,
     force_on_failure: Option<bool>,
-) -> Result<Vec<RemnantItem>, String> {
+) -> Result<BulkUninstallOutcome, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let mut all_apps = scanner::scan_registry();
         all_apps.extend(scanner::scan_uwp_apps());
 
         let total = app_ids.len() as u32;
         let mut all_remaining_remnants = Vec::new();
+        let mut failed = 0u32;
 
         for (index, id) in app_ids.iter().enumerate() {
             let current = (index + 1) as u32;
             let target_app = match all_apps.iter().find(|a| &a.id == id) {
                 Some(a) => a,
                 None => {
+                    failed += 1;
                     let _ = app.emit("bulk-uninstall-progress", BulkUninstallProgress {
                         app_id: id.clone(),
                         app_name: id.clone(),
@@ -2136,6 +2144,7 @@ pub async fn run_bulk_silent_uninstall(
             }
 
             if !uninstall_success {
+                failed += 1;
                 let _ = app.emit("bulk-uninstall-progress", BulkUninstallProgress {
                     app_id: id.clone(),
                     app_name: app_name.clone(),
@@ -2217,7 +2226,10 @@ pub async fn run_bulk_silent_uninstall(
 
         crate::broadcast::broadcast_all_system_changes();
 
-        Ok(all_remaining_remnants)
+        Ok(BulkUninstallOutcome {
+            remnants: all_remaining_remnants,
+            failed,
+        })
     }).await.map_err(|e| e.to_string())?
 }
 

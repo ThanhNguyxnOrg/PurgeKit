@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
-  import { Search, RefreshCw, Trash2, X, CheckSquare, Square, Folder, Database, File } from "@lucide/svelte";
+  import { Search, RefreshCw, Trash2, X, CheckSquare, Square, Folder, Database, File, ShieldAlert } from "@lucide/svelte";
   import { toast } from "../toast.svelte";
   import { t } from "$lib/i18n.svelte";
 
@@ -44,6 +44,11 @@
     size: number;
     confidence: string;
     score: number;
+  }
+
+  interface BulkUninstallOutcome {
+    remnants: RemnantItem[];
+    failed: number;
   }
 
 
@@ -123,6 +128,7 @@
   let bulkUninstallTotal = $state(0);
   let bulkUninstallCurrentAppName = $state("");
   let bulkUninstallStatusMessage = $state("");
+  let bulkUninstallFailures = $state(0);
 
   // Fetch apps from Tauri backend
   async function loadApps() {
@@ -590,7 +596,12 @@
         items: itemsToPurge,
       });
       purgeResult = result;
-      toast.show(t("Purge completed! Successfully removed {count} remnant items.", { count: result.success }), "success");
+      toast.show(
+        result.fail > 0
+          ? t("Removed {success} items; {failed} failed.", { success: result.success, failed: result.fail })
+          : t("Purge completed! Successfully removed {count} remnant items.", { count: result.success }),
+        result.fail > 0 ? "warning" : "success"
+      );
       // Reload apps list
       await loadApps();
     } catch (e: any) {
@@ -727,15 +738,17 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
     bulkUninstallLog = [t("Initializing bulk silent uninstallation for {count} application(s)...", { count: selectedIds.length })];
     bulkRemnants = [];
     selectedBulkRemnants = {};
+    bulkUninstallFailures = 0;
     
     try {
-      const remainingRemnants = await invoke<RemnantItem[]>("run_bulk_silent_uninstall", {
+      const outcome = await invoke<BulkUninstallOutcome>("run_bulk_silent_uninstall", {
         appIds: selectedIds,
         autoPurge: bulkAutoPurge,
         forceOnFailure: bulkForceOnFailure,
       });
       
-      bulkRemnants = remainingRemnants;
+      bulkUninstallFailures = outcome.failed;
+      bulkRemnants = outcome.remnants;
       
       bulkRemnants.forEach((item) => {
         selectedBulkRemnants[item.path] = item.confidence === "VeryHigh";
@@ -745,7 +758,12 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
         bulkUninstallStep = "remnants_list";
       } else {
         bulkUninstallStep = "done";
-        toast.show(t("Bulk uninstallation and auto-purge completed! No remaining leftovers found."), "success");
+        toast.show(
+          bulkUninstallFailures > 0
+            ? t("Bulk uninstallation finished with {count} failure(s). Review the log.", { count: bulkUninstallFailures })
+            : t("Bulk uninstallation and auto-purge completed! No remaining leftovers found."),
+          bulkUninstallFailures > 0 ? "warning" : "success"
+        );
         clearAppSelection();
         await loadApps();
       }
@@ -774,7 +792,12 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
       const result = await invoke<{ success: number; fail: number }>("purge_remnants", {
         items: itemsToPurge,
       });
-      toast.show(t("Purge completed! Removed {count} leftover items.", { count: result.success }), "success");
+      toast.show(
+        result.fail > 0
+          ? t("Removed {success} items; {failed} failed.", { success: result.success, failed: result.fail })
+          : t("Purge completed! Removed {count} leftover items.", { count: result.success }),
+        result.fail > 0 ? "warning" : "success"
+      );
       bulkUninstallStep = "done";
       clearAppSelection();
       await loadApps();
@@ -1746,15 +1769,23 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
 
           {:else if bulkUninstallStep === "done"}
             <div class="py-12 flex flex-col items-center justify-center text-center gap-4 animate-fade-in">
-              <div class="w-16 h-16 rounded-full bg-success/10 border border-success/20 flex items-center justify-center text-success shadow-inner">
-                <svg class="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="20 6 9 17 4 12"/>
-                </svg>
+              <div class="w-16 h-16 rounded-full {bulkUninstallFailures > 0 ? 'bg-warning/10 border-warning/20 text-warning' : 'bg-success/10 border-success/20 text-success'} border flex items-center justify-center shadow-inner">
+                {#if bulkUninstallFailures > 0}
+                  <ShieldAlert class="w-8 h-8" />
+                {:else}
+                  <svg class="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="20 6 9 17 4 12"/>
+                  </svg>
+                {/if}
               </div>
               <div>
-                <h4 class="text-base font-bold text-text-primary">{t("All Applications Processed!")}</h4>
+                <h4 class="text-base font-bold text-text-primary">
+                  {bulkUninstallFailures > 0 ? t("Finished with failures") : t("All Applications Processed!")}
+                </h4>
                 <p class="text-xs text-text-muted mt-2 max-w-sm leading-relaxed">
-                  {t("Bulk uninstallation and leftovers cleaning completed successfully.")}
+                  {bulkUninstallFailures > 0
+                    ? t("{count} application(s) could not be uninstalled. Review the log and try again as Administrator if needed.", { count: bulkUninstallFailures })
+                    : t("Bulk uninstallation and leftovers cleaning completed successfully.")}
                 </p>
               </div>
             </div>

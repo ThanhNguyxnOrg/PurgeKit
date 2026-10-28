@@ -253,6 +253,13 @@ const apps: Record<string, string> = {
     "Một số ứng dụng đã chọn cần quyền Quản trị. Hãy khởi động lại PurgeKit bằng quyền Quản trị rồi thử lại.",
   "Administrator rights are required. Restart PurgeKit as Administrator to continue.":
     "Cần quyền Quản trị. Hãy khởi động lại PurgeKit bằng quyền Quản trị để tiếp tục.",
+  "Bulk uninstallation finished with {count} failure(s). Review the log.":
+    "Gỡ cài đặt hàng loạt kết thúc với {count} lỗi. Hãy xem nhật ký.",
+  "Removed {success} items; {failed} failed.":
+    "Đã xoá {success} mục; {failed} mục thất bại.",
+  "Finished with failures": "Hoàn tất nhưng có lỗi",
+  "{count} application(s) could not be uninstalled. Review the log and try again as Administrator if needed.":
+    "Không thể gỡ {count} ứng dụng. Hãy xem nhật ký và thử lại bằng quyền Quản trị nếu cần.",
   "Restart as Administrator": "Khởi động lại bằng quyền Quản trị",
   "Uninstaller did not complete": "Trình gỡ cài đặt chưa hoàn tất",
   "No leftovers were detected, but the uninstaller reported an error. Verify the app is gone before retrying.":
