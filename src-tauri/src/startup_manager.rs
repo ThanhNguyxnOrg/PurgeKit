@@ -276,7 +276,8 @@ fn startup_target_missing(command: &str) -> bool {
     if command.trim().is_empty() {
         return false;
     }
-    let executable = crate::winutil::extract_executable_path(command);
+    let expanded = crate::winutil::expand_env_strings(command);
+    let executable = crate::winutil::extract_executable_path(&expanded);
     let path = Path::new(executable.trim().trim_matches('"'));
     path.is_absolute() && !path.exists()
 }
@@ -290,7 +291,8 @@ fn startup_icon_source(command: &str, file_path: Option<&Path>) -> Option<PathBu
     if command.trim().is_empty() {
         return None;
     }
-    let executable = crate::winutil::extract_executable_path(command);
+    let expanded = crate::winutil::expand_env_strings(command);
+    let executable = crate::winutil::extract_executable_path(&expanded);
     let path = Path::new(executable.trim().trim_matches('"'));
     path.is_file().then(|| path.to_path_buf())
 }
@@ -711,6 +713,13 @@ mod tests {
         ));
         assert!(!startup_target_missing(r"C:\Windows\System32\cmd.exe"));
         assert!(!startup_target_missing("cmd.exe /c echo hello"));
+    }
+
+    #[test]
+    fn expands_environment_variables_in_startup_commands() {
+        assert!(!startup_target_missing(r"%windir%\System32\cmd.exe"));
+        assert!(startup_target_missing(r"%windir%\PurgeKitMissing.exe"));
+        assert!(startup_icon_source(r"%windir%\System32\cmd.exe", None).is_some());
     }
 
     #[test]

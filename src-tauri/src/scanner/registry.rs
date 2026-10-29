@@ -371,13 +371,6 @@ fn scan_uninstall_key(
         if icon_base64.is_none() {
             let app_name_lower = display_name.to_lowercase();
             let mut search_exes = Vec::new();
-            
-            // Special cases
-            if app_name_lower.contains("github cli") {
-                search_exes.push("gh.exe".to_string());
-            } else if app_name_lower.contains("go programming") || app_name_lower.contains("golang") {
-                search_exes.push("go.exe".to_string());
-            }
 
             // Generic candidates: Extract words from the display name
             let cleaned_name = app_name_lower
