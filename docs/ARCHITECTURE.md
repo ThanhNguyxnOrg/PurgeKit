@@ -26,17 +26,23 @@ graph TD
 * **`src/lib.rs`**: Initializes Tauri plugins, configures SQLite database tables, registers Tauri commands, and binds background process lifecycles.
 * **`src/db.rs`**: Handles connections to `purgekit.db` (SQLite). Stores and queries snapshot records.
 * **`src/snapshot_engine.rs`**: Implements system baseline scanning, JSON compression, and the diff engine.
-* **`src/commands.rs`**: Binds Tauri IPC invocations to Rust functions. Handles thread-spawning and background task processing.
+* **`src/commands.rs`**: Binds Tauri IPC invocations to Rust functions. Handles thread-spawning, validation and background task processing.
 * **`src/scanner/`** (Low-level scanner modules):
-  - **`registry.rs`**: Queries the uninstallation registry keys for standard 32-bit and 64-bit desktop applications.
-  - **`msi.rs`**: Integrates with Windows Installer APIs via Win32 FFI to retrieve MSI application metadata.
-  - **`uwp.rs`**: Executes powershell tasks in the background to scan installed Windows Store packages.
-  - **`cli_dev.rs`**: Detects and cleans developer tool caches (Cargo, npm, pip, go, yarn, pnpm, etc.).
-  - **`remnants.rs`**: Scans the filesystem and registry for orphaned app files using name token matching.
-  - **`path_cleaner.rs`**: Sanitizes Windows PATH variables and propagates changes using `WM_SETTINGCHANGE`.
-  - **`project_sweeper.rs`**: Traverses project workspace directories in search of heavy build files.
-  - **`wsl_shrinker.rs`**: Manages WSL2 distributions, VHDX paths, and automates DiskPart compaction.
-  - **`toolchain_sweeper.rs`**: Manages compiler and runtime versions for Rustup, NVM, and FNM.
+  - **`inventory.rs`**: Merges registry, Store, CLI, toolchain and portable entries into one inventory with icons and install dates.
+  - **`registry.rs`**: Queries uninstall registry keys; resolves icons, install locations and install dates.
+  - **`uwp.rs`**: Scans Store packages and resolves manifest logos/executables.
+  - **`cli_dev.rs`**: Detects and cleans developer caches and global CLI packages.
+  - **`dev_extensions.rs`**: Lists editor extensions with their executable paths.
+  - **`remnants.rs`**: Scans filesystem/registry leftovers with name-token matching.
+  - **`msi.rs` / `com_purger.rs`**: MSI product and COM/typelib orphan scans.
+  - **`path_cleaner.rs`**: Sanitizes Windows PATH variables and propagates changes with `WM_SETTINGCHANGE`.
+  - **`project_sweeper.rs`**: Traverses workspace roots for build artifacts and enforces scan-bound deletion.
+  - **`startup_manager.rs`**: Registry Run keys, Startup folders, scheduled tasks, icons and stale-target detection.
+  - **`disk_scan.rs` / `csv_scan.rs`**: Traversal and CSV/TSV disk scans, file index, duplicates and export.
+  - **`mft_scan.rs` / `volume_reader.rs`**: Live NTFS MFT reads, `.pkmft` dumps, WizTree `.MFT` import and aligned volume I/O.
+  - **`derived_cache.rs`**: Persistent derived icon/location/size/date cache.
+  - **`wsl_shrinker.rs`**: WSL distribution discovery and DiskPart compaction.
+  - **`toolchain_sweeper.rs`**: Rustup/NVM/FNM version discovery and removal.
 
 ### ⚡ Frontend Svelte UI (`src/`)
 
@@ -49,7 +55,9 @@ graph TD
   - **`WslShrinkerTab.svelte`**: Lists WSL distributions, disk sizes, sparse state, and renders the live DiskPart terminal logs view.
   - **`SnapshotsTab.svelte`**: Step-by-step workflow for taking system snapshots and viewing diff lists.
   - **`PathCleanerTab.svelte`**: Renders PATH entries, broken paths, duplicates, and repair controls.
-  - **`SettingsTab.svelte`**: Configures application policies and checks for Administrator execution level.
+  - **`StartupTab.svelte`**: Startup entries with icons, stale-target warnings and enable/delete actions.
+  - **`DiskSpaceTab.svelte`**: Disk treemap, MFT scans/dumps, file/type/duplicate views and exports.
+  - **`SettingsTab.svelte`**: Theme/accessibility, backup policy, cache controls and Administrator status.
 
 ---
 
@@ -71,48 +79,21 @@ CREATE TABLE IF NOT EXISTS snapshots (
 
 ---
 
-## 💬 Tauri IPC Commands Table
+## 💬 Tauri IPC Commands
 
-The frontend communicates with the Rust backend using Tauri's asynchronous `invoke` method. Below is the list of registered commands:
+The frontend uses Tauri `invoke` for all backend operations. Commands are grouped below; argument names and return types are defined in [`src-tauri/src/commands.rs`](../src-tauri/src/commands.rs).
 
-| Command | Arguments | Return Type | Description |
-|---|---|---|---|
-| `get_installed_apps` | None | `Vec<InstalledApp>` | Queries uninstallation registries and UWP packages |
-| `get_dev_tools` | None | `Vec<DevToolInfo>` | Returns dynamic cache sizes, locations, and versions |
-| `clean_dev_tool_cache` | `name: String` | `u64` | Clears cache for a developer tool; returns bytes freed |
-| `get_app_remnants` | `appName: String`, `publisher: String`, `installLocation: String` | `Vec<RemnantItem>` | Scans Registry and folders for leftovers |
-| `purge_remnants` | `items: Vec<RemnantItem>` | `PurgeResult` | Permanently deletes selected leftover items |
-| `take_snapshot` | `name: String` | `String` | Recursively indexes OS state and saves JSON |
-| `list_snapshots` | None | `Vec<SnapshotRecord>` | Retrieves all system snapshot records from SQLite |
-| `delete_snapshot` | `id: String` | None | Wipes snapshot files from disk and database |
-| `compare_snapshots` | `beforeId: String`, `afterId: String` | `SnapshotDiff` | Compares registry/files to identify additions |
-| `get_path_entries` | None | `Vec<PathEntry>` | Reads User and System PATH values from registry |
-| `save_path_entries` | `remainingValues: Vec<String>`, `scope: String` | None | Writes PATH array to registry and broadcasts update |
-| `run_uninstall_command` | `uninstallString: String` | None | Spawns uninstaller command with safety checks |
-| `get_global_cli_packages` | None | `Vec<CliPackageInfo>` | Lists globally installed npm/pip/cargo CLI packages |
-| `uninstall_global_cli_package` | `name: String`, `manager: String` | None | Uninstalls global CLI packages with remnant cleansing |
-| `get_cli_package_bin_names` | `name: String` | `Vec<String>` | Gets binary/exe names associated with a CLI package |
-| `get_cli_package_remnants` | `name: String`, `binNames: Vec<String>` | `Vec<RemnantItem>` | Scans for remnants of uninstalled CLI packages |
-| `get_settings` | None | `Settings` | Retrieves active user preferences and policies |
-| `save_settings` | `settings: Settings` | None | Saves updated user preferences to local JSON |
-| `check_is_admin` | None | `bool` | Returns true if the process is elevated as Administrator |
-| `start_install_tracking` | None | None | Initiates installation tracking baseline snapshot |
-| `stop_install_tracking` | `name: String` | `String` | Concludes tracking and builds system snapshot diff |
-| `get_startup_items` | None | `Vec<StartupItem>` | Lists all startup run keys, directories, and scheduled tasks |
-| `set_startup_item_status` | `id: String`, `enabled: bool` | None | Enables or disables a startup registry, folder, or task item |
-| `delete_startup_item` | `id: String` | None | Deletes startup entries permanently with safety checks |
-| `list_quarantine_items` | None | `Vec<QuarantineItem>` | Retrieves quarantined files and registries from SQLite |
-| `restore_quarantine_item` | `id: String` | None | Restores a quarantined folder or key back to its origin |
-| `delete_quarantine_item` | `id: String` | None | Wipes a quarantined item permanently from disk/database |
-| `run_bulk_silent_uninstall` | `apps: Vec<InstalledApp>` | None | Runs batch silent uninstallations, streaming progress events |
-| `scan_project_directories` | `roots: Vec<String>`, `folderTypes: Vec<String>` | `Vec<ProjectFolder>` | Traverses workspace roots for build files |
-| `delete_project_directories`| `paths: Vec<String>` | `Record<String, String>` | Batch purges selected folders and files |
-| `check_directory_exists` | `path: String` | `bool` | Checks if a path directory exists on the system |
-| `get_wsl_distros` | None | `Vec<WslDistroInfo>` | Returns WSL distributions and virtual disk paths |
-| `compact_wsl_distro` | `name: String`, `vhdxPath: String` | `String` | Shuts down WSL and runs DiskPart compaction |
-| `set_wsl_distro_sparse_mode`| `name: String`, `sparse: bool` | None | Configures WSL VHDX drive sparse property |
-| `get_toolchain_versions` | None | `Vec<ToolchainVersion>` | Scans Rustup, NVM, and FNM version directories |
-| `delete_toolchain_version` | `manager: String`, `version: String`, `path: String` | None | Uninstalls runtime versions with folder-purge fallback |
+| Area | Commands |
+|---|---|
+| Apps & uninstall | `get_installed_apps`, `get_app_remnants`, `purge_remnants`, `remove_uninstall_entry`, `force_remove_app`, `run_uninstall_command`, `run_app_command`, `run_bulk_silent_uninstall` |
+| Developer tools | `get_dev_tools`, `clean_dev_tool_cache`, `get_dev_extensions`, `get_global_cli_packages`, `uninstall_global_cli_package`, `get_cli_package_bin_names`, `get_cli_package_remnants` |
+| Disk & MFT | `scan_disk_space`, `scan_disk_space_multi`, `cancel_disk_scan`, `search_disk_files`, `export_disk_files_csv`, `export_disk_file_types_csv`, `import_disk_csv`, `list_disk_drives`, `dump_mft_scan`, `list_mft_dumps`, `load_mft_dump`, `load_wiztree_mft`, `get_mft_dump_dir` |
+| Startup | `get_startup_items`, `set_startup_item_status`, `delete_startup_item` |
+| Snapshots & safety | `take_snapshot`, `list_snapshots`, `delete_snapshot`, `compare_snapshots`, `list_quarantine_items`, `restore_quarantine_item`, `delete_quarantine_item`, `start_install_tracking`, `stop_install_tracking`, `get_pending_reboot_items`, `get_derived_cache_summary`, `clear_derived_cache` |
+| Settings & elevation | `get_settings`, `save_settings`, `check_is_admin`, `restart_as_admin`, `check_directory_exists` |
+| Cleaners | `get_path_entries`, `save_path_entries`, `scan_project_directories`, `delete_project_directories`, `get_wsl_distros`, `compact_wsl_distro`, `set_wsl_distro_sparse_mode`, `get_toolchain_versions`, `delete_toolchain_version` |
+
+All commands validate paths, registry keys and process inputs in the Rust layer; the UI is not the security boundary.
 
 ---
 

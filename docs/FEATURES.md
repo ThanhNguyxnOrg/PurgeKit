@@ -22,7 +22,7 @@ Before running an installer, you capture a **Baseline Snapshot**:
   - `%ProgramFiles%` (`C:\Program Files`)
   - `%ProgramFiles(x86)%` (`C:\Program Files (x86)`)
   It catalogs all file names, directory trees, file sizes, and creation dates.
-* **Storage & Indexing**: Snapshots are serialized into a compressed JSON structure and saved to `.gemini/antigravity-ide/snapshots/` in the user's AppData directory. Key metadata is stored in a local SQLite database (`purgekit.db`) for quick querying.
+* **Storage & Indexing**: Snapshots are serialized into a compressed JSON structure and saved to `%AppData%\PurgeKit\snapshots\`; metadata is stored in the local SQLite database `%AppData%\PurgeKit\purgekit.db` for quick querying.
 
 ### ⚖️ Comparison (Diff) Engine
 After the application installation completes, you take a **Post-Install Snapshot**. The diff engine performs a comparison between the two snapshots:
@@ -37,12 +37,15 @@ After the application installation completes, you take a **Post-Install Snapshot
 PurgeKit provides a centralized management console to inspect, uninstall, and deep-clean standard desktop applications and Windows Store packages (UWP).
 
 ### 🔎 Hybrid Scanner
-PurgeKit queries two distinct sources to compile its application list:
+PurgeKit queries three source families to compile its application list:
 1. **Desktop Applications (Registry)**: Queries the standard Windows uninstallation registry paths to extract display names, publishers, versions, install locations, and uninstallation strings:
    - `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall`
    - `HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall`
    - `HKLM\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall`
 2. **Windows Store Apps (UWP)**: Executes PowerShell bindings in the background (`Get-AppxPackage -AllUsers`) to retrieve installed package names, publishers, versions, installation directories, and package IDs.
+3. **Developer Sources**: Merges global CLI packages, Rustup/NVM/FNM toolchains and unclaimed portable applications into the same inventory, with source filters, install dates and automatic icons.
+
+Icons resolve through DisplayIcon, Start Menu shortcut targets, uninstallers, install folders, PATH and package-manager runtime executables. Manifest logos are preferred for Store apps; fully transparent images are rejected. Stale entries keep a letter tile rather than a fabricated logo.
 
 ### 📦 Bulk Silent Uninstallation
 * **Command Extraction**: PurgeKit inspects the registry uninstallation string. If a silent or quiet uninstallation parameter is supported (e.g. `/S`, `/quiet`, `/qn`, `/uninstall`, `/silent`), it extracts and runs it.
@@ -144,3 +147,29 @@ Each entry is validated:
 
 ### 🔧 Repair & Propagation
 When paths are deleted, PurgeKit updates the Registry entries with `REG_EXPAND_SZ` types and broadcasts a Windows message `WM_SETTINGCHANGE` to all running processes so that the updated PATH is loaded immediately without requiring a system reboot.
+
+---
+
+## 🚀 8. Startup Manager
+
+Startup Manager inventories three autostart surfaces and keeps safe boundaries around every mutation:
+
+* **Registry Run keys:** HKCU/HKLM plus `RunOnce` and `Wow6432Node` variants.
+* **Startup folders:** per-user and common Startup directories, resolved through shortcuts.
+* **Scheduled tasks:** boot/logon tasks under the Windows Tasks tree, with servicing tasks protected.
+
+Each item resolves a real icon from its executable or shortcut target. Absolute targets that no longer exist are marked with a warning instead of a blank icon. Enable/disable, delete and quarantine actions validate that the item still belongs to the scanned Startup set.
+
+---
+
+## 💽 9. Disk Space & MFT Scanner
+
+The disk workspace mirrors WizTree's analysis views without its destructive defaults:
+
+* **Scans:** drive roots and folders, multi-root scans separated by semicolons, allocated/logical sizes, free-space accounting and `NTFS` fast path when elevated.
+* **Views:** nested treemap with labels, free-space and small-file grouping; largest files; file types; duplicate candidates (name + size, optionally modified date).
+* **MFT:** live `$MFT` reads through an aligned volume reader, `.pkmft` dumps, and read-only WizTree `.MFT` import (raw records plus the `VOLDATA2` volume footer).
+* **Export:** CSV/TSV with scope, folder totals, created/accessed dates, parent %, MFT record numbers and drive-size info; file-types CSV; PNG treemap and self-contained HTML report.
+* **Safety:** imported dumps are read-only; quarantine is disabled until a live rescan. MFT dumps and live scans require Administrator access.
+
+See [DISK_SPACE.md](DISK_SPACE.md) for the workflow and field reference.

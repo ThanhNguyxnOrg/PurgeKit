@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased] - 2026-10-29
+
+### 💽 Disk Space & WizTree Parity
+* Treemap controls (labels, allocated/logical, free space, small-file grouping), breadcrumbs, double-click zoom and Up navigation.
+* File, file-type and duplicate views; CSV/TSV import; CSV/TSV export with folder totals, created/accessed dates, parent %, MFT record numbers and drive-size info.
+* File-types CSV, PNG treemap and self-contained HTML report.
+* WizTree `.MFT` import with `VOLDATA2` footer, volume metadata and read-only safety; `.pkmft` dump/load.
+
+### ⚡ Performance & Reliability
+* Parallel MFT parsing (file and live volume), 4–64 MB chunking and aligned volume reads.
+* Breadth-first tree budgeting keeps every top-level folder visible.
+* A 3.15 GB WizTree dump loads in about 52 seconds in the debug UI (down from 184 s); live `C:\Windows` folder scan completes in 51 s.
+
+### 🎨 UI & Application Inventory
+* 137/138 app rows and 12/15 Startup entries now resolve logos without app-name hardcoding; stale Startup targets are flagged.
+* Install dates for 137/138 rows via registry plus folder-creation fallback.
+* Semantic light/dark contrast tokens, action colors, icon frames and responsive Apps/Startup/PATH layouts.
+* Disk Space, Startup, DevTools and Settings documentation is synchronized with the current UI.
+
+### 🔐 Safety
+* Project Sweeper deletion is bound to the last scan result.
+* Elevated uninstallers, MFT volume reads, startup tasks and quarantine restore paths keep their validation gates.
+* Raw `.MFT`/`.pkmft` dumps are git-ignored.
+
 ## [1.2.1] - 2026-10-07
 
 ### 🐛 Bug Fixes & Reliability Enhancements

@@ -37,12 +37,16 @@
 
 ## 🔥 Core Modules
 
-PurgeKit is structured around five main modules:
-1. **🧹 Apps Manager & Bulk Silent Uninstaller**: Fetch standard desktop apps and UWP Store packages, uninstall them in batch, and scan/purge leftovers in Registry & file systems.
-2. **🗂️ Universal Project Sweeper**: Recursively scans workspace directories for heavy compile folders and dependencies (`node_modules`, `target`, `venv`, `.vs`...) and purges them. ([Guide](docs/PROJECT_SWEEPER.md))
-3. **🐋 WSL2 Virtual Disk Shrinker**: Safely compacts bloating virtual drive files (`ext4.vhdx`) using Windows DiskPart and manages dynamic auto-shrink (Sparse mode). ([Guide](docs/WSL_DISK_SHRINKER.md))
-4. **🛠️ Toolchain Version Sweeper & Dev Caches**: Detects and uninstalls unused/obsolete versions of Rustup compiler toolchains and Node runtimes (NVM / FNM) with safe folder purging fallbacks. ([Guide](docs/TOOLCHAIN_SWEEPER.md))
-5. **🖥️ PATH Environment Cleaner**: Identifies and repairs broken, duplicate, or redundant path variables in Windows User & System environments. ([Guide](docs/PATH_CLEANER.md))
+PurgeKit is structured around nine workspaces:
+1. **🧹 Apps Manager & Bulk Silent Uninstaller**: Unified desktop, Store, CLI, toolchain and portable inventory with icons, install dates, bulk silent uninstall, force-removal and leftover cleanup.
+2. **💽 Disk Space & MFT Scanner**: WizTree-style treemap, largest-files view, file types, duplicates, CSV/TSV import/export and live or imported NTFS MFT scans. ([Guide](docs/DISK_SPACE.md))
+3. **🛠️ Dev Tools & Global Packages**: Developer cache sizes, global CLI packages and runtime icons with safe uninstall paths. ([Guide](docs/GLOBAL_CLI_SWEEPER.md))
+4. **🗂️ Universal Project Sweeper**: Recursively scans workspace directories for heavy compile folders and dependencies (`node_modules`, `target`, `venv`, `.vs`...) and purges them. ([Guide](docs/PROJECT_SWEEPER.md))
+5. **🚀 Startup Manager**: Registry Run keys, Startup folders and scheduled tasks with enable/disable, stale-target warnings and real icons. ([Guide](docs/STARTUP_MANAGER.md))
+6. **🐋 WSL2 Virtual Disk Shrinker**: Safely compacts bloating virtual drive files (`ext4.vhdx`) using Windows DiskPart and manages dynamic auto-shrink (Sparse mode). ([Guide](docs/WSL_DISK_SHRINKER.md))
+7. **📸 Snapshots & Active Tracker**: Baseline registry/filesystem snapshots, diffing and NTFS USN journal tracking. ([Snapshots](docs/SNAPSHOT_ENGINE.md) · [Tracker](docs/ACTIVE_TRACKER.md))
+8. **🖥️ PATH Environment Cleaner**: Identifies and repairs broken, duplicate, or redundant path variables in Windows User & System environments. ([Guide](docs/PATH_CLEANER.md))
+9. **⚙️ Settings & Security**: Theme/accessibility controls, backup/quarantine policy, derived-icon cache management and administrator elevation. ([Security](docs/SECURITY_UAC.md))
 
 *For in-depth explanations of how each module works, see [✨ Detailed Feature Overview](docs/FEATURES.md).*
 
@@ -121,6 +125,7 @@ Detailed documents are categorized below and located in the [`docs/`](docs/) dir
 
 ### 🧹 Core Cleaners & Sweepers
 *   [✨ Detailed Feature Overview](docs/FEATURES.md) - Full capability breakdown of scanning, deep clean heuristics, and cleaners.
+*   [💽 Disk Space & MFT Scanner Guide](docs/DISK_SPACE.md) - Treemap, MFT scans, WizTree `.MFT` import, duplicates and exports.
 *   [🗂️ Universal Project Sweeper Guide](docs/PROJECT_SWEEPER.md) - Folder presets (`node_modules`, `target`, `venv`), traversal limits, and live events.
 *   [🐋 WSL2 Virtual Disk Shrinker Guide](docs/WSL_DISK_SHRINKER.md) - Ext4 VHDX compaction, DiskPart script automation, and sparse mode.
 *   [🛠️ Toolchain Version Sweeper Guide](docs/TOOLCHAIN_SWEEPER.md) - Rustup, NVM, and FNM version directories and active compiler locks.
@@ -144,13 +149,16 @@ Detailed documents are categorized below and located in the [`docs/`](docs/) dir
 
 ## 📝 Changelog
 
-### 🚀 [v1.2.0] - 2026-10-07
-Major security hardening, reliability, and Win32 safety architecture update:
-* **Enterprise Win32 Safety & Centralized Primitives**: Unified all canonicalization, safe path boundaries, service protection, and argument parsing under `winutil.rs`.
-* **System PATH Zeroing Fail-Safe**: Backend & UI guards completely block accidental clearing of the Windows System PATH.
-* **Uninstaller Privilege Escalation Bypass Defense**: Pre-expands `%VAR%` environment tokens prior to user-writable path inspection and WinVerifyTrust signature checks.
-* **Hardened DevTools Rules**: Command validation eliminates shell injection vulnerabilities across all dynamic developer tool cache scripts.
-* **Fast Locker Direct Branching**: Optimized directory deletion bypassing redundant `remove_file` system call roundtrips.
+### 🚀 [v1.2.1] - 2026-10-07
+Bug-fix release for CI release tagging, quoted PATH entries, System PATH priority, admin preflight and Project Sweeper boundaries.
+
+### 🧪 Unreleased - 2026-10-29
+* **💽 Disk Space parity:** WizTree-style treemap controls, file/types/duplicates views, CSV/TSV import/export, HTML/PNG reports, MFT record numbers and drive-size columns.
+* **📦 WizTree `.MFT` import:** raw MFT records plus the `VOLDATA2` footer load read-only with volume metadata; live MFT scans are validated on C: and `C:\Windows`.
+* **🔎 App icon coverage:** 137/138 inventory rows and 12/15 Startup entries resolve logos with no app-name special cases; stale Startup targets are flagged.
+* **📅 Install dates:** normalized registry dates plus folder-creation fallback for 137/138 rows.
+* **🚀 Large-scan performance:** parallel MFT parsing, breadth-first tree budgeting and aligned volume reads; a 3.15 GB dump loads in ~52 s in the debug UI.
+* **🔐 Safety hardening:** Project Sweeper deletion is bound to the last scan result and elevated volume/MFT reads are signature- and path-gated.
 
 *For full historical notes and previous releases, see [📝 CHANGELOG.md](CHANGELOG.md).*
 
