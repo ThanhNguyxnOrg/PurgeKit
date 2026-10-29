@@ -591,59 +591,55 @@ where
     let mut parsed_files = 0u64;
     let mut parsed_dirs = 0u64;
     let mut scanned_bytes = 0u64;
-    let mut errors = 0u64;
-    let mut buffer = vec![0u8; record_size];
-
-    for record_number in 0..total_records {
-        if record_number % 512 == 0 && cancel.load(Ordering::Relaxed) {
+    let errors = 0u64;
+    // Volume attribute reads are more reliable in smaller chunks.
+    let chunk_records = (4 * 1024 * 1024 / record_size).max(1) as u64;
+    let mut base = 0u64;
+    while base < total_records {
+        if cancel.load(Ordering::Relaxed) {
             return Err("Disk scan cancelled".to_string());
         }
+        let count = (total_records - base).min(chunk_records);
+        let mut buffer = vec![0u8; count as usize * record_size];
+        mft_data
+            .seek(&mut volume, std::io::SeekFrom::Start(base * record_size as u64))
+            .map_err(|error| format!("Could not seek the $MFT: {}", error))?;
+        mft_data
+            .read_exact(&mut volume, &mut buffer)
+            .map_err(|error| format!("Could not read the $MFT: {}", error))?;
 
-        let offset = record_number * record_size as u64;
-        if mft_data
-            .seek(&mut volume, std::io::SeekFrom::Start(offset))
-            .is_err()
-        {
-            errors += 1;
-            continue;
-        }
-        if mft_data.read_exact(&mut volume, &mut buffer).is_err() {
-            errors += 1;
-            continue;
-        }
+        let parsed: Vec<Option<MftRecord>> = (0..count as usize)
+            .into_par_iter()
+            .map(|index| {
+                let start = index * record_size;
+                let entry = MftEntry::from_buffer(
+                    buffer[start..start + record_size].to_vec(),
+                    base + index as u64,
+                )
+                .ok()?;
+                record_from_entry(&entry)
+            })
+            .collect();
 
-        let entry = match MftEntry::from_buffer(buffer, record_number) {
-            Ok(entry) => entry,
-            Err(_) => {
-                buffer = vec![0u8; record_size];
-                errors += 1;
-                continue;
+        for (index, record) in parsed.into_iter().enumerate() {
+            let Some(record) = record else { continue; };
+            if record.is_dir {
+                parsed_dirs += 1;
+            } else {
+                parsed_files += 1;
+                scanned_bytes = scanned_bytes.saturating_add(record.size_bytes);
             }
-        };
-        // from_buffer consumes the record; allocate the next read buffer only
-        // after the parsed entry no longer needs it.
-        buffer = vec![0u8; record_size];
-        let Some(record) = record_from_entry(&entry) else {
-            continue;
-        };
-
-        if record.is_dir {
-            parsed_dirs += 1;
-        } else {
-            parsed_files += 1;
-            scanned_bytes = scanned_bytes.saturating_add(record.size_bytes);
+            records.insert(base + index as u64, record);
         }
-        records.insert(record_number, record);
 
-        if record_number % 4096 == 0 {
-            append_progress(
-                &mut on_progress,
-                root,
-                parsed_files,
-                parsed_dirs,
-                scanned_bytes,
-            );
-        }
+        base += count;
+        append_progress(
+            &mut on_progress,
+            root,
+            parsed_files,
+            parsed_dirs,
+            scanned_bytes,
+        );
     }
 
     let tree = build_mft_tree(records, root, &target_components)?;
