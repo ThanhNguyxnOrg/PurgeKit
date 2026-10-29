@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::fs::{self, File};
-use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf, Prefix};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
@@ -11,7 +11,8 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 use mft::attribute::header::ResidentialHeader;
 use mft::attribute::{MftAttributeContent, MftAttributeType};
-use mft::{MftEntry, MftParser};
+use mft::{EntryHeader, MftEntry};
+use rayon::prelude::*;
 use ntfs::{Ntfs, NtfsReadSeek};
 
 use super::disk_scan::{
@@ -781,6 +782,28 @@ fn detect_mft_data_offset(file: &mut File, length: u64) -> Result<u64, String> {
     )
 }
 
+fn detect_record_size(file: &mut File, offset: u64, length: u64) -> Result<usize, String> {
+    if length <= offset {
+        return Err("The MFT dump has no record data.".to_string());
+    }
+    file.seek(SeekFrom::Start(offset))
+        .map_err(|e| e.to_string())?;
+    let mut probe = [0u8; 64];
+    file.read_exact(&mut probe)
+        .map_err(|error| format!("Could not read the first MFT record: {}", error))?;
+    let mut cursor = Cursor::new(&probe[..]);
+    let header = EntryHeader::from_reader(&mut cursor, 0)
+        .map_err(|error| format!("Could not decode the first MFT record: {}", error))?;
+    let record_size = header.total_entry_size as usize;
+    if record_size == 0
+        || record_size > 1_048_576
+        || (length - offset) < record_size as u64
+    {
+        return Err("The MFT dump reports an invalid record size.".to_string());
+    }
+    Ok(record_size)
+}
+
 pub fn load_wiztree_mft<F>(
     path: &str,
     root: &str,
@@ -822,56 +845,72 @@ where
     file.seek(SeekFrom::Start(data_offset))
         .map_err(|e| e.to_string())?;
 
-    let mut parser = MftParser::from_read_seek(
-        BufReader::with_capacity(1_048_576, file),
-        Some(data_length.saturating_sub(data_offset)),
-    )
-    .map_err(|error| format!("Could not decode the MFT file: {}", error))?;
-    let total_records = parser.get_entry_count();
+    let record_size = detect_record_size(&mut file, data_offset, data_length)?;
+    let total_records = ((data_length.saturating_sub(data_offset)) / record_size as u64) as usize;
     if total_records == 0 {
         return Err("The MFT file contains no records.".to_string());
     }
 
-    let mut records: HashMap<u64, MftRecord> = HashMap::new();
+    let profile = std::env::var_os("PURGEKIT_MFT_PROFILE").is_some();
+    let parse_started = Instant::now();
+    let mut records: HashMap<u64, MftRecord> = HashMap::with_capacity(total_records / 2);
     let mut parsed_files = 0u64;
     let mut parsed_dirs = 0u64;
     let mut scanned_bytes = 0u64;
-    let mut errors = 0u64;
+    let errors = 0u64;
 
-    for record_number in 0..total_records {
-        if record_number % 512 == 0 && cancel.load(Ordering::Relaxed) {
+    // Parse record chunks in parallel; decoding attributes dominates load time.
+    let chunk_records = (64 * 1024 * 1024 / record_size).max(1);
+    file.seek(SeekFrom::Start(data_offset))
+        .map_err(|e| e.to_string())?;
+    let mut base = 0usize;
+    while base < total_records {
+        if cancel.load(Ordering::Relaxed) {
             return Err("Disk scan cancelled".to_string());
         }
-        let entry = match parser.get_entry(record_number) {
-            Ok(entry) => entry,
-            Err(_) => {
-                errors += 1;
-                continue;
-            }
-        };
-        let Some(record) = record_from_entry(&entry) else {
-            continue;
-        };
-        if record.is_dir {
-            parsed_dirs += 1;
-        } else {
-            parsed_files += 1;
-            scanned_bytes = scanned_bytes.saturating_add(record.size_bytes);
-        }
-        records.insert(record_number, record);
+        let count = (total_records - base).min(chunk_records);
+        let mut buffer = vec![0u8; count * record_size];
+        file.read_exact(&mut buffer)
+            .map_err(|error| format!("Could not read the MFT dump: {}", error))?;
 
-        if record_number % 4096 == 0 {
-            append_progress(
-                &mut on_progress,
-                root,
-                parsed_files,
-                parsed_dirs,
-                scanned_bytes,
-            );
+        let parsed: Vec<Option<MftRecord>> = (0..count)
+            .into_par_iter()
+            .map(|index| {
+                let start = index * record_size;
+                let entry = MftEntry::from_buffer(
+                    buffer[start..start + record_size].to_vec(),
+                    (base + index) as u64,
+                )
+                .ok()?;
+                record_from_entry(&entry)
+            })
+            .collect();
+
+        for (index, record) in parsed.into_iter().enumerate() {
+            let Some(record) = record else { continue; };
+            if record.is_dir {
+                parsed_dirs += 1;
+            } else {
+                parsed_files += 1;
+                scanned_bytes = scanned_bytes.saturating_add(record.size_bytes);
+            }
+            records.insert((base + index) as u64, record);
         }
+
+        base += count;
+        append_progress(
+            &mut on_progress,
+            root,
+            parsed_files,
+            parsed_dirs,
+            scanned_bytes,
+        );
     }
 
+    let parse_elapsed = parse_started.elapsed();
+    let tree_started = Instant::now();
     let tree = build_mft_tree(records, root, &target_components)?;
+    let tree_elapsed = tree_started.elapsed();
     append_progress(
         &mut on_progress,
         root,
@@ -880,6 +919,7 @@ where
         scanned_bytes,
     );
 
+    let finalize_started = Instant::now();
     let tree_root_path = tree.root_path.clone();
     let mut result = finalize_scan(
         tree.nodes,
@@ -893,6 +933,15 @@ where
         started,
         "mft-file",
     );
+    if profile {
+        eprintln!(
+            "mft-profile parse={}ms tree={}ms finalize={}ms total={}ms",
+            parse_elapsed.as_millis(),
+            tree_elapsed.as_millis(),
+            finalize_started.elapsed().as_millis(),
+            started.elapsed().as_millis()
+        );
+    }
     // A dump may come from another machine; its footer carries the volume size
     // when available.
     result.volume_total_bytes = total_bytes;

@@ -37,6 +37,7 @@ clap = { version = "4", features = ["derive"] }
 csv = "1"
 flate2 = "1.1.10"
 image = { version = "0.25", default-features = false, features = ["png"] }
+rayon = "1"
 
 [target.'cfg(windows)'.dependencies]
 ntfs = "0.4"
