@@ -73,11 +73,11 @@ The pipeline uses `tauri-apps/tauri-action` to:
 ## 🚀 How to Trigger a Release
 
 To trigger a release:
-1. Update versions in files (`package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`).
-2. Document new items in [CHANGELOG.md](../CHANGELOG.md) under a header matching your version (e.g., `## [X.Y.Z]`).
+1. Update versions in files (`package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`).
+2. Document new items in [CHANGELOG.md](../CHANGELOG.md) under an exact header matching your version (e.g., `## [X.Y.Z] - YYYY-MM-DD`). The workflow extracts the body from that header to the next `## [` header.
 3. Commit and push your changes to `main` with a release tag in your commit message:
    ```bash
-   git commit -m "release: vX.Y.Z"
+   git commit -m "Release: vX.Y.Z"
    git push origin main
    ```
-4. The pipeline will automatically build, create the git tag, and create the draft release for you!
+4. The pipeline will automatically build, create/push the git tag, and publish the GitHub release with the parsed changelog and both installers. A manual `workflow_dispatch` uses the version in `src-tauri/tauri.conf.json` and is useful for re-running a release.

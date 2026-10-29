@@ -149,16 +149,15 @@ Detailed documents are categorized below and located in the [`docs/`](docs/) dir
 
 ## 📝 Changelog
 
-### 🚀 [v1.2.1] - 2026-10-07
-Bug-fix release for CI release tagging, quoted PATH entries, System PATH priority, admin preflight and Project Sweeper boundaries.
-
-### 🧪 Unreleased - 2026-10-29
+### 🚀 [v1.3.0] - 2026-10-29
 * **💽 Disk Space parity:** WizTree-style treemap controls, file/types/duplicates views, CSV/TSV import/export, HTML/PNG reports, MFT record numbers and drive-size columns.
 * **📦 WizTree `.MFT` import:** raw MFT records plus the `VOLDATA2` footer load read-only with volume metadata; live MFT scans are validated on C: and `C:\Windows`.
 * **🔎 App icon coverage:** 137/138 inventory rows and 12/15 Startup entries resolve logos with no app-name special cases; stale Startup targets are flagged.
 * **📅 Install dates:** normalized registry dates plus folder-creation fallback for 137/138 rows.
 * **🚀 Large-scan performance:** parallel MFT parsing, breadth-first tree budgeting and aligned volume reads; a 3.15 GB dump loads in ~52 s in the debug UI.
 * **🔐 Safety hardening:** Project Sweeper deletion is bound to the last scan result and elevated volume/MFT reads are signature- and path-gated.
+
+Previous release: **v1.2.1** (2026-10-07) fixed CI release tagging, quoted PATH entries, System PATH priority, admin preflight and Project Sweeper boundaries.
 
 *For full historical notes and previous releases, see [📝 CHANGELOG.md](CHANGELOG.md).*
 

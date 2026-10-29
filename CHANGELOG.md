@@ -2,29 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased] - 2026-10-29
+## [1.3.0] - 2026-10-29
 
 ### 💽 Disk Space & WizTree Parity
-* Treemap controls (labels, allocated/logical, free space, small-file grouping), breadcrumbs, double-click zoom and Up navigation.
-* File, file-type and duplicate views; CSV/TSV import; CSV/TSV export with folder totals, created/accessed dates, parent %, MFT record numbers and drive-size info.
-* File-types CSV, PNG treemap and self-contained HTML report.
-* WizTree `.MFT` import with `VOLDATA2` footer, volume metadata and read-only safety; `.pkmft` dump/load.
+* Nested treemap with labels, allocated/logical weighting, free-space tile, small-file grouping, breadcrumbs, double-click zoom and Up navigation.
+* Largest-files, file-types and duplicate views; name/path filtering, extension filters, include/exclude paths and configurable result limits.
+* CSV/TSV import plus CSV/TSV export with current-view/all-matches scope, direct folder totals, created/last-accessed dates, parent %, MFT record numbers and drive-size information.
+* Full file-types CSV export, treemap PNG and self-contained HTML reports.
+* Versioned `.pkmft` dumps and read-only WizTree `.MFT` import, including raw MFT records, the `VOLDATA2` footer, volume metadata and folder-subtree selection.
 
-### ⚡ Performance & Reliability
-* Parallel MFT parsing (file and live volume), 4–64 MB chunking and aligned volume reads.
-* Breadth-first tree budgeting keeps every top-level folder visible.
-* A 3.15 GB WizTree dump loads in about 52 seconds in the debug UI (down from 184 s); live `C:\Windows` folder scan completes in 51 s.
+### ⚡ MFT Performance & Reliability
+* Parallel MFT record parsing for file dumps (64 MB chunks) and live volume reads (4 MB chunks).
+* 64 KB aligned volume reader fixes `ERROR_INVALID_PARAMETER` on raw NTFS handles.
+* Breadth-first tree budgeting keeps all top-level folders visible on large scans.
+* A 3.15 GB WizTree dump loads in about 52 seconds in the debug UI (down from 184 s); a live `C:\Windows` folder scan completes in 51 seconds.
+* Live elevated C: dump and `C:\Windows` folder scans were validated end-to-end.
 
-### 🎨 UI & Application Inventory
-* 137/138 app rows and 12/15 Startup entries now resolve logos without app-name hardcoding; stale Startup targets are flagged.
-* Install dates for 137/138 rows via registry plus folder-creation fallback.
-* Semantic light/dark contrast tokens, action colors, icon frames and responsive Apps/Startup/PATH layouts.
-* Disk Space, Startup, DevTools and Settings documentation is synchronized with the current UI.
+### 🎨 Application Inventory & UI
+* Unified desktop, Store, CLI, toolchain and portable inventory with source/category filters and bulk actions.
+* 137/138 app rows now resolve logos; only the `vs_CoreEditorFonts` font component has no application icon.
+* 12/15 Startup entries resolve logos; the remaining three are stale targets and are flagged with a warning.
+* Removed app-name icon special cases; GitHub CLI and Go now resolve through the generic DisplayIcon/shortcut/install-folder/PATH pipeline.
+* Environment variables are expanded in Startup commands before target and icon resolution.
+* Install dates for 137/138 rows via registry dates and install-folder/uninstaller creation fallback.
+* Semantic light/dark contrast tokens, readable action colors, icon frames for white/transparent logos and responsive 900x600 layouts.
 
-### 🔐 Safety
-* Project Sweeper deletion is bound to the last scan result.
-* Elevated uninstallers, MFT volume reads, startup tasks and quarantine restore paths keep their validation gates.
-* Raw `.MFT`/`.pkmft` dumps are git-ignored.
+### 🔐 Safety & Data Integrity
+* Project Sweeper deletion is bound to the last scan result; unscanned paths are rejected.
+* Elevated uninstallers, startup entries, quarantine restores, toolchain/CLI removals and MFT volume reads retain their path, signature and allowlist gates.
+* Imported disk dumps remain read-only until a live rescan; quarantine is disabled for imported views.
+* Raw `.MFT` and `.pkmft` dumps are git-ignored to prevent accidental repository bloat.
+
+### 📚 Documentation & Tests
+* Added the Disk Space/MFT guide and synchronized README, FEATURES, ARCHITECTURE, CHANGELOG and release workflow documentation.
+* `cargo test --lib`: 120 passed, 4 ignored; `cargo check --bins`, `svelte-check` and production build remain clean.
+* Light/dark/narrow UI passes and Markdown link checks completed with no broken relative links.
 
 ## [1.2.1] - 2026-10-07
 
