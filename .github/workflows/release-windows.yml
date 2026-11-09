@@ -98,6 +98,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         with:
+          tagName: v${{ needs.check-trigger.outputs.version }}
+          releaseName: PurgeKit v${{ needs.check-trigger.outputs.version }}
+          releaseDraft: true
+          prerelease: ${{ contains(needs.check-trigger.outputs.version, '-') }}
           includeDebug: false
           includeRelease: true
           includeUpdaterJson: false
