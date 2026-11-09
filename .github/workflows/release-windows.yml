@@ -1,10 +1,7 @@
 name: Release Windows App
 
 on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
+  create:
 
 permissions:
   contents: write
@@ -23,28 +20,18 @@ jobs:
       - name: Check Commit Message or Manual Trigger
         id: check
         env:
-          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF_TYPE: ${{ github.ref_type }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION=$(jq -r '.version' src-tauri/tauri.conf.json)
-            echo "Manual trigger. Extracted version from tauri.conf.json: $VERSION"
+          if [ "$GITHUB_EVENT_NAME" = "create" ] && [ "$GITHUB_REF_TYPE" = "tag" ] && [[ "$GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?)$ ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            echo "Central release tag detected: $GITHUB_REF_NAME"
             echo "is_release=true" >> "$GITHUB_OUTPUT"
             echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           else
-            FIRST_LINE=$(echo "$COMMIT_MSG" | head -n 1)
-            echo "Checking commit header: $FIRST_LINE"
-            if [[ "$FIRST_LINE" =~ ^[Rr]elease:?[[:space:]]+v?([0-9]+\.[0-9]+\.[0-9]+[a-zA-Z0-9\.-]*) ]] || \
-               [[ "$FIRST_LINE" =~ ^chore\(release\):?[[:space:]]+v?([0-9]+\.[0-9]+\.[0-9]+[a-zA-Z0-9\.-]*) ]] || \
-               [[ "$FIRST_LINE" =~ ^\[release\][[:space:]]+v?([0-9]+\.[0-9]+\.[0-9]+[a-zA-Z0-9\.-]*) ]] || \
-               [[ "$FIRST_LINE" =~ ^bump:?[[:space:]]+v?([0-9]+\.[0-9]+\.[0-9]+[a-zA-Z0-9\.-]*) ]]; then
-              VERSION="${BASH_REMATCH[1]}"
-              echo "Release trigger detected: $FIRST_LINE -> Version: $VERSION"
-              echo "is_release=true" >> "$GITHUB_OUTPUT"
-              echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-            else
-              echo "No release trigger detected in commit message header. Skipping release build."
-              echo "is_release=false" >> "$GITHUB_OUTPUT"
-            fi
+            echo "Not a central vX.Y.Z tag-create event; skipping."
+            echo "is_release=false" >> "$GITHUB_OUTPUT"
           fi
 
   release-windows:
@@ -138,33 +125,12 @@ jobs:
               Write-Error "MSI file not found!"
           }
 
-      - name: 🏷️ Ensure Git Tag Exists
+      - name: Upload assets to central draft release
         shell: bash
         env:
           TAG: v${{ needs.check-trigger.outputs.version }}
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          if ! git rev-parse "$TAG" >/dev/null 2>&1; then
-            git config user.name "ThanhNguyxnAgent[bot]"
-            git config user.email "296222857+thanhnguyxnagent[bot]@users.noreply.github.com"
-            git tag -a "$TAG" -m "Release $TAG"
-            git push origin "$TAG"
-            echo "Created and pushed tag $TAG by ThanhNguyxnAgent"
-          else
-            echo "Tag $TAG already exists."
-          fi
-
-      - name: Create and Publish GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: v${{ needs.check-trigger.outputs.version }}
-          name: "PurgeKit v${{ needs.check-trigger.outputs.version }}"
-          body: ${{ steps.get_changelog.outputs.body }}
-          draft: false
-          prerelease: false
-          files: |
-            artifacts/PurgeKit_x64-setup.exe
-            artifacts/PurgeKit_x64_en-US.msi
-        env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
-
+          gh release upload "$TAG" \
+            artifacts/PurgeKit_x64-setup.exe \
+            artifacts/PurgeKit_x64_en-US.msi --clobber
