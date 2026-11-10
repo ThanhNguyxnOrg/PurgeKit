@@ -2,6 +2,12 @@ name: Release Windows App
 
 on:
   create:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to rebuild (recovery only; no new tag is created).
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -47,8 +53,11 @@ jobs:
           client-id: ${{ secrets.BOT_APP_ID }}
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
 
-      - name: Checkout repository
+      - name: Checkout the requested release tag
         uses: actions/checkout@v7
+        with:
+          ref: v${{ needs.check-trigger.outputs.version }}
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
