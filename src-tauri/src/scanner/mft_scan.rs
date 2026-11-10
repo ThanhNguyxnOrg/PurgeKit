@@ -149,19 +149,27 @@ fn record_from_entry(entry: &MftEntry) -> Option<MftRecord> {
         return None;
     }
     let name_attr = entry.find_best_name_attribute()?;
+    // Copy the fields we need while the attribute borrow is alive. Returning
+    // the borrowed StandardInformation value from find_map would outlive the
+    // local attribute yielded by the iterator (E0515).
     let standard_info = entry
         .iter_attributes_matching(Some(vec![MftAttributeType::StandardInformation]))
         .filter_map(Result::ok)
-        .find_map(|attribute| attribute.data.as_standard_info());
+        .find_map(|attribute| {
+            attribute.data.as_standard_info().map(|info| {
+                (
+                    u64::try_from(info.modified.as_millisecond()).ok(),
+                    info.file_flags.bits(),
+                )
+            })
+        });
     let modified_epoch_ms = standard_info
         .as_ref()
-        .map(|info| info.modified)
-        .unwrap_or(name_attr.modified)
-        .as_millisecond();
-    let modified_epoch_ms = u64::try_from(modified_epoch_ms).ok();
+        .and_then(|(modified, _)| *modified)
+        .or_else(|| u64::try_from(name_attr.modified.as_millisecond()).ok());
     let attributes = standard_info
         .as_ref()
-        .map(|info| info.file_flags.bits())
+        .map(|(_, flags)| *flags)
         .unwrap_or_else(|| name_attr.flags.bits());
     let name = name_attr.name.to_string();
     if name.is_empty() {
