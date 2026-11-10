@@ -130,12 +130,23 @@ jobs:
               Write-Error "MSI file not found!"
           }
 
-      - name: Upload assets to central draft release
-        shell: bash
-        env:
-          TAG: v${{ needs.check-trigger.outputs.version }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
-          gh release upload "$TAG" \
-            artifacts/PurgeKit_x64-setup.exe \
-            artifacts/PurgeKit_x64_en-US.msi --clobber
+      - name: Upload release assets for central publication
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-assets-purgekit
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish verified release assets
+    needs: [check-trigger, release-windows]
+    if: needs.check-trigger.outputs.is_release == 'true'
+    permissions:
+      actions: read
+      contents: read
+    uses: ThanhNguyxnOrg/.github/.github/workflows/release-publish.yml@47456eb0c467951cdaa48791d51e902b363e26be
+    with:
+      tag: v${{ needs.check-trigger.outputs.version }}
+      artifact_pattern: release-assets-purgekit
+    secrets: inherit
