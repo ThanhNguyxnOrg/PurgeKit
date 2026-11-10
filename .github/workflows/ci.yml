@@ -12,18 +12,33 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  checks:
+  frontend:
+    uses: ThanhNguyxnOrg/.github/.github/workflows/ci-node.yml@2bda8e8e8073a2578db4bbb1e0f6aaf21d061bcd
+    with:
+      job_name: Frontend (Svelte & TypeScript)
+      node_version: "22"
+      package_manager: npm
+      cache: npm
+      cache_dependency_path: package-lock.json
+      prepare_command: npm ci
+      validation_command: npm run check
+      timeout_minutes: 30
+
+  rust:
+    name: Rust Compiler Check
+    needs: frontend
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
         with:
-          node-version: 22
-          cache: 'npm'
+          persist-credentials: false
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -33,12 +48,6 @@ jobs:
         continue-on-error: true
         with:
           workspaces: 'src-tauri -> target'
-
-      - name: Install frontend dependencies
-        run: npm ci
-
-      - name: Svelte & TypeScript Check
-        run: npm run check
 
       - name: Rust Compiler Check
         run: cargo check --manifest-path src-tauri/Cargo.toml
