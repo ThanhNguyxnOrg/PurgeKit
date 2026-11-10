@@ -152,7 +152,7 @@ fn record_from_entry(entry: &MftEntry) -> Option<MftRecord> {
     let standard_info = entry
         .iter_attributes_matching(Some(vec![MftAttributeType::StandardInformation]))
         .filter_map(Result::ok)
-        .find_map(|attribute| attribute.data.into_standard_info());
+        .find_map(|attribute| attribute.data.as_standard_info());
     let modified_epoch_ms = standard_info
         .as_ref()
         .map(|info| info.modified)
@@ -163,7 +163,7 @@ fn record_from_entry(entry: &MftEntry) -> Option<MftRecord> {
         .as_ref()
         .map(|info| info.file_flags.bits())
         .unwrap_or_else(|| name_attr.flags.bits());
-    let name = name_attr.name;
+    let name = name_attr.name.to_string();
     if name.is_empty() {
         return None;
     }
