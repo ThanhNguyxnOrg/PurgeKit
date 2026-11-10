@@ -171,3 +171,11 @@ PurgeKit is specifically designed to go beyond typical Windows uninstallers, ens
 
 ---
 <sub>Made with ❤️ by the **ThanhNguyxnOrg** team. Feel free to open issues or contribute!</sub>
+
+## [1.3.1] - 2026-11-10
+
+### Bug Fixes and Performance
+
+- adapt MFT parsing to current crate API ([e4f1721](https://github.com/ThanhNguyxnOrg/PurgeKit/commit/e4f1721535189bedcab5321e5eea95d1c9aec248))
+- copy MFT metadata before iterator borrow ends ([48df668](https://github.com/ThanhNguyxnOrg/PurgeKit/commit/48df6687cd3eee8347a05217c35ad1eba175f26e))
+
