@@ -20,6 +20,18 @@ pub fn scan_aseps(app_token: &str, install_dir: Option<&str>) -> Vec<RemnantItem
     // 4. Scan Firewall Rules
     scan_firewall_rules(app_token, install_dir, &mut remnants);
 
+    // 5. Scan Active Setup installed components
+    scan_active_setup(app_token, install_dir, &mut remnants);
+
+    // 6. Scan Winlogon shell / userinit overrides
+    scan_winlogon(app_token, install_dir, &mut remnants);
+
+    // 7. Scan AppInit_DLLs
+    scan_appinit_dlls(app_token, install_dir, &mut remnants);
+
+    // 8. Scan Boot Execute entries
+    scan_boot_execute(app_token, install_dir, &mut remnants);
+
     remnants
 }
 
@@ -311,6 +323,190 @@ fn scan_firewall_rules(app_token: &str, install_dir: Option<&str>, remnants: &mu
     }
 }
 
+/// Shared matcher: returns a confidence score when `candidate` references the app,
+/// either through its install directory (higher confidence) or its name token.
+/// The name token must be at least 3 characters to avoid false positives.
+fn remnant_score(
+    app_token: &str,
+    install_dir: Option<&str>,
+    candidate: &str,
+    dir_score: u32,
+    token_score: u32,
+) -> Option<u32> {
+    let candidate_lower = candidate.to_lowercase();
+
+    if let Some(loc) = install_dir {
+        let loc_lower = loc.to_lowercase();
+        if !loc_lower.is_empty() && candidate_lower.contains(&loc_lower) {
+            return Some(dir_score);
+        }
+    }
+
+    let token_lower = app_token.to_lowercase().trim().to_string();
+    if token_lower.len() >= 3 && candidate_lower.contains(&token_lower) {
+        return Some(token_score);
+    }
+
+    None
+}
+
+/// Splits an `AppInit_DLLs` value (semicolon and/or whitespace separated) into DLL entries.
+fn parse_appinit_dlls(raw: &str) -> Vec<String> {
+    raw.split(|c: char| c == ';' || c.is_whitespace())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Returns the best confidence score when any `BootExecute` entry references the app.
+fn boot_execute_match(entries: &[String], app_token: &str, install_dir: Option<&str>) -> Option<u32> {
+    entries
+        .iter()
+        .filter_map(|entry| remnant_score(app_token, install_dir, entry, 85, 70))
+        .max()
+}
+
+/// Scans Active Setup installed components. Installers register a `StubPath` command here
+/// that is executed once per user on first logon, and uninstallers frequently leave the
+/// component key behind.
+fn scan_active_setup(app_token: &str, install_dir: Option<&str>, remnants: &mut Vec<RemnantItem>) {
+    let locations = vec![
+        (HKEY_LOCAL_MACHINE, "HKLM", r"SOFTWARE\Microsoft\Active Setup\Installed Components"),
+        (HKEY_LOCAL_MACHINE, "HKLM", r"SOFTWARE\Wow6432Node\Microsoft\Active Setup\Installed Components"),
+    ];
+
+    for (hive, hive_name, subpath) in locations {
+        let root = RegKey::predef(hive);
+        let components_key = match root.open_subkey_with_flags(subpath, KEY_READ) {
+            Ok(k) => k,
+            Err(_) => continue,
+        };
+
+        for component_id in components_key.enum_keys().filter_map(|x| x.ok()) {
+            let component_key = match components_key.open_subkey_with_flags(&component_id, KEY_READ) {
+                Ok(k) => k,
+                Err(_) => continue,
+            };
+
+            let stub_path: String = match component_key.get_value("StubPath") {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            let expanded = crate::winutil::expand_env_strings(&stub_path);
+            if let Some(score) = remnant_score(app_token, install_dir, &expanded, 85, 70) {
+                remnants.push(RemnantItem {
+                    path: format!(r"{}\{}\{}", hive_name, subpath, component_id),
+                    item_type: "RegistryKey".to_string(),
+                    size: 0,
+                    confidence: if score >= 80 { "VeryHigh".to_string() } else { "High".to_string() },
+                    score,
+                });
+            }
+        }
+    }
+}
+
+/// Scans Winlogon `Shell` / `Userinit` / `TaskMan` / `AppSetup` overrides. Applications that
+/// replace or extend these values leave logon-time execution behind after uninstall.
+fn scan_winlogon(app_token: &str, install_dir: Option<&str>, remnants: &mut Vec<RemnantItem>) {
+    let locations = vec![
+        (HKEY_LOCAL_MACHINE, "HKLM", r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"),
+        (HKEY_LOCAL_MACHINE, "HKLM", r"SOFTWARE\Wow6432Node\Microsoft\Windows NT\CurrentVersion\Winlogon"),
+    ];
+    let value_names = ["Shell", "Userinit", "TaskMan", "AppSetup"];
+
+    for (hive, hive_name, subpath) in locations {
+        let root = RegKey::predef(hive);
+        let winlogon_key = match root.open_subkey_with_flags(subpath, KEY_READ) {
+            Ok(k) => k,
+            Err(_) => continue,
+        };
+
+        for value_name in value_names {
+            let value: String = match winlogon_key.get_value(value_name) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            let expanded = crate::winutil::expand_env_strings(&value);
+            if let Some(score) = remnant_score(app_token, install_dir, &expanded, 85, 70) {
+                remnants.push(RemnantItem {
+                    path: format!(r"{}\{}\{}", hive_name, subpath, value_name),
+                    item_type: "RegistryValue".to_string(),
+                    size: 0,
+                    confidence: if score >= 80 { "VeryHigh".to_string() } else { "High".to_string() },
+                    score,
+                });
+            }
+        }
+    }
+}
+
+/// Scans `AppInit_DLLs`. The whole value is reported (and backed up) when any listed DLL
+/// references the app; modern Windows only honors it when `LoadAppInit_DLLs` is enabled.
+fn scan_appinit_dlls(app_token: &str, install_dir: Option<&str>, remnants: &mut Vec<RemnantItem>) {
+    let locations = vec![
+        (HKEY_LOCAL_MACHINE, "HKLM", r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows"),
+        (HKEY_LOCAL_MACHINE, "HKLM", r"SOFTWARE\Wow6432Node\Microsoft\Windows NT\CurrentVersion\Windows"),
+    ];
+
+    for (hive, hive_name, subpath) in locations {
+        let root = RegKey::predef(hive);
+        let windows_key = match root.open_subkey_with_flags(subpath, KEY_READ) {
+            Ok(k) => k,
+            Err(_) => continue,
+        };
+
+        let raw: String = match windows_key.get_value("AppInit_DLLs") {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let dlls = parse_appinit_dlls(&raw);
+        let best_score = dlls
+            .iter()
+            .filter_map(|dll| remnant_score(app_token, install_dir, dll, 85, 70))
+            .max();
+
+        if let Some(score) = best_score {
+            remnants.push(RemnantItem {
+                path: format!(r"{}\{}\AppInit_DLLs", hive_name, subpath),
+                item_type: "RegistryValue".to_string(),
+                size: 0,
+                confidence: if score >= 80 { "VeryHigh".to_string() } else { "High".to_string() },
+                score,
+            });
+        }
+    }
+}
+
+/// Scans `BootExecute` (Session Manager, REG_MULTI_SZ). Default entries such as
+/// `autocheck autochk *` never match, so only app-owned boot commands surface here.
+fn scan_boot_execute(app_token: &str, install_dir: Option<&str>, remnants: &mut Vec<RemnantItem>) {
+    let subpath = r"SYSTEM\CurrentControlSet\Control\Session Manager";
+    let root = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let session_key = match root.open_subkey_with_flags(subpath, KEY_READ) {
+        Ok(k) => k,
+        Err(_) => return,
+    };
+
+    let entries: Vec<String> = match session_key.get_value("BootExecute") {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    if let Some(score) = boot_execute_match(&entries, app_token, install_dir) {
+        remnants.push(RemnantItem {
+            path: format!(r"HKLM\{}\BootExecute", subpath),
+            item_type: "RegistryValue".to_string(),
+            size: 0,
+            confidence: if score >= 80 { "VeryHigh".to_string() } else { "High".to_string() },
+            score,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -345,6 +541,43 @@ mod tests {
         assert_eq!(item.item_type, "ScheduledTask");
         assert!(item.path.contains("MyCoolAppTask"));
         assert!(item.score >= 80);
+    }
+
+    #[test]
+    fn test_remnant_score_prefers_install_dir_and_guards_short_tokens() {
+        assert_eq!(
+            remnant_score(
+                "MyApp",
+                Some(r"C:\Program Files\MyApp"),
+                r"C:\Program Files\MyApp\svc.exe",
+                85,
+                70
+            ),
+            Some(85)
+        );
+        assert_eq!(remnant_score("MyApp", None, r"C:\tools\myapp\svc.exe", 85, 70), Some(70));
+        assert_eq!(remnant_score("MyApp", Some(r"D:\Other"), "explorer.exe", 85, 70), None);
+        // Tokens shorter than 3 characters must never match by name.
+        assert_eq!(remnant_score("ab", None, "ab.dll", 85, 70), None);
+    }
+
+    #[test]
+    fn test_parse_appinit_dlls() {
+        let dlls = parse_appinit_dlls(" myapp.dll;helper.dll  another.dll ");
+        assert_eq!(dlls, vec!["myapp.dll", "helper.dll", "another.dll"]);
+        assert!(parse_appinit_dlls("   ").is_empty());
+    }
+
+    #[test]
+    fn test_boot_execute_match() {
+        let defaults = vec!["autocheck autochk *".to_string()];
+        assert_eq!(boot_execute_match(&defaults, "MyApp", Some(r"C:\Program Files\MyApp")), None);
+
+        let entries = vec![
+            "autocheck autochk *".to_string(),
+            r"C:\Program Files\MyApp\boot.exe".to_string(),
+        ];
+        assert_eq!(boot_execute_match(&entries, "MyApp", Some(r"C:\Program Files\MyApp")), Some(85));
     }
 }
 
