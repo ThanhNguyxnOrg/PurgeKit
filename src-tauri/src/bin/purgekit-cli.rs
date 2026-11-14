@@ -3,6 +3,9 @@
 
 use clap::{Parser, Subcommand};
 use purgekit_lib::scanner::remnants::{purge_remnant_item, scan_app_remnants};
+use purgekit_lib::scanner::wsl_shrinker::{
+    compact_vhdx_core, scan_wsl_distributions, set_wsl_distro_sparse_core,
+};
 use std::io::Write;
 
 #[derive(Parser)]
@@ -30,6 +33,27 @@ enum Commands {
 
         #[arg(long, short = 'y', help = "Skip confirmation prompt")]
         yes: bool,
+    },
+    #[command(about = "Manage and compact WSL2 virtual disks")]
+    Wsl {
+        #[command(subcommand)]
+        action: WslCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum WslCommands {
+    #[command(about = "List all registered WSL distributions, their disk paths and sizes")]
+    List,
+    #[command(about = "Shut down WSL and compact the distribution's VHDX using DiskPart")]
+    Compact {
+        #[arg(help = "The exact WSL distribution name")]
+        distro: String,
+    },
+    #[command(about = "Set the NTFS sparse (auto-shrink) attribute on the distribution's VHDX")]
+    Sparse {
+        #[arg(help = "The exact WSL distribution name")]
+        distro: String,
     },
 }
 
@@ -131,5 +155,64 @@ fn main() {
 
             println!("Purge completed. Success: {}, Failed: {}", success_count, fail_count);
         }
+        Commands::Wsl { action } => match action {
+            WslCommands::List => {
+                let distros = scan_wsl_distributions();
+                if distros.is_empty() {
+                    println!("No WSL distributions found.");
+                }
+                for distro in &distros {
+                    println!("{}  [{}]", distro.name, distro.id);
+                    println!("  Base path: {}", distro.base_path);
+                    match &distro.vhdx_path {
+                        Some(vhdx) => println!(
+                            "  VHDX: {} ({:.2} GB{})",
+                            vhdx,
+                            distro.vhdx_size_bytes as f64 / 1_073_741_824.0,
+                            if distro.is_sparse { ", sparse" } else { "" }
+                        ),
+                        None => println!("  VHDX: not found"),
+                    }
+                }
+            }
+            WslCommands::Compact { distro } => {
+                let target = match scan_wsl_distributions().into_iter().find(|d| d.name == distro) {
+                    Some(target) => target,
+                    None => {
+                        eprintln!(
+                            "ERROR: WSL distribution '{}' not found. Run 'purgekit-cli wsl list' first.",
+                            distro
+                        );
+                        std::process::exit(1);
+                    }
+                };
+                let vhdx_path = match target.vhdx_path {
+                    Some(path) => path,
+                    None => {
+                        eprintln!("ERROR: No VHDX file found for '{}'.", target.name);
+                        std::process::exit(1);
+                    }
+                };
+
+                println!("Compacting '{}' VHDX: {}", target.name, vhdx_path);
+                let mut on_progress = |phase: &str, message: &str| {
+                    println!("  [{}] {}", phase, message.trim_end());
+                };
+                match compact_vhdx_core(&vhdx_path, &mut on_progress) {
+                    Ok(_) => println!("Compaction completed."),
+                    Err(error) => {
+                        eprintln!("ERROR: {}", error);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            WslCommands::Sparse { distro } => match set_wsl_distro_sparse_core(&distro, true) {
+                Ok(()) => println!("'{}' is now running in sparse (auto-shrink) mode.", distro),
+                Err(error) => {
+                    eprintln!("ERROR: {}", error);
+                    std::process::exit(1);
+                }
+            },
+        },
     }
 }

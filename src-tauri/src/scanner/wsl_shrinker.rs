@@ -126,12 +126,8 @@ pub fn scan_wsl_distributions() -> Vec<WslDistroInfo> {
     distros
 }
 
-pub fn run_wsl_shutdown(app: &AppHandle) -> Result<(), String> {
-    let _ = app.emit("wsl-compact-progress", WslCompactProgress {
-        phase: "shutdown".into(),
-        message: "Requesting WSL shutdown (wsl --shutdown)...".into(),
-    });
-
+/// Core WSL shutdown, shared by the Tauri command and the CLI.
+pub fn run_wsl_shutdown_core() -> Result<(), String> {
     let secure_path = crate::winutil::get_secure_system_path();
     let status = Command::new("wsl")
         .creation_flags(CREATE_NO_WINDOW)
@@ -146,7 +142,21 @@ pub fn run_wsl_shutdown(app: &AppHandle) -> Result<(), String> {
     }
 }
 
-pub fn compact_vhdx_diskpart(app: &AppHandle, vhdx_path: &str) -> Result<String, String> {
+pub fn run_wsl_shutdown(app: &AppHandle) -> Result<(), String> {
+    let _ = app.emit("wsl-compact-progress", WslCompactProgress {
+        phase: "shutdown".into(),
+        message: "Requesting WSL shutdown (wsl --shutdown)...".into(),
+    });
+    run_wsl_shutdown_core()
+}
+
+/// Core VHDX compaction, shared by the Tauri command and the CLI.
+/// `on_progress` receives `(phase, message)` pairs; phase is one of
+/// "shutdown", "compacting", "log", "completed" or "error".
+pub fn compact_vhdx_core(
+    vhdx_path: &str,
+    on_progress: &mut dyn FnMut(&str, &str),
+) -> Result<String, String> {
     // Validate path security and injection prevention
     if vhdx_path.contains('"') || vhdx_path.contains('\n') || vhdx_path.contains('\r') {
         return Err("VHDX path contains invalid or dangerous characters (Diskpart Injection Blocked)".to_string());
@@ -163,12 +173,13 @@ pub fn compact_vhdx_diskpart(app: &AppHandle, vhdx_path: &str) -> Result<String,
     }
 
     // 1. Shutdown WSL to release file lock
-    run_wsl_shutdown(app)?;
+    on_progress("shutdown", "Requesting WSL shutdown (wsl --shutdown)...");
+    run_wsl_shutdown_core()?;
 
     // 2. Prepare diskpart script in temp directory
     let temp_dir = std::env::temp_dir();
     let script_path = temp_dir.join(format!("purgekit_compact_{}.txt", uuid::Uuid::new_v4()));
-    
+
     let script_content = format!(
         "select vdisk file=\"{}\"\nattach vdisk readonly\ncompact vdisk\ndetach vdisk\nexit\n",
         vhdx_path
@@ -178,10 +189,7 @@ pub fn compact_vhdx_diskpart(app: &AppHandle, vhdx_path: &str) -> Result<String,
         return Err(format!("Failed to write diskpart script: {}", e));
     }
 
-    let _ = app.emit("wsl-compact-progress", WslCompactProgress {
-        phase: "compacting".into(),
-        message: "Executing VHDX disk compaction using diskpart...".into(),
-    });
+    on_progress("compacting", "Executing VHDX disk compaction using diskpart...");
 
     // 3. Run diskpart
     let secure_path = crate::winutil::get_secure_system_path();
@@ -201,48 +209,52 @@ pub fn compact_vhdx_diskpart(app: &AppHandle, vhdx_path: &str) -> Result<String,
             let stderr_str = String::from_utf8_lossy(&out.stderr).to_string();
 
             if out.status.success() {
-                let _ = app.emit("wsl-compact-progress", WslCompactProgress {
-                    phase: "log".into(),
-                    message: stdout_str.clone(),
-                });
-                
-                let _ = app.emit("wsl-compact-progress", WslCompactProgress {
-                    phase: "completed".into(),
-                    message: "WSL2 virtual disk compacted successfully!".into(),
-                });
-
+                on_progress("log", &stdout_str);
+                on_progress("completed", "WSL2 virtual disk compacted successfully!");
                 Ok(stdout_str)
             } else {
                 let err_msg = format!("Diskpart failed.\nStdout: {}\nStderr: {}", stdout_str, stderr_str);
-                let _ = app.emit("wsl-compact-progress", WslCompactProgress {
-                    phase: "error".into(),
-                    message: err_msg.clone(),
-                });
+                on_progress("error", &err_msg);
                 Err(err_msg)
             }
         }
         Err(e) => {
             let err_msg = format!("Failed to spawn diskpart: {}", e);
-            let _ = app.emit("wsl-compact-progress", WslCompactProgress {
-                phase: "error".into(),
-                message: err_msg.clone(),
-            });
+            on_progress("error", &err_msg);
             Err(err_msg)
         }
     }
 }
 
-pub fn set_wsl_distro_sparse(app: &AppHandle, distro_name: &str, sparse: bool) -> Result<(), String> {
+pub fn compact_vhdx_diskpart(app: &AppHandle, vhdx_path: &str) -> Result<String, String> {
+    let mut emit = |phase: &str, message: &str| {
+        let _ = app.emit("wsl-compact-progress", WslCompactProgress {
+            phase: phase.into(),
+            message: message.into(),
+        });
+    };
+    compact_vhdx_core(vhdx_path, &mut emit)
+}
+
+/// Rejects WSL distribution names that could break out of the `wsl --manage`
+/// argument position.
+fn validate_distro_name(distro_name: &str) -> Result<(), String> {
     if distro_name.chars().any(|c| c.is_control() || c == ' ' || c == '&' || c == '|' || c == '"') {
         return Err("Invalid WSL distribution name".to_string());
     }
+    Ok(())
+}
+
+/// Core sparse-attribute toggle, shared by the Tauri command and the CLI.
+pub fn set_wsl_distro_sparse_core(distro_name: &str, sparse: bool) -> Result<(), String> {
+    validate_distro_name(distro_name)?;
 
     // 1. Shutdown WSL first
-    run_wsl_shutdown(app)?;
+    run_wsl_shutdown_core()?;
 
     // 2. Set sparse flag
     let status_str = if sparse { "true" } else { "false" };
-    
+
     let secure_path = crate::winutil::get_secure_system_path();
     let status = Command::new("wsl")
         .creation_flags(CREATE_NO_WINDOW)
@@ -255,6 +267,17 @@ pub fn set_wsl_distro_sparse(app: &AppHandle, distro_name: &str, sparse: bool) -
         Ok(s) => Err(format!("WSL set-sparse command failed with status: {}", s)),
         Err(e) => Err(format!("Failed to execute wsl --manage set-sparse: {}", e)),
     }
+}
+
+pub fn set_wsl_distro_sparse(app: &AppHandle, distro_name: &str, sparse: bool) -> Result<(), String> {
+    // Validate before any progress event so an invalid name fails first.
+    validate_distro_name(distro_name)?;
+
+    let _ = app.emit("wsl-compact-progress", WslCompactProgress {
+        phase: "shutdown".into(),
+        message: "Requesting WSL shutdown (wsl --shutdown)...".into(),
+    });
+    set_wsl_distro_sparse_core(distro_name, sparse)
 }
 
 #[cfg(test)]
