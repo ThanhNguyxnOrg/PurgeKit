@@ -1,7 +1,8 @@
+use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::Mutex;
 
-use usn_journal_rs::prelude::{JournalIterOptions, Usn, UsnReason, Volume};
+use usn_journal_rs::prelude::{Fid, JournalIterOptions, Usn, UsnReason, Volume};
 
 #[derive(Clone)]
 pub struct TrackingSession {
@@ -86,9 +87,56 @@ where
     Ok(cursors)
 }
 
+/// Reasons worth recording for installation tracking: creations, unnamed and
+/// named data writes, and renames. Lifecycle noise (handle close, indexing,
+/// security-only metadata changes) is dropped — the same kind of reason gate
+/// Everything's USN dispatcher applies before touching its index.
+fn reason_is_trackable(reason: UsnReason) -> bool {
+    let trackable = UsnReason::FILE_CREATE
+        | UsnReason::DATA_OVERWRITE
+        | UsnReason::DATA_EXTEND
+        | UsnReason::DATA_TRUNCATION
+        | UsnReason::NAMED_DATA_OVERWRITE
+        | UsnReason::NAMED_DATA_EXTEND
+        | UsnReason::NAMED_DATA_TRUNCATION
+        | UsnReason::RENAME_OLD_NAME
+        | UsnReason::RENAME_NEW_NAME;
+    reason.intersects(trackable)
+}
+
+/// Pairs `RENAME_OLD_NAME` / `RENAME_NEW_NAME` records by file id so a rename
+/// surfaces once, under its new path — Everything keeps the same kind of
+/// old-name buffer for rename pairing. An old name whose new name never
+/// appears is flushed instead of dropped.
+#[derive(Default)]
+struct RenamePairer {
+    pending_old: HashMap<Fid, String>,
+}
+
+impl RenamePairer {
+    fn push(&mut self, fid: Fid, path: String, is_rename_old: bool, is_rename_new: bool) -> Option<String> {
+        if is_rename_new {
+            // The old name is superseded; only the new path is current.
+            self.pending_old.remove(&fid);
+            return Some(path);
+        }
+        if is_rename_old {
+            self.pending_old.insert(fid, path);
+            return None;
+        }
+        Some(path)
+    }
+
+    fn flush(self) -> Vec<String> {
+        self.pending_old.into_values().collect()
+    }
+}
+
 /// Read all available journal records from `start_usn` and resolve them to
 /// current full paths. The iterator loops until the journal tail, so records
-/// larger than one buffer are no longer silently dropped.
+/// larger than one buffer are no longer silently dropped. Records are gated
+/// by [`reason_is_trackable`]; rename pairs collapse to the new path through
+/// [`RenamePairer`].
 pub fn read_usn_changes(drive: char, start_usn: u64) -> Result<Vec<String>, String> {
     let volume = Volume::from_drive_letter(drive).map_err(|error| {
         format!(
@@ -117,19 +165,27 @@ pub fn read_usn_changes(drive: char, start_usn: u64) -> Result<Vec<String>, Stri
         .try_iter_with_options(options)
         .map_err(|error| format!("Failed to read USN journal: {}", error))?;
 
+    let mut pairer = RenamePairer::default();
     for entry in entries {
         let entry = entry.map_err(|error| format!("Failed to parse USN journal entry: {}", error))?;
-        if entry.reason.is_file_delete() {
+        if !reason_is_trackable(entry.reason) {
             continue;
         }
 
         if let Some(path) = resolver.resolve_path(&entry) {
             let path = path.to_string_lossy().to_string();
-            if !path.is_empty() {
-                paths.push(path);
+            if path.is_empty() {
+                continue;
+            }
+
+            let is_rename_old = entry.reason.contains(UsnReason::RENAME_OLD_NAME);
+            let is_rename_new = entry.reason.contains(UsnReason::RENAME_NEW_NAME);
+            if let Some(emitted) = pairer.push(entry.fid, path, is_rename_old, is_rename_new) {
+                paths.push(emitted);
             }
         }
     }
+    paths.extend(pairer.flush());
 
     paths.sort();
     paths.dedup();
@@ -200,6 +256,40 @@ mod tests {
                 r"C:\shared.txt".to_string(),
                 r"D:\b.txt".to_string()
             ]
+        );
+    }
+
+    #[test]
+    fn reason_gate_keeps_creations_writes_and_renames() {
+        assert!(reason_is_trackable(UsnReason::FILE_CREATE));
+        assert!(reason_is_trackable(UsnReason::DATA_OVERWRITE));
+        assert!(reason_is_trackable(UsnReason::RENAME_NEW_NAME));
+        assert!(reason_is_trackable(UsnReason::DATA_EXTEND | UsnReason::CLOSE));
+        assert!(!reason_is_trackable(UsnReason::CLOSE));
+        assert!(!reason_is_trackable(UsnReason::FILE_DELETE));
+        assert!(!reason_is_trackable(UsnReason::SECURITY_CHANGE | UsnReason::BASIC_INFO_CHANGE));
+    }
+
+    #[test]
+    fn rename_pairing_emits_only_the_new_path() {
+        let mut pairer = RenamePairer::default();
+        assert_eq!(pairer.push(Fid::new(1), r"C:\old.txt".to_string(), true, false), None);
+        assert_eq!(
+            pairer.push(Fid::new(1), r"C:\new.txt".to_string(), false, true),
+            Some(r"C:\new.txt".to_string())
+        );
+        assert!(pairer.flush().is_empty());
+
+        // An old name without a visible new name is flushed, not dropped.
+        let mut pairer = RenamePairer::default();
+        assert_eq!(pairer.push(Fid::new(2), r"C:\ghost.txt".to_string(), true, false), None);
+        assert_eq!(pairer.flush(), vec![r"C:\ghost.txt".to_string()]);
+
+        // Plain changes pass straight through.
+        let mut pairer = RenamePairer::default();
+        assert_eq!(
+            pairer.push(Fid::new(3), r"C:\plain.txt".to_string(), false, false),
+            Some(r"C:\plain.txt".to_string())
         );
     }
 }
