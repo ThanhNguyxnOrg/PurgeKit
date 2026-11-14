@@ -62,6 +62,55 @@ pub fn set_path_entries(remaining_values: Vec<String>, scope: &str) -> Result<()
     Ok(())
 }
 
+/// Splits entries into (remaining, removed) keeping only directories that
+/// still exist.
+fn split_prunable_entries(entries: &[PathEntry]) -> (Vec<String>, Vec<String>) {
+    let mut remaining = Vec::new();
+    let mut removed = Vec::new();
+    for entry in entries {
+        if entry.is_valid {
+            remaining.push(entry.value.clone());
+        } else {
+            removed.push(entry.value.clone());
+        }
+    }
+    (remaining, removed)
+}
+
+/// Removes only entries whose directory no longer exists, per scope, and
+/// returns the entries that were removed. Duplicates are left untouched;
+/// the System scope keeps its non-empty guard from [`set_path_entries`].
+pub fn prune_broken_path_entries() -> Result<Vec<PathEntry>, String> {
+    let entries = get_path_entries()?;
+    let mut removed = Vec::new();
+
+    for scope in ["System", "User"] {
+        let scope_entries: Vec<PathEntry> = entries
+            .iter()
+            .filter(|entry| entry.scope == scope)
+            .cloned()
+            .collect();
+        if scope_entries.is_empty() {
+            continue;
+        }
+
+        let broken: Vec<PathEntry> = scope_entries
+            .iter()
+            .filter(|entry| !entry.is_valid)
+            .cloned()
+            .collect();
+        if broken.is_empty() {
+            continue;
+        }
+
+        let (remaining, _) = split_prunable_entries(&scope_entries);
+        set_path_entries(remaining, scope)?;
+        removed.extend(broken);
+    }
+
+    Ok(removed)
+}
+
 fn read_path_from_registry(hkey: winreg::HKEY, subpath: &str) -> Result<String, String> {
     let root = RegKey::predef(hkey);
     let key = root.open_subkey_with_flags(subpath, KEY_READ)
@@ -186,6 +235,28 @@ mod tests {
         assert!(!results[2].is_valid);
         assert!(!results[2].is_duplicate);
         assert_eq!(results[2].issue_reason, "Directory does not exist");
+    }
+
+    #[test]
+    fn prune_split_keeps_valid_entries_and_reports_dead_ones() {
+        let mk = |value: &str, valid: bool| PathEntry {
+            value: value.to_string(),
+            expanded: value.to_string(),
+            is_valid: valid,
+            is_duplicate: false,
+            is_overlap: false,
+            scope: "User".to_string(),
+            issue_reason: String::new(),
+        };
+
+        let (remaining, removed) = split_prunable_entries(&[
+            mk(r"C:\ok", true),
+            mk(r"C:\dead", false),
+            mk(r"D:\ok2", true),
+        ]);
+
+        assert_eq!(remaining, vec![r"C:\ok".to_string(), r"D:\ok2".to_string()]);
+        assert_eq!(removed, vec![r"C:\dead".to_string()]);
     }
 }
 

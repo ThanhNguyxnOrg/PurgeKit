@@ -3,6 +3,7 @@
 
 use clap::{Parser, Subcommand};
 use purgekit_lib::scanner::cli_dev::{prune_dev_tool_cache, scan_dev_tools};
+use purgekit_lib::scanner::path_cleaner::{get_path_entries, prune_broken_path_entries};
 use purgekit_lib::scanner::remnants::{purge_remnant_item, scan_app_remnants};
 use purgekit_lib::scanner::wsl_shrinker::{
     compact_vhdx_core, scan_wsl_distributions, set_wsl_distro_sparse_core,
@@ -44,6 +45,11 @@ enum Commands {
     Cache {
         #[command(subcommand)]
         action: CacheCommands,
+    },
+    #[command(about = "Inspect and repair Windows User/System PATH entries")]
+    CleanPath {
+        #[arg(long, help = "Remove entries whose directory no longer exists")]
+        prune_broken: bool,
     },
 }
 
@@ -292,5 +298,44 @@ fn main() {
                 }
             }
         },
+        Commands::CleanPath { prune_broken } => {
+            if !prune_broken {
+                // Report-only mode: show the current state of both scopes.
+                let entries = match get_path_entries() {
+                    Ok(entries) => entries,
+                    Err(error) => {
+                        eprintln!("ERROR: {}", error);
+                        std::process::exit(1);
+                    }
+                };
+                for entry in &entries {
+                    let status = if !entry.is_valid {
+                        "BROKEN"
+                    } else if entry.is_duplicate {
+                        "DUP"
+                    } else {
+                        "OK"
+                    };
+                    println!("  [{:>6}][{:>6}] {}", entry.scope, status, entry.value);
+                }
+                println!("{} PATH entries inspected.", entries.len());
+            } else {
+                let removed = match prune_broken_path_entries() {
+                    Ok(removed) => removed,
+                    Err(error) => {
+                        eprintln!("ERROR: {}", error);
+                        std::process::exit(1);
+                    }
+                };
+                if removed.is_empty() {
+                    println!("No broken PATH entries found.");
+                } else {
+                    for entry in &removed {
+                        println!("  [{}] removed: {}", entry.scope, entry.value);
+                    }
+                    println!("Removed {} broken PATH entr{}.", removed.len(), if removed.len() == 1 { "y" } else { "ies" });
+                }
+            }
+        }
     }
 }
