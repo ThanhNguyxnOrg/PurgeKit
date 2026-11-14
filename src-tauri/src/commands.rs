@@ -1504,6 +1504,50 @@ pub fn restart_as_admin() -> Result<(), String> {
     std::process::exit(0);
 }
 
+/// Opens the Microsoft Store product page for a Store (UWP) package.
+/// The package family name is validated so the URL scheme is fixed to the
+/// Store; the webview can never open arbitrary URIs through this command.
+#[tauri::command]
+pub fn open_store_page(package_family: String) -> Result<(), String> {
+    let package_family = package_family.trim();
+    if package_family.is_empty()
+        || package_family.len() > 128
+        || !package_family
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-'))
+    {
+        return Err("Invalid package family name.".to_string());
+    }
+
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let url: Vec<u16> = format!("ms-windows-store://pdp/?PFN={}", package_family)
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let open: Vec<u16> = "open\0".encode_utf16().collect();
+
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            open.as_ptr(),
+            url.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    if (result as isize) <= 32 {
+        return Err(format!(
+            "The Microsoft Store could not be opened (code {}).",
+            result as isize
+        ));
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn start_install_tracking(
     state: tauri::State<'_, crate::tracker::ActiveTracking>,

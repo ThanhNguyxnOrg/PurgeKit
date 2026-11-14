@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
-  import { Search, RefreshCw, Trash2, X, CheckSquare, Square, Folder, Database, File, ShieldAlert } from "@lucide/svelte";
+  import { Search, RefreshCw, Trash2, X, CheckSquare, Square, Store, Folder, Database, File, ShieldAlert } from "@lucide/svelte";
   import { toast } from "../toast.svelte";
   import { t } from "$lib/i18n.svelte";
 
@@ -35,6 +35,7 @@
     requires_admin?: boolean;
     modify_path?: string | null;
     release_type?: string | null;
+    installer_kind?: string | null;
     is_update?: boolean;
   }
 
@@ -546,6 +547,14 @@
       toast.show(t("Modify command finished for {name}.", { name: app.display_name }), "success");
     } catch (e: any) {
       toast.show(t("Modify command failed: {error}", { error: e.toString() }), "error");
+    }
+  }
+
+  async function openStorePage(app: InstalledApp) {
+    try {
+      await invoke("open_store_page", { packageFamily: app.id });
+    } catch (error) {
+      toast.show(t("The Microsoft Store could not be opened: {error}", { error: String(error) }), "error");
     }
   }
 
@@ -1130,6 +1139,16 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                           {t("Remove folder")}
                         </button>
                       {:else if app.uninstall_string}
+                        {#if appSource(app) === "store"}
+                          <button
+                            onclick={() => openStorePage(app)}
+                            title={t("Open the product page in Microsoft Store")}
+                            class="px-2.5 py-1.5 rounded-lg bg-info/10 hover:bg-info-strong text-info hover:text-white transition-all border border-info/25 flex items-center gap-1.5 text-xs font-semibold active:scale-95 cursor-pointer"
+                          >
+                            <Store class="w-3.5 h-3.5" />
+                            {t("Open in Store")}
+                          </button>
+                        {/if}
                         {#if app.modify_path}
                           <button
                             onclick={() => runModify(app)}

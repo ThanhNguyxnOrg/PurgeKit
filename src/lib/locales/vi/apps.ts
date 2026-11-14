@@ -38,6 +38,9 @@ const apps: Record<string, string> = {
   "Actions": "Thao tác",
   "Select application {name}": "Chọn ứng dụng {name}",
   "Select for bulk uninstall": "Chọn để gỡ cài đặt hàng loạt",
+  "Open in Store": "Mở trong Store",
+  "Open the product page in Microsoft Store": "Mở trang sản phẩm trong Microsoft Store",
+  "The Microsoft Store could not be opened: {error}": "Không thể mở Microsoft Store: {error}",
   "CLI/toolchain entries are uninstalled individually":
     "Mục CLI/bộ công cụ được gỡ cài đặt riêng lẻ",
   "Verified Publisher Certificate": "Chứng chỉ nhà phát hành đã xác minh",
