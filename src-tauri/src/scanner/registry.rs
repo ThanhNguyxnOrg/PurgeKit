@@ -15,6 +15,8 @@ pub struct InstalledApp {
     pub modify_path: Option<String>,
     #[serde(default)]
     pub release_type: Option<String>,
+    #[serde(default)]
+    pub installer_kind: Option<String>,
     pub install_location: Option<String>,
     pub install_date: Option<String>,
     pub display_icon: Option<String>,
@@ -176,6 +178,22 @@ fn scan_uninstall_key(
             continue;
         }
 
+        // Installer-family detection decides which silent-switch dialect the
+        // uninstaller understands (BCU-style). It runs before the cache lookup
+        // so both branches surface the same value.
+        let value_names: Vec<String> = subkey
+            .enum_values()
+            .filter_map(|value| value.ok())
+            .map(|(name, _)| name)
+            .collect();
+        let windows_installer: u32 = subkey.get_value("WindowsInstaller").unwrap_or(0);
+        let installer_kind = classify_installer_kind(
+            &name,
+            &value_names,
+            windows_installer != 0,
+            uninstall_string.as_deref(),
+        );
+
         let fingerprint = derived_fingerprint(
             display_name,
             display_version.as_deref(),
@@ -184,6 +202,7 @@ fn scan_uninstall_key(
             install_location.as_deref(),
             install_date.as_deref(),
             estimated_size,
+            installer_kind.as_deref(),
         );
         let cache_key = format!("{}|{}", hive_name, registry_path).to_lowercase();
 
@@ -222,6 +241,7 @@ fn scan_uninstall_key(
                 quiet_uninstall_string,
                 modify_path,
                 release_type,
+                installer_kind: installer_kind.clone(),
                 install_location: cached_install,
                 install_date: effective_install_date,
                 display_icon: cached_icon,
@@ -439,6 +459,7 @@ fn scan_uninstall_key(
             quiet_uninstall_string,
             modify_path,
             release_type,
+            installer_kind,
             install_location,
             install_date,
             display_icon,
@@ -460,9 +481,10 @@ fn derived_fingerprint(
     install_location: Option<&str>,
     install_date: Option<&str>,
     estimated_size: Option<u64>,
+    installer_kind: Option<&str>,
 ) -> String {
     format!(
-        "v3\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}",
+        "v4\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}",
         display_name,
         display_version.unwrap_or_default(),
         uninstall_string.unwrap_or_default(),
@@ -470,6 +492,7 @@ fn derived_fingerprint(
         install_location.unwrap_or_default(),
         install_date.unwrap_or_default(),
         estimated_size.unwrap_or(0),
+        installer_kind.unwrap_or_default(),
         verification_stamp(uninstall_string, display_icon),
     )
 }
@@ -528,6 +551,68 @@ fn detect_is_verified(
         }
     }
     is_verified
+}
+
+/// Extracts the lowercase file name of the uninstaller from an uninstall command.
+fn uninstaller_file_name(uninstall_string: &str) -> Option<String> {
+    let executable = crate::winutil::extract_executable_path(uninstall_string);
+    let executable = executable.trim().trim_matches('"');
+    let name = executable.rsplit(['\\', '/']).next()?;
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_lowercase())
+    }
+}
+
+/// NSIS uninstallers ship as `uninst.exe` / `uninst64.exe` or numbered
+/// `uninsNNN.exe`; generic names such as `uninstall.exe` stay unknown.
+fn is_nsis_uninstaller(name: &str) -> bool {
+    if name == "uninst.exe" || name == "uninst64.exe" {
+        return true;
+    }
+    match name.strip_prefix("unins") {
+        Some(rest) => {
+            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            !digits.is_empty() && rest[digits.len()..].eq_ignore_ascii_case(".exe")
+        }
+        None => false,
+    }
+}
+
+/// Heuristic installer-family detection (BCU parity). The family tells the
+/// preflight which silent-switch dialect the uninstaller understands and
+/// separates Steam/library entries from classic ARP registrations.
+fn classify_installer_kind(
+    key_name: &str,
+    value_names: &[String],
+    windows_installer: bool,
+    uninstall_string: Option<&str>,
+) -> Option<String> {
+    // MSI products register under a {GUID} key or set WindowsInstaller=1.
+    if windows_installer
+        || (key_name.starts_with('{') && key_name.ends_with('}') && key_name.len() == 38)
+    {
+        return Some("MSI".to_string());
+    }
+
+    // Inno Setup exposes "Inno Setup: ..." value names.
+    if value_names.iter().any(|name| name.contains("Inno Setup:")) {
+        return Some("InnoSetup".to_string());
+    }
+
+    // Steam writes "Steam App <id>" keys.
+    if key_name.starts_with("Steam App ") {
+        return Some("Steam".to_string());
+    }
+
+    if let Some(name) = uninstall_string.and_then(uninstaller_file_name) {
+        if is_nsis_uninstaller(&name) {
+            return Some("NSIS".to_string());
+        }
+    }
+
+    None
 }
 
 fn clean_icon_path(icon: &str) -> String {
@@ -850,6 +935,51 @@ mod tests {
     fn test_scan_registry_no_crash() {
         let apps = scan_registry();
         println!("Scan registry returned {} apps", apps.len());
+    }
+
+    #[test]
+    fn classifies_installer_kinds() {
+        let guid = "{90160000-008C-0000-1000-0000000FF1CE}";
+        assert_eq!(classify_installer_kind(guid, &[], false, None).as_deref(), Some("MSI"));
+        assert_eq!(classify_installer_kind("MyApp", &[], true, None).as_deref(), Some("MSI"));
+
+        let inno_values = vec!["Inno Setup: Setup Version".to_string()];
+        assert_eq!(
+            classify_installer_kind("MyApp", &inno_values, false, Some(r"C:\App\unins000.exe")).as_deref(),
+            Some("InnoSetup")
+        );
+
+        assert_eq!(
+            classify_installer_kind("Steam App 12345", &[], false, Some(r"C:\Steam\steam.exe")).as_deref(),
+            Some("Steam")
+        );
+
+        assert_eq!(
+            classify_installer_kind("MyApp", &[], false, Some(r"C:\App\unins001.exe")).as_deref(),
+            Some("NSIS")
+        );
+
+        // Generic uninstaller names stay unknown to avoid false positives.
+        assert_eq!(classify_installer_kind("MyApp", &[], false, Some(r"C:\App\uninstall.exe /S")), None);
+    }
+
+    #[test]
+    fn detects_nsis_uninstaller_names() {
+        assert!(is_nsis_uninstaller("uninst.exe"));
+        assert!(is_nsis_uninstaller("uninst64.exe"));
+        assert!(is_nsis_uninstaller("unins000.exe"));
+        assert!(!is_nsis_uninstaller("uninstall.exe"));
+        assert!(!is_nsis_uninstaller("unins.exe"));
+    }
+
+    #[test]
+    fn extracts_uninstaller_file_names() {
+        assert_eq!(
+            uninstaller_file_name(r#""C:\Program Files\App\unins000.exe" /S"#).as_deref(),
+            Some("unins000.exe")
+        );
+        assert_eq!(uninstaller_file_name(r"C:\App\UNWISE.EXE").as_deref(), Some("unwise.exe"));
+        assert_eq!(uninstaller_file_name(""), None);
     }
 }
 

@@ -155,6 +155,7 @@ try { $startApps = @(Get-StartApps | Select-Object Name, AppID) } catch {};
             quiet_uninstall_string: Some(uninstall_string),
             modify_path: None,
             release_type: None,
+            installer_kind: Some("Appx".to_string()),
             install_location: Some(loc),
             install_date,
             display_icon: None, // Store app icons are resolved using AppxManifest.xml, which we can implement later

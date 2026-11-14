@@ -2509,6 +2509,7 @@ mod tests {
             quiet_uninstall_string: quiet.map(|s| s.to_string()),
             modify_path: None,
             release_type: None,
+            installer_kind: None,
             install_location: None,
             install_date: None,
             display_icon: None,
