@@ -326,13 +326,14 @@ fn scan_firewall_rules(app_token: &str, install_dir: Option<&str>, remnants: &mu
 /// Shared matcher: returns a confidence score when `candidate` references the app,
 /// either through its install directory (higher confidence) or its name token.
 /// The name token must be at least 3 characters to avoid false positives.
+/// Scores use the same `i32` type as [`RemnantItem::score`].
 fn remnant_score(
     app_token: &str,
     install_dir: Option<&str>,
     candidate: &str,
-    dir_score: u32,
-    token_score: u32,
-) -> Option<u32> {
+    dir_score: i32,
+    token_score: i32,
+) -> Option<i32> {
     let candidate_lower = candidate.to_lowercase();
 
     if let Some(loc) = install_dir {
@@ -359,7 +360,7 @@ fn parse_appinit_dlls(raw: &str) -> Vec<String> {
 }
 
 /// Returns the best confidence score when any `BootExecute` entry references the app.
-fn boot_execute_match(entries: &[String], app_token: &str, install_dir: Option<&str>) -> Option<u32> {
+fn boot_execute_match(entries: &[String], app_token: &str, install_dir: Option<&str>) -> Option<i32> {
     entries
         .iter()
         .filter_map(|entry| remnant_score(app_token, install_dir, entry, 85, 70))

@@ -4,7 +4,6 @@ use crate::settings::{self, AppSettings};
 use serde::Serialize;
 use std::process::Command;
 use std::os::windows::process::CommandExt;
-use std::fs;
 use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter};
 
