@@ -41,6 +41,23 @@ Below is the JSON schema showing all configurable settings, their types, and def
 
 ---
 
+## 🏢 Registry Overrides (Deployment)
+
+Administrators can pin settings machine-wide without touching each user's `settings.json`:
+
+* Key: `HKEY_LOCAL_MACHINE\SOFTWARE\PurgeKit\ConfigOverride`
+* Values: `REG_SZ`, named after the settings keys above (`scan_level`, `backup_before_delete`, `create_restore_point`, `enable_undocumented_force_unlock`, `project_scan_paths` — semicolon-separated).
+* Overrides are applied on every load and win over `settings.json`; unknown or invalid values are ignored.
+
+Example (elevated command prompt):
+
+```bat
+reg add "HKLM\SOFTWARE\PurgeKit\ConfigOverride" /v scan_level /t REG_SZ /d aggressive /f
+reg add "HKLM\SOFTWARE\PurgeKit\ConfigOverride" /v backup_before_delete /t REG_SZ /d false /f
+```
+
+---
+
 ## 🛡️ Details on Scan Levels
 
 The **`scan_level`** parameter affects the remnant scanning heuristics and deletion tolerances:
