@@ -2,6 +2,7 @@
 //! attribute) so stdout/stderr work natively in release builds.
 
 use clap::{Parser, Subcommand};
+use purgekit_lib::scanner::cli_dev::{prune_dev_tool_cache, scan_dev_tools};
 use purgekit_lib::scanner::remnants::{purge_remnant_item, scan_app_remnants};
 use purgekit_lib::scanner::wsl_shrinker::{
     compact_vhdx_core, scan_wsl_distributions, set_wsl_distro_sparse_core,
@@ -38,6 +39,23 @@ enum Commands {
     Wsl {
         #[command(subcommand)]
         action: WslCommands,
+    },
+    #[command(about = "Clean developer tool caches, build outputs and package registries")]
+    Cache {
+        #[command(subcommand)]
+        action: CacheCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum CacheCommands {
+    #[command(about = "Prune caches for the listed tools (or every detected tool with --all)")]
+    Prune {
+        #[arg(help = "Tool cache names (e.g. npm pip cargo go yarn pnpm composer gradle vscode)")]
+        tools: Vec<String>,
+
+        #[arg(long, help = "Prune every detected developer tool cache")]
+        all: bool,
     },
 }
 
@@ -213,6 +231,66 @@ fn main() {
                     std::process::exit(1);
                 }
             },
+        },
+        Commands::Cache { action } => match action {
+            CacheCommands::Prune { tools, all } => {
+                let available = scan_dev_tools();
+                let requested: Vec<String> = if all {
+                    available
+                        .iter()
+                        .filter(|tool| tool.detected)
+                        .map(|tool| tool.name.clone())
+                        .collect()
+                } else {
+                    tools
+                };
+
+                if requested.is_empty() {
+                    eprintln!("ERROR: no tools requested. Pass tool names or --all.");
+                    std::process::exit(1);
+                }
+
+                let mut total_freed: u64 = 0;
+                let mut failures = 0u32;
+
+                for name in &requested {
+                    match available.iter().find(|tool| tool.name == *name) {
+                        None => {
+                            eprintln!("  [{}] SKIP (unknown tool; see docs/CLI.md for valid names)", name);
+                            failures += 1;
+                        }
+                        Some(tool) if !tool.detected => {
+                            println!("  [{}] SKIP (not installed)", name);
+                        }
+                        Some(tool) => {
+                            println!(
+                                "  [{}] cache size: {:.1} MB",
+                                name,
+                                tool.cache_size.unwrap_or(0) as f64 / 1_048_576.0
+                            );
+                            let mut on_progress = |phase: &str, percent: u32, message: &str| {
+                                println!("    [{:>9} {:>3}%] {}", phase, percent, message.trim_end());
+                            };
+                            match prune_dev_tool_cache(name, &mut on_progress) {
+                                Ok(freed) => {
+                                    println!("  [{}] freed {:.1} MB", name, freed as f64 / 1_048_576.0);
+                                    total_freed += freed;
+                                }
+                                Err(error) => {
+                                    eprintln!("  [{}] FAILED: {}", name, error);
+                                    failures += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                println!("Total freed: {:.1} MB", total_freed as f64 / 1_048_576.0);
+                if failures > 0 {
+                    eprintln!("{} tool(s) failed.", failures);
+                    std::process::exit(1);
+                }
+            }
         },
     }
 }

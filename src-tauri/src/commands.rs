@@ -10,24 +10,6 @@ use tauri::{AppHandle, Emitter};
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-const SAFE_DEV_TOOL_CLEAN_COMMANDS: &[&str] = &[
-    "npm cache clean --force",
-    "pnpm store prune",
-    "yarn cache clean",
-    "pip cache purge",
-    "cargo clean",
-    "go clean -cache -modcache",
-    "bun pm clean",
-    "deno clean",
-    "gradle clean",
-    "mvn clean",
-    "dotnet nuget locals all --clear",
-    "docker system prune -f",
-    "conda clean -a -y",
-    "gem cleanup",
-    "flutter pub cache clean --force",
-];
-
 #[derive(Debug, Serialize, Clone)]
 pub struct ProgressPayload {
     pub phase: String,
@@ -92,131 +74,19 @@ pub async fn get_dev_tools(app: AppHandle) -> Result<Vec<DevToolInfo>, String> {
     }).await.map_err(|e| e.to_string())?
 }
 
-fn is_path_within(path: &std::path::Path, root: &std::path::Path) -> bool {
-    let path = crate::winutil::canonicalize_path_safety(&path.to_string_lossy())
-        .to_string_lossy()
-        .trim_end_matches(['\\', '/'])
-        .to_lowercase();
-    let root = crate::winutil::canonicalize_path_safety(&root.to_string_lossy())
-        .to_string_lossy()
-        .trim_end_matches(['\\', '/'])
-        .to_lowercase();
-    !root.is_empty() && (path == root || path.starts_with(&(root + "\\")))
-}
-
 #[tauri::command]
 pub async fn clean_dev_tool_cache(app: AppHandle, name: String) -> Result<u64, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let _ = app.emit("clean-progress", ProgressPayload {
-            phase: "scanning".into(),
-            current: 10,
-            total: 100,
-            message: format!("Checking dev tool '{}' cache...", name).into(),
-        });
-        
-        let tools = scanner::scan_dev_tools();
-        let tool = tools.iter().find(|t| t.name == name)
-            .ok_or_else(|| format!("Dev tool '{}' not found or not detected", name))?;
+        let mut emit_progress = |phase: &str, percent: u32, message: &str| {
+            let _ = app.emit("clean-progress", ProgressPayload {
+                phase: phase.into(),
+                current: percent,
+                total: 100,
+                message: message.into(),
+            });
+        };
 
-        if !tool.detected {
-            return Err(format!("Dev tool '{}' is not installed on this system", name));
-        }
-
-        let initial_size = tool.cache_size.unwrap_or(0);
-        if initial_size == 0 {
-            return Ok(0); // Cache is already empty
-        }
-
-        let _ = app.emit("clean-progress", ProgressPayload {
-            phase: "cleaning".into(),
-            current: 40,
-            total: 100,
-            message: format!("Purging cache for '{}'...", name).into(),
-        });
-
-        // Load rules to find resolved cache paths
-        let rules = scanner::cli_dev::load_dev_tools_rules();
-        let rule = rules.iter().find(|r| r.name == name)
-            .ok_or_else(|| format!("Rule configuration not found for '{}'", name))?;
-
-        let template_roots: Vec<std::path::PathBuf> = rule
-            .cache_path_templates
-            .iter()
-            .flatten()
-            .filter_map(|template| scanner::cli_dev::resolve_template_path(template))
-            .collect();
-
-        let mut resolved_paths = Vec::new();
-        if let Some(ref dyn_cmd) = rule.dynamic_cache_cmd {
-            if let Some(dyn_path) = scanner::cli_dev::get_single_dynamic_cache_path(&name, dyn_cmd) {
-                // A project-level config can point a cache command at an
-                // arbitrary folder. Only trust it when it stays inside one of
-                // the rule's declared template roots.
-                if template_roots
-                    .iter()
-                    .any(|root| is_path_within(&dyn_path, root))
-                {
-                    resolved_paths.push(dyn_path);
-                }
-            }
-        }
-        if resolved_paths.is_empty() {
-            for root in &template_roots {
-                if root.exists() {
-                    resolved_paths.push(root.clone());
-                }
-            }
-        }
-
-        let mut cleaned_via_cmd = false;
-
-        if let Some(ref clean_cmd) = rule.clean_command {
-            if SAFE_DEV_TOOL_CLEAN_COMMANDS.contains(&clean_cmd.as_str()) {
-                let secure_path = crate::winutil::get_secure_system_path();
-                let output = Command::new("cmd")
-                    .creation_flags(CREATE_NO_WINDOW)
-                    .env("PATH", &secure_path)
-                    .args(&["/C", clean_cmd])
-                    .output()
-                    .map_err(|e| format!("Failed to execute clean command: {}", e))?;
-
-                if !output.status.success() {
-                    let err_msg = String::from_utf8_lossy(&output.stderr);
-                    return Err(format!("Clean command failed: {}", err_msg.trim()));
-                }
-                cleaned_via_cmd = true;
-            }
-        }
-
-        // If not cleaned via whitelisted command, execute safe directory purging
-        if !cleaned_via_cmd {
-            for p in &resolved_paths {
-                if p.exists() {
-                    crate::winutil::is_safe_to_delete(&p.to_string_lossy())
-                        .map_err(|e| e.to_string())?;
-                    fs::remove_dir_all(p)
-                        .map_err(|e| format!("Failed to remove cache directory: {}", e))?;
-                    fs::create_dir_all(p)
-                        .map_err(|e| format!("Failed to recreate cache directory: {}", e))?;
-                }
-            }
-        }
-
-        // Re-scan to compute the new size
-        let updated_tools = scanner::scan_dev_tools();
-        let updated_tool = updated_tools.iter().find(|t| t.name == name);
-        let final_size = updated_tool.and_then(|t| t.cache_size).unwrap_or(0);
-
-        let freed = initial_size.saturating_sub(final_size);
-
-        let _ = app.emit("clean-progress", ProgressPayload {
-            phase: "completed".into(),
-            current: 100,
-            total: 100,
-            message: format!("Successfully cleaned '{}' cache!", name).into(),
-        });
-
-        Ok(freed)
+        scanner::cli_dev::prune_dev_tool_cache(&name, &mut emit_progress)
     }).await.map_err(|e| e.to_string())?
 }
 
@@ -2646,21 +2516,6 @@ mod tests {
             r"Software\Microsoft\Windows\CurrentVersion\Uninstall"
         )
         .is_err());
-    }
-
-    #[test]
-fn test_dynamic_cache_path_must_stay_under_template_root() {
-        let root = std::env::temp_dir().join("purgekit_cache_root_test");
-        let child = root.join("cache");
-        let outside = std::env::temp_dir().join("purgekit_cache_outside_test");
-        let _ = std::fs::remove_dir_all(&root);
-        let _ = std::fs::remove_dir_all(&outside);
-        std::fs::create_dir_all(&child).unwrap();
-        std::fs::create_dir_all(&outside).unwrap();
-        assert!(is_path_within(&child, &root));
-        assert!(!is_path_within(&outside, &root));
-        let _ = std::fs::remove_dir_all(&root);
-        let _ = std::fs::remove_dir_all(&outside);
     }
 
     #[test]
