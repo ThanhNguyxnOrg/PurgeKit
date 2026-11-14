@@ -276,6 +276,65 @@ pub(crate) fn levenshtein_distance(left: &str, right: &str) -> usize {
     previous[right.len()]
 }
 
+/// Sift4 "simple" string distance (Siderite's algorithm — the family BCU uses
+/// for leftover confidence). Unlike Levenshtein, a swapped character pair
+/// costs about one edit, which is what transposed folder names look like.
+/// The reference implementation indexes by bytes; this port indexes by chars
+/// so non-ASCII names (e.g. Vietnamese) stay correct.
+pub(crate) fn sift4_simplest(left: &str, right: &str, max_offset: usize) -> usize {
+    let left: Vec<char> = left.chars().collect();
+    let right: Vec<char> = right.chars().collect();
+    let l1 = left.len();
+    let l2 = right.len();
+
+    if l1 == 0 {
+        return l2;
+    }
+    if l2 == 0 {
+        return l1;
+    }
+
+    let mut c1 = 0usize;
+    let mut c2 = 0usize;
+    let mut lcss = 0usize; // longest common subsequence
+    let mut local_cs = 0usize; // current run of matches
+
+    while c1 < l1 && c2 < l2 {
+        if left[c1] == right[c2] {
+            local_cs += 1;
+        } else {
+            lcss += local_cs;
+            local_cs = 0;
+            if c1 != c2 {
+                // Using min keeps the transposition offset symmetric.
+                c1 = c1.min(c2);
+                c2 = c1;
+            }
+
+            for offset in 0..max_offset {
+                if !(c1 + 1 < l1 || c2 + offset < l2) {
+                    break;
+                }
+                if c1 + offset < l1 && left[c1 + offset] == right[c2] {
+                    c1 += offset;
+                    local_cs += 1;
+                    break;
+                }
+                if c2 + offset < l2 && left[c1] == right[c2 + offset] {
+                    c2 += offset;
+                    local_cs += 1;
+                    break;
+                }
+            }
+        }
+        c1 += 1;
+        c2 += 1;
+    }
+
+    lcss += local_cs;
+    l1.max(l2).saturating_sub(lcss)
+}
+
 fn is_remnant_match(name: &str, token: &str, strict: bool) -> bool {
     let name_lower = name.to_lowercase();
     let token_lower = token.to_lowercase();
@@ -297,6 +356,14 @@ fn is_remnant_match(name: &str, token: &str, strict: bool) -> bool {
     if token_lower.len() >= 6 {
         let max_distance = if token_lower.len() >= 10 { 2 } else { 1 };
         if levenshtein_distance(&name_lower, &token_lower) <= max_distance {
+            return true;
+        }
+
+        // Transposition-tolerant tier (Sift4, the family BCU uses): a swapped
+        // character pair costs two edits under Levenshtein but about one under
+        // Sift4, so folder typos like "obsstudoi" still match "obsstudio".
+        const SIFT4_MAX_OFFSET: usize = 2;
+        if sift4_simplest(&name_lower, &token_lower, SIFT4_MAX_OFFSET) <= max_distance {
             return true;
         }
     }
@@ -1007,5 +1074,29 @@ mod tests {
         assert!(is_remnant_match("visual studio code", "visualstudiocode", false));
         assert!(is_remnant_match("my-app-data", "app", false));
         assert!(!is_remnant_match("my-app-data", "other", false));
+    }
+
+    #[test]
+    fn sift4_matches_reference_vectors() {
+        // Vectors from the reference implementation (sift4 crate 0.1.4, docs.rs).
+        assert_eq!(sift4_simplest("London", "Londo", 5), 1);
+        assert_eq!(sift4_simplest("London", "Lond", 5), 2);
+        assert_eq!(sift4_simplest("Chicago", "Chiag", 5), 2);
+        assert_eq!(sift4_simplest("Los Angeles", "Angeles", 5), 4);
+        assert_eq!(sift4_simplest("Bangkok", "Bagrok", 5), 2);
+        assert_eq!(sift4_simplest("San Francisco", "", 5), 13);
+        assert_eq!(sift4_simplest("", "New York", 5), 8);
+        assert_eq!(sift4_simplest("", "", 5), 0);
+    }
+
+    #[test]
+    fn sift4_tier_catches_transposed_folder_names() {
+        // A swapped pair is one edit for Sift4 even though Levenshtein sees two.
+        assert_eq!(levenshtein_distance("obsstudoi", "obsstudio"), 2);
+        assert!(is_remnant_match("obsstudoi", "obsstudio", false));
+        // Strict mode (personal folders) still never fuzzes.
+        assert!(!is_remnant_match("obsstudoi", "obsstudio", true));
+        // Short names stay exact, transposition or not.
+        assert!(!is_remnant_match("vcl", "vlc", false));
     }
 }
