@@ -2463,7 +2463,7 @@ mod tests {
         let first = base.join("first");
         let nested = first.join("nested");
         let second = base.join("second");
-        let _ = fs::remove_dir_all(&base);
+        let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&nested).unwrap();
         std::fs::create_dir_all(&second).unwrap();
 
