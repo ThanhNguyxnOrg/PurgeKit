@@ -77,10 +77,10 @@ To prevent standard users from manipulating PurgeKit (when running elevated as A
 - All child process executions (e.g., `cmd.exe`, `powershell.exe`, `rustup`, `npm`, `fnm`, `diskpart.exe`, `reg.exe`) explicitly override the process environment `PATH` variable using `winutil::get_secure_system_path()`.
 - This ensures only system-directory executables (`C:\Windows\System32`, `C:\Windows\System32\wbem`, etc.) are spawned, neutralizing DLL/executable hijacking via custom user PATH variables.
 
-### 2. Dev Tools Config Command Whitelisting
-- Cache cleaning configurations can be modified dynamically via `%LOCALAPPDATA%\PurgeKit\devtools_rules.json`.
-- To prevent users from inputting malicious commands in this JSON rules file, PurgeKit checks the `clean_command` against a hardcoded whitelist (`SAFE_DEV_TOOL_CLEAN_COMMANDS`).
-- If the command is not whitelisted, PurgeKit blocks shell execution completely and falls back to direct directory purging using native Rust file APIs.
+### 2. Dev Tools Cache Command Whitelisting
+- Dev-tool cache rules are compiled into the binary; a user-writable `%LocalAppData%\PurgeKit\devtools_rules.json` is deliberately ignored, so a standard user (or a compromised webview) cannot inject cleanup commands or redirect purges to arbitrary paths.
+- Shell clean commands (`clean_command`) execute only when present in the hardcoded whitelist (`SAFE_DEV_TOOL_CLEAN_COMMANDS`); everything else falls back to direct directory purging using native Rust file APIs.
+- Dynamically discovered cache paths (`dynamic_cache_cmd`) are only trusted while they resolve inside one of the rule's declared template roots.
 
 ### 3. Safe Filesystem & Registry Deletion Gates
 - All directory/file deletions pass through `winutil::is_safe_to_delete`. Deletions of root drives (e.g. `C:\`), Windows directories (`C:\Windows`, `C:\Windows\System32`), or other user profiles are strictly blocked.
