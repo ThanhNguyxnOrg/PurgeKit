@@ -47,10 +47,15 @@ PurgeKit queries three source families to compile its application list:
 
 Icons resolve through DisplayIcon, Start Menu shortcut targets, uninstallers, install folders, PATH and package-manager runtime executables. Manifest logos are preferred for Store apps; fully transparent images are rejected. Stale entries keep a letter tile rather than a fabricated logo.
 
+Rows also carry an **installer family** badge (MSI, InnoSetup, NSIS, Steam or Appx) detected from the registration itself — `{GUID}` keys or `WindowsInstaller=1`, `"Inno Setup:"` value names, `"Steam App "` keys, and `uninst*.exe` / `uninsNNN.exe` uninstallers — and Store rows get an **Open in Store** action that launches the product page through a validated `ms-windows-store://` command.
+
 ### 📦 Bulk Silent Uninstallation
 * **Command Extraction**: PurgeKit inspects the registry uninstallation string. If a silent or quiet uninstallation parameter is supported (e.g. `/S`, `/quiet`, `/qn`, `/uninstall`, `/silent`), it extracts and runs it.
 * **Execution Flow**: Spawns uninstallation processes sequentially. UWP packages are uninstalled using native PowerShell bindings (`Remove-AppxPackage`).
 * **Auto-Purge Leftovers**: Leverages regex heuristics to clean remnant directories and registry keys left behind by standard uninstallers, operating silently in the background.
+
+### 🕵️ Leftover Engine
+Evidence-scored remnant scans cover files, registry keys, shortcuts, services, scheduled tasks, firewall rules, **Active Setup** components (`StubPath`), **Winlogon** shell/userinit overrides, **AppInit_DLLs** and **Boot Execute** entries, plus COM/TypeLib/MSI orphans on aggressive scans. Name matching combines exact, normalized and word checks with Levenshtein and a transposition-tolerant **Sift4** tier; score modifiers (GUID matches, empty folders, SharedDLLs refcounts, recent activity, protected paths) map to VeryHigh→Low confidence. Purging re-validates every path against the shared safety gates and the quarantine policy.
 
 ---
 
@@ -97,6 +102,8 @@ For Windows 11 systems, PurgeKit allows toggling the native sparse property:
 `wsl --manage [DistroName] --set-sparse true`
 This enables Windows to automatically reclaim unused space from the WSL2 virtual disk in the background, eliminating the need for manual compactions.
 
+The identical core powers `purgekit-cli wsl list|compact|sparse` for headless machines and scripts (see [CLI.md](CLI.md)).
+
 ---
 
 ## 📦 5. Toolchain Version Sweeper
@@ -128,7 +135,7 @@ Developer tool caches store downloaded libraries and logs. PurgeKit queries thei
 * **composer**: `%AppData%\Composer\cache`
 * **gradle**: `%USERPROFILE%\.gradle\caches`
 
-Caches are calculated and cleaned using direct directory deletion, freeing up valuable storage instantly.
+Caches are calculated and cleaned using direct directory deletion, freeing up valuable storage instantly. The same pipeline powers `purgekit-cli cache prune` (see [CLI.md](CLI.md)).
 
 ---
 
@@ -148,6 +155,8 @@ Each entry is validated:
 ### 🔧 Repair & Propagation
 When paths are deleted, PurgeKit updates the Registry entries with `REG_EXPAND_SZ` types and broadcasts a Windows message `WM_SETTINGCHANGE` to all running processes so that the updated PATH is loaded immediately without requiring a system reboot.
 
+Headless workflows can use `purgekit-cli clean-path [--prune-broken]` to report or repair broken entries non-interactively.
+
 ---
 
 ## 🚀 8. Startup Manager
@@ -159,6 +168,8 @@ Startup Manager inventories three autostart surfaces and keeps safe boundaries a
 * **Scheduled tasks:** boot/logon tasks under the Windows Tasks tree, with servicing tasks protected.
 
 Each item resolves a real icon from its executable or shortcut target. Absolute targets that no longer exist are marked with a warning instead of a blank icon. Enable/disable, delete and quarantine actions validate that the item still belongs to the scanned Startup set.
+
+Other autostart classes — Active Setup, Winlogon overrides, AppInit_DLLs and Boot Execute — are surfaced by the leftover scanner during app cleanup rather than this manager.
 
 ---
 

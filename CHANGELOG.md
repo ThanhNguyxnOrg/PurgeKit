@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### 🧹 Cleanup Engine
+* Remnant scans cover four additional autostart surfaces: Active Setup (`StubPath`), Winlogon shell/userinit/taskman/appsetup overrides, AppInit_DLLs and Boot Execute.
+* Name matching gains a transposition-tolerant Sift4 tier on top of the existing Levenshtein gates; short names stay exact.
+
+### 📦 Application Inventory
+* Installer-family detection (MSI, InnoSetup, NSIS, Steam, Appx) with a derived-cache fingerprint bump (v4) and a badge on app rows.
+* "Open in Store" action for Store rows via a validated `ms-windows-store://` deep link.
+
+### 📡 Active Tracker
+* USN records are gated by reason (creations, data writes, renames); rename old/new records pair by file id and report the new path.
+
+### 🐚 CLI
+* New documented commands: `wsl list|compact|sparse`, `cache prune [tools...] --all`, `clean-path [--prune-broken]`.
+* `clean` flags now match the shipped interface (`--dry-run`, `--min-score`, `-y/--yes`); failures exit non-zero for scripts.
+
+### ⚙️ Settings
+* Machine-wide overrides via `HKLM\SOFTWARE\PurgeKit\ConfigOverride` (WizTree-style) for scan level, backup/restore-point policy and project paths.
+
+### 📚 Documentation
+* Synced CLI, Installation, Development, Startup Manager, Configuration, Features and Active Tracker guides with the shipped behavior.
+
 ## [1.3.0] - 2026-10-29
 
 ### 💽 Disk Space & WizTree Parity

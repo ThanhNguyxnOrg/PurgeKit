@@ -38,8 +38,10 @@ sequenceDiagram
 The USN Journal is a persistent log maintained by the Windows NTFS file system driver. It records every creation, modification, rename, and deletion of folders and files on the volume.
 *   **Handle Creation**: Spawns `CreateFileW` targeting the raw volume namespace `\\.\C:` with `FILE_FLAG_BACKUP_SEMANTICS`.
 *   **Querying Journal**: Calls Win32 `DeviceIoControl` with `FSCTL_QUERY_USN_JOURNAL` to fetch the next expected USN index.
-*   **Reading Changes**: Calls Win32 `DeviceIoControl` with `FSCTL_READ_USN_JOURNAL` to stream files modified after the recorded start index.
-*   **Heuristics Exclusion**: Filters out internal system metadata files starting with `$` (such as `$Mft`, `$LogFile`, `$UsnJrnl`).
+*   **Reading Changes**: Streams the journal from the recorded start index until the tail, resolving each record to its current full path.
+*   **Reason Gate**: Only meaningful changes are kept — file creations, unnamed/named data writes and renames. Handle-close and metadata-only noise is dropped before it can pollute the report.
+*   **Rename Pairing**: `RENAME_OLD_NAME` / `RENAME_NEW_NAME` records are paired by file id, so a rename is reported once under its **new** path; an old name without a visible pair is still reported.
+*   **Heuristics Exclusion**: Deletions are skipped, and internal system metadata (files starting with `$` such as `$Mft`) is excluded from the final tracked report.
 
 ---
 
