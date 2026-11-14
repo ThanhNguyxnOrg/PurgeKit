@@ -1106,6 +1106,9 @@ tr:hover td{background:#171b22}.path{font-family:ui-monospace,Consolas,monospace
                     {#if app.is_update}
                       <span class="ml-1 px-1 py-0.5 rounded text-[9px] font-mono font-bold bg-warning/10 text-warning border border-warning/25">{t("UPDATE")}</span>
                     {/if}
+                    {#if app.installer_kind}
+                      <span class="ml-1 px-1 py-0.5 rounded text-[9px] font-mono font-bold bg-surface-bg text-text-muted border border-border-default" title={t("Installer family detected from the uninstall registration")}>{app.installer_kind}</span>
+                    {/if}
                   </td>
                   
                   <!-- Actions -->

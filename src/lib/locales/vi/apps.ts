@@ -41,6 +41,8 @@ const apps: Record<string, string> = {
   "Open in Store": "Mở trong Store",
   "Open the product page in Microsoft Store": "Mở trang sản phẩm trong Microsoft Store",
   "The Microsoft Store could not be opened: {error}": "Không thể mở Microsoft Store: {error}",
+  "Installer family detected from the uninstall registration":
+    "Nhóm installer phát hiện từ đăng ký gỡ cài đặt",
   "CLI/toolchain entries are uninstalled individually":
     "Mục CLI/bộ công cụ được gỡ cài đặt riêng lẻ",
   "Verified Publisher Certificate": "Chứng chỉ nhà phát hành đã xác minh",
