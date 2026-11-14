@@ -149,15 +149,15 @@ Detailed documents are categorized below and located in the [`docs/`](docs/) dir
 
 ## 📝 Changelog
 
-### 🚀 [v1.3.0] - 2026-10-29
-* **💽 Disk Space parity:** WizTree-style treemap controls, file/types/duplicates views, CSV/TSV import/export, HTML/PNG reports, MFT record numbers and drive-size columns.
-* **📦 WizTree `.MFT` import:** raw MFT records plus the `VOLDATA2` footer load read-only with volume metadata; live MFT scans are validated on C: and `C:\Windows`.
-* **🔎 App icon coverage:** 137/138 inventory rows and 12/15 Startup entries resolve logos with no app-name special cases; stale Startup targets are flagged.
-* **📅 Install dates:** normalized registry dates plus folder-creation fallback for 137/138 rows.
-* **🚀 Large-scan performance:** parallel MFT parsing, breadth-first tree budgeting and aligned volume reads; a 3.15 GB dump loads in ~52 s in the debug UI.
-* **🔐 Safety hardening:** Project Sweeper deletion is bound to the last scan result and elevated volume/MFT reads are signature- and path-gated.
+### 🚀 [v1.4.0] - 2026-11-14
+* **🧹 Autoruns coverage:** leftover scans now include Active Setup, Winlogon overrides, AppInit_DLLs and Boot Execute.
+* **📦 Installer families:** MSI / InnoSetup / NSIS / Steam / Appx detection with a badge on every app row, plus an "Open in Store" action for Store apps.
+* **🔬 Smarter matching:** a transposition-tolerant Sift4 tier complements the Levenshtein gates for leftover names.
+* **📡 Active Tracker:** USN reason gating and rename pairing report each rename once, under its new path.
+* **🐚 Full CLI:** `wsl list|compact|sparse`, `cache prune` and `clean-path --prune-broken` now ship as documented.
+* **⚙️ Machine-wide settings:** `HKLM\SOFTWARE\PurgeKit\ConfigOverride` pins policy for managed machines.
 
-Previous release: **v1.2.1** (2026-10-07) fixed CI release tagging, quoted PATH entries, System PATH priority, admin preflight and Project Sweeper boundaries.
+Previous release: **v1.3.1** (2026-11-10) adapted MFT parsing to the current `mft` crate API.
 
 *For full historical notes and previous releases, see [📝 CHANGELOG.md](CHANGELOG.md).*
 

@@ -2,28 +2,44 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [1.4.0] - 2026-11-14
 
-### 🧹 Cleanup Engine
-* Remnant scans cover four additional autostart surfaces: Active Setup (`StubPath`), Winlogon shell/userinit/taskman/appsetup overrides, AppInit_DLLs and Boot Execute.
-* Name matching gains a transposition-tolerant Sift4 tier on top of the existing Levenshtein gates; short names stay exact.
+### 🧹 Leftover & Autoruns Coverage
+* Remnant scans now cover four additional ASEP surfaces beside Run/RunOnce, services, scheduled tasks, firewall rules and COM/MSI orphans: Active Setup `Installed Components` (`StubPath`, HKLM + Wow6432Node), Winlogon `Shell`/`Userinit`/`TaskMan`/`AppSetup` overrides, `AppInit_DLLs` lists and `BootExecute` (`REG_MULTI_SZ`).
+* A shared `remnant_score` matcher (install-directory hit outranks a name-token hit; tokens must be ≥3 characters) keeps the new sources consistent with the existing scoring.
 
-### 📦 Application Inventory
-* Installer-family detection (MSI, InnoSetup, NSIS, Steam, Appx) with a derived-cache fingerprint bump (v4) and a badge on app rows.
-* "Open in Store" action for Store rows via a validated `ms-windows-store://` deep link.
+### 🔬 Leftover Matching
+* Fuzzy name matching gains a transposition-tolerant **Sift4** tier — a char-indexed port validated against the reference implementation's vectors. A swapped character pair now costs about one edit, so `obsstudoi` matches `obsstudio`; the ≥6-character gate and the strict mode for personal folders are preserved.
+
+### 📦 App Inventory & Store
+* Installer-family detection on ARP entries: `{GUID}` keys or `WindowsInstaller=1` → **MSI**; `"Inno Setup:"` value names → **InnoSetup**; `"Steam App "` keys → **Steam**; `uninst.exe` / `uninst64.exe` / `uninsNNN.exe` → **NSIS**; Store rows report **Appx**. The family participates in the derived-cache fingerprint (bumped to v4) and shows as a badge on app rows.
+* Store rows gained an **Open in Store** action; the backend `open_store_page` command validates the package family name and launches `ms-windows-store://pdp/?PFN=...`, so the webview can never open arbitrary URIs.
 
 ### 📡 Active Tracker
-* USN records are gated by reason (creations, data writes, renames); rename old/new records pair by file id and report the new path.
+* USN records are gated by reason: only creations, unnamed/named data writes and renames are recorded (handle-close and metadata-only noise is dropped; deletes stay excluded).
+* `RENAME_OLD_NAME` / `RENAME_NEW_NAME` records pair by file id and report the rename once under its **new** path; an unpaired old name is flushed instead of being dropped.
 
-### 🐚 CLI
-* New documented commands: `wsl list|compact|sparse`, `cache prune [tools...] --all`, `clean-path [--prune-broken]`.
-* `clean` flags now match the shipped interface (`--dry-run`, `--min-score`, `-y/--yes`); failures exit non-zero for scripts.
+### 🐚 CLI (`purgekit-cli`)
+* New documented commands: `wsl list|compact|sparse`, `cache prune [tools...] [--all]` and `clean-path [--prune-broken]`.
+* The WSL shrinker and the dev-cache pipeline were split into AppHandle-free cores (`compact_vhdx_core`, `prune_dev_tool_cache`, …) so the CLI and the UI share one implementation; the Tauri commands remain thin event-emitting wrappers.
+* `clean` flags now match the shipped interface (`--dry-run`, `--min-score`, `-y/--yes`); failures exit non-zero for scripting.
 
 ### ⚙️ Settings
-* Machine-wide overrides via `HKLM\SOFTWARE\PurgeKit\ConfigOverride` (WizTree-style) for scan level, backup/restore-point policy and project paths.
+* Machine-wide overrides via `HKLM\SOFTWARE\PurgeKit\ConfigOverride` (WizTree-style): `scan_level`, `backup_before_delete`, `create_restore_point`, `enable_undocumented_force_unlock` and `project_scan_paths` (semicolon list) are applied on load and win over `settings.json`; unknown or invalid values are ignored.
+
+### 🛡️ Safety & Verification
+* All new scanners keep the shared safety gates (path/registry allowlists, quarantine policy, scan-bound deletion) and the CLI stays admin-required.
+* CI (windows-latest `cargo check` + frontend `svelte-check`) is green for this release; new unit tests cover the Sift4 port (reference vectors incl. Unicode), the Sift4 tier, USN reason gating and rename pairing, installer classification, cache-path containment and override parsing.
 
 ### 📚 Documentation
-* Synced CLI, Installation, Development, Startup Manager, Configuration, Features and Active Tracker guides with the shipped behavior.
+* Synced `CLI.md`, `INSTALLATION.md`, `DEVELOPMENT.md`, `STARTUP_MANAGER.md`, `CONFIGURATION.md`, `FEATURES.md`, `ACTIVE_TRACKER.md` and `SECURITY_UAC.md` with the shipped behavior, and documented the registry overrides.
+
+## [1.3.1] - 2026-11-10
+
+### Bug Fixes and Performance
+
+- adapt MFT parsing to current crate API ([e4f1721](https://github.com/ThanhNguyxnOrg/PurgeKit/commit/e4f1721535189bedcab5321e5eea95d1c9aec248))
+- copy MFT metadata before iterator borrow ends ([48df668](https://github.com/ThanhNguyxnOrg/PurgeKit/commit/48df6687cd3eee8347a05217c35ad1eba175f26e))
 
 ## [1.3.0] - 2026-10-29
 
@@ -194,11 +210,4 @@ PurgeKit is specifically designed to go beyond typical Windows uninstallers, ens
 
 ---
 <sub>Made with ❤️ by the **ThanhNguyxnOrg** team. Feel free to open issues or contribute!</sub>
-
-## [1.3.1] - 2026-11-10
-
-### Bug Fixes and Performance
-
-- adapt MFT parsing to current crate API ([e4f1721](https://github.com/ThanhNguyxnOrg/PurgeKit/commit/e4f1721535189bedcab5321e5eea95d1c9aec248))
-- copy MFT metadata before iterator borrow ends ([48df668](https://github.com/ThanhNguyxnOrg/PurgeKit/commit/48df6687cd3eee8347a05217c35ad1eba175f26e))
 
