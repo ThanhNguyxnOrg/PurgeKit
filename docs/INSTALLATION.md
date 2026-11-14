@@ -29,14 +29,16 @@ If using the `.msi` installer:
 
 ---
 
-### 3. Launch with Administrator Rights
-To function correctly, PurgeKit requires elevated system permissions to access system registries, sweep system-wide caches, and shrink WSL files.
+### 3. Launch & Elevate on Demand
+PurgeKit starts with **normal user rights** (an `asInvoker` manifest). Read-only features — inventory, disk scanning, snapshots, audits — work instantly without a UAC prompt.
 
-*   By default, the application is configured with a manifest that triggers a Windows User Account Control (UAC) prompt when launched.
-*   Click **Yes** when prompted by UAC to allow PurgeKit to make changes to your device.
+Operations that need Administrator rights (HKLM edits, Program Files deletions, `DiskPart` compaction, scheduled tasks, System PATH writes) are guarded by the backend and will either:
+
+*   prompt you to relaunch elevated from the in-app banner (**Restart as Administrator**), or
+*   refuse with a clear "requires Administrator" message instead of failing silently.
 
 > [!WARNING]
-> If you launch the app without Administrator privileges, many features (such as remnant purging, system snapshot compares, WSL virtual disk compacting, and PATH cleaners) will show safety warning banners and will be unable to modify files or keys.
+> Without elevation, remnant purging, snapshot compares, WSL compaction and PATH repair are blocked with safety banners. Run the app as Administrator when doing heavy cleanup work.
 
 ---
 
@@ -50,7 +52,7 @@ Here are the locations of the directories created on your system:
 |---|---|---|
 | **SQLite Database** | `%AppData%\PurgeKit\purgekit.db` | Contains snapshot records and quarantine listings |
 | **System Snapshots** | `%AppData%\PurgeKit\snapshots\` | Compressed JSON files representing system baselines |
-| **Settings File** | `%AppData%\PurgeKit\settings.json` | Stores user-configured presets and exclusions |
+| **Settings File** | `%LocalAppData%\PurgeKit\settings.json` | Stores user-configured presets and exclusions (machine-wide overrides possible, see CONFIGURATION.md) |
 | **Registry Backups** | `%LocalAppData%\PurgeKit\Backups\` | `.reg` registry keys exported before deletion |
 | **Filesystem Quarantine** | `%LocalAppData%\PurgeKit\Quarantine\` | Folders/files moved here before deletion |
 

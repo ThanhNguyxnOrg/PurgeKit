@@ -37,41 +37,35 @@ Several modules in PurgeKit interact directly with system files and registries t
 ### Running with Admin Rights during Development
 You can right-click your terminal application (e.g. PowerShell or Command Prompt) and select **"Run as Administrator"**, then run `npm run tauri dev`. The app will inherit the elevated token, and the **Settings** view will display **"Privileged Mode Active"**.
 
-### Enforcing Administrator Elevation in Production
-To ensure the compiled application always requests elevation via Windows User Account Control (UAC) when launched:
-1. Under `src-tauri/capabilities/`, capabilities can configure privileges.
-2. In Tauri v2, you can also embed an application manifest inside the executable resource. In `src-tauri/Cargo.toml` or `build.rs`, Tauri's build tool automatically handles manifest embedding.
-3. Users can manually configure the executable properties to **"Run this program as an administrator"**, or let PurgeKit prompt UAC natively when calling high-privilege Tauri commands by executing child processes with `runas` verbs.
+### Administrator Elevation in Production
+PurgeKit ships with an `asInvoker` manifest (`src-tauri/app.manifest`), so the app starts fast and never forces a UAC prompt at launch. High-privilege operations are guarded in the backend (`settings::check_is_admin`); the UI requests an elevated relaunch through the `restart_as_admin` command, which self-elevates with the `runas` verb and exits the old process. The full trust model (LPE prevention, secure child PATH, signature gates) lives in `docs/SECURITY_UAC.md`.
 
 ---
 
 ## 🧹 Adding a New Developer Cache
 
-To add a new tool to the **Dev Tools Cache** panel, you no longer need to write Rust code. You can simply add a new rule entry to the dynamic devtools rules JSON configuration file:
+Dev-tool cache rules are **compiled in on purpose**: the loader ignores any user-editable JSON file, so on-disk configuration can never point a cleanup at arbitrary paths. To add a tool:
 
-### 1. Add Entry to `devtools_rules.json`
-Locate the rules file at:
-`%LocalAppData%\PurgeKit\devtools_rules.json`
-
-Add a new JSON object to the array. For example, to add the **Python Poetry** cache:
-```json
-{
-  "name": "poetry",
-  "cmd_to_run": "poetry",
-  "args": ["--version"],
-  "clean_command": "",
-  "cache_path_templates": ["{APPDATA}\\pypoetry\\cache"],
-  "dynamic_cache_cmd": ""
+### 1. Add a built-in rule in `src-tauri/src/scanner/cli_dev.rs`
+Extend the built-in list returned by `load_dev_tools_rules()` with a `DevToolRule` (works for both the UI and `purgekit-cli cache prune`):
+```rust
+DevToolRule {
+    name: "poetry".into(),
+    cmd_to_run: Some("poetry".into()),
+    args: vec!["--version".into()],
+    clean_command: None,
+    cache_path_templates: Some(vec!["{APPDATA}\\pypoetry\\cache".into()]),
+    dynamic_cache_cmd: None,
 }
 ```
 
-### 2. Field Guide for New Entries
-- **`name`**: The display name of the developer tool.
-- **`cmd_to_run`**: (Optional) The executable name used to check if the tool is installed. If omitted, defaults to `name`.
-- **`args`**: Array of arguments passed to check installation (e.g. `["--version"]`).
-- **`clean_command`**: (Optional) Standard shell clean command. Note that only whitelisted commands will execute via shell. If you want PurgeKit to purge the folder directly, leave this empty or unwhitelisted.
-- **`cache_path_templates`**: (Optional) List of cache directories to purge. You can use placeholders like `{APPDATA}`, `{LOCALAPPDATA}`, and `{USERPROFILE}`.
-- **`dynamic_cache_cmd`**: (Optional) A command to run to query the cache path dynamically.
+### 2. Field Guide
+- **`name`**: Display name of the developer tool (also the name used by `purgekit-cli cache prune <name>`).
+- **`cmd_to_run`** *(optional)*: Executable used to check that the tool is installed; defaults to `name`.
+- **`args`**: Arguments passed to the detection command (e.g. `["--version"]`).
+- **`clean_command`** *(optional)*: Shell clean command. **Only commands present in `SAFE_DEV_TOOL_CLEAN_COMMANDS`** (same file) are executed via shell; extend that whitelist only with commands that are safe to run unattended. Otherwise the folder-purge fallback is used.
+- **`cache_path_templates`** *(optional)*: Cache directories to purge, with `{APPDATA}`, `{LOCALAPPDATA}`, and `{USERPROFILE}` placeholders.
+- **`dynamic_cache_cmd`** *(optional)*: Command whose printed path is used as the cache location. The result is only trusted when it resolves inside one of the rule's template roots.
 
 ---
 

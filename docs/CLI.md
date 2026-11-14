@@ -13,6 +13,9 @@ This document contains the complete specifications, command-line arguments, exec
 
 The PurgeKit CLI (`purgekit-cli.exe`) is designed for system administrators, DevOps engineers, and power users who want to automate system cleaning, software removal, and cache pruning through command-line scripts or CI/CD pipelines.
 
+> [!IMPORTANT]
+> The CLI requires an **elevated console**: it refuses to start without Administrator rights, so registry, PATH and DiskPart operations can never half-succeed.
+
 ---
 
 ## 📂 Command Structure
@@ -30,7 +33,7 @@ purgekit [COMMAND] [ARGS] [FLAGS]
 ## ⚙️ Commands Reference
 
 ### 1. 🧹 `clean`
-Uninstalls an application and deep-cleans all its remnants (registry entries, files, and folders).
+Deep-cleans an application: scans for leftover files, folders, shortcuts, services, tasks and registry entries matching the app, then purges the items you approve. It does **not** launch the app's official uninstaller — run that first (or use the UI preflight, which does both).
 
 ```bash
 purgekit clean [APP_NAME] [FLAGS]
@@ -40,16 +43,17 @@ purgekit clean [APP_NAME] [FLAGS]
 * `APP_NAME` *(Required)*: The exact name or a partial match string of the application in the registry or UWP packages.
 
 #### 📌 Flags:
-* `--silent`: Runs the uninstallation process completely in the background without launching GUI dialogs.
-* `--no-purge`: Skips the deep remnants scan and registry cleaning (uninstalls the app only).
+* `--dry-run`: Analyze and list remnant items only; nothing is deleted.
+* `--min-score <N>` *(default `55`)*: Only items with a confidence score ≥ N are purged.
+* `-y`, `--yes`: Skip the confirmation prompt (for scripts and CI).
 
 #### 💡 Examples:
 ```bash
-# Clean an application and its leftovers silently
-purgekit clean "Visual Studio Code" --silent
+# Preview everything that would be purged
+purgekit clean "Visual Studio Code" --dry-run
 
-# Uninstall an app but keep registry keys
-purgekit clean "Spotify" --no-purge
+# Scripted purge with a stricter confidence threshold
+purgekit clean "Spotify" --yes --min-score 70
 ```
 
 ---

@@ -14,8 +14,8 @@ graph TD
     Scan --> Files[Startup Folders]
     Scan --> Tasks[Scheduled Tasks]
 
-    Reg --> HKCU[HKCU Run / RunOnce / RunServices / RunServicesOnce]
-    Reg --> HKLM[HKLM Run / RunOnce / RunServices / RunServicesOnce]
+    Reg --> HKCU[HKCU Run / RunOnce]
+    Reg --> HKLM[HKLM Run / RunOnce]
     Reg --> HKLM32[HKLM Wow6432Node\...\Run & RunOnce]
 
     Files --> UserFolder[User Startup: %AppData%\...\Startup]
@@ -28,18 +28,17 @@ graph TD
 
 ## 🔒 Security Hives & Scheduled Tasks Detail
 
-### 1. Registry Run, RunOnce & RunServices Keys
-PurgeKit queries the following registry subkeys (both for 32-bit and 64-bit application environments):
+### 1. Registry Run & RunOnce Keys
+PurgeKit queries the following registry subkeys (including the 32-bit Wow6432Node view on 64-bit Windows):
 *   `HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
 *   `HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce`
-*   `HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\RunServices`
-*   `HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\RunServicesOnce`
 *   `HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
 *   `HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce`
-*   `HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\RunServices`
-*   `HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\RunServicesOnce`
 *   `HKEY_LOCAL_MACHINE\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Run`
 *   `HKEY_LOCAL_MACHINE\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\RunOnce`
+
+> [!NOTE]
+> The legacy `RunServices` / `RunServicesOnce` keys are not listed by this manager. Other ASEP classes — **Active Setup**, **Winlogon** shell/userinit overrides, **AppInit_DLLs** and **Boot Execute** — are covered by the leftover scanner during app cleanup (`src-tauri/src/scanner/autoruns.rs`).
 
 ---
 
