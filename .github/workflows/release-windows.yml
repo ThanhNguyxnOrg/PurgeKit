@@ -127,5 +127,4 @@ jobs:
       tag: v${{ needs.check-trigger.outputs.version }}
       artifact_pattern: release-assets-purgekit
     secrets:
-      BOT_APP_ID: ${{ vars.BOT_APP_ID || secrets.BOT_APP_ID }}
       BOT_PRIVATE_KEY: ${{ secrets.BOT_PRIVATE_KEY }}
