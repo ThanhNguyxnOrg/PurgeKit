@@ -122,7 +122,7 @@ jobs:
     permissions:
       actions: read
       contents: read
-    uses: ThanhNguyxnOrg/.github/.github/workflows/release-publish.yml@9169883689febd2a893a78dfb5890cd5439dcb98
+    uses: ThanhNguyxnOrg/.github/.github/workflows/release-publish.yml@release-v1
     with:
       tag: v${{ needs.check-trigger.outputs.version }}
       artifact_pattern: release-assets-purgekit
