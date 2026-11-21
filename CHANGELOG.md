@@ -211,3 +211,10 @@ PurgeKit is specifically designed to go beyond typical Windows uninstallers, ens
 ---
 <sub>Made with ❤️ by the **ThanhNguyxnOrg** team. Feel free to open issues or contribute!</sub>
 
+## [1.4.1] - 2026-11-21
+
+### Bug Fixes and Performance
+
+- keep the quarantine copy when directory removal fails (#60) ([11e2e04](https://github.com/ThanhNguyxnOrg/PurgeKit/commit/11e2e04b17ee2ac4cf5a376f3b78daf2d0c058c9))
+- refuse per-user uninstall commands when elevated and allowlist msiexec (#62) ([3e9fec3](https://github.com/ThanhNguyxnOrg/PurgeKit/commit/3e9fec3dda8b66193da86e406f28f9c408afc5a0))
+
