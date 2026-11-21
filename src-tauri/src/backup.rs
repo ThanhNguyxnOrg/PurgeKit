@@ -144,38 +144,21 @@ pub fn quarantine_file_or_directory(path_str: &str) -> Result<PathBuf, String> {
     let dest_name = format!("{}_{}_{}", timestamp, file_uuid, src_path.file_name().and_then(|n| n.to_str()).unwrap_or("remnant"));
     let dest_path = q_dir.join(dest_name);
 
-    // Try renaming first (fast)
-    let moved = if fs::rename(src_path, &dest_path).is_ok() {
-        true
-    } else {
-        // Fallback: Copy recursively then remove
+    let mut directory_removal_error = None;
+    if fs::rename(src_path, &dest_path).is_err() {
         if src_path.is_dir() {
-            if copy_dir_all(src_path, &dest_path).is_ok() {
-                if fs::remove_dir_all(src_path).is_ok() {
-                    true
-                } else {
-                    let _ = fs::remove_dir_all(&dest_path);
-                    false
-                }
-            } else {
-                false
-            }
+            copy_dir_all(src_path, &dest_path)
+                .map_err(|e| format!("Failed to copy directory to quarantine: {}", e))?;
+            // Removal can fail after deleting children. Keep and record the finished copy.
+            directory_removal_error = fs::remove_dir_all(src_path).err();
         } else {
-            if fs::copy(src_path, &dest_path).is_ok() {
-                if fs::remove_file(src_path).is_ok() {
-                    true
-                } else {
-                    let _ = fs::remove_file(&dest_path);
-                    false
-                }
-            } else {
-                false
+            fs::copy(src_path, &dest_path)
+                .map_err(|e| format!("Failed to copy file to quarantine: {}", e))?;
+            if let Err(e) = fs::remove_file(src_path) {
+                let _ = fs::remove_file(&dest_path);
+                return Err(format!("Failed to remove original file: {}", e));
             }
         }
-    };
-
-    if !moved {
-        return Err("Failed to move item to quarantine".to_string());
     }
 
     let insert_result = match crate::db::open_connection() {
@@ -191,6 +174,20 @@ pub fn quarantine_file_or_directory(path_str: &str) -> Result<PathBuf, String> {
         ).map_err(|e| e.to_string()),
         Err(e) => Err(e),
     };
+
+    if let Some(e) = directory_removal_error {
+        let message = format!(
+            "Failed to remove the original directory ({}); the quarantine copy was kept at {}.",
+            e, dest_path.display()
+        );
+        return match insert_result {
+            Ok(_) => Err(message),
+            Err(db_error) => Err(format!(
+                "{} Quarantine record could not be written: {}",
+                message, db_error
+            )),
+        };
+    }
 
     if let Err(e) = insert_result {
         // Restore the item instead of leaving an untracked moving file behind.
@@ -273,6 +270,45 @@ mod tests {
 
         assert!(quarantined_exists, "Quarantined file should exist at destination");
         assert!(!source_exists, "Source file should have been removed");
+    }
+
+    #[test]
+    fn test_directory_removal_failure_keeps_tracked_quarantine_copy() {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        };
+
+        let original = std::env::temp_dir().join(format!("purgekit-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&original).unwrap();
+        fs::write(original.join("document"), b"original contents").unwrap();
+        // Allow copying but deny renaming or deleting the directory.
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(&original)
+            .unwrap();
+
+        crate::db::init_db().unwrap();
+        let path = original.to_str().unwrap();
+        let result = quarantine_file_or_directory(path);
+        drop(lock);
+        fs::remove_dir_all(&original).unwrap();
+
+        let conn = crate::db::open_connection().unwrap();
+        let quarantine_path: String = conn.query_row(
+            "SELECT quarantine_path FROM quarantine WHERE original_path = ?1",
+            [path],
+            |row| row.get(0),
+        ).unwrap();
+        let copy = Path::new(&quarantine_path);
+        let contents = fs::read(copy.join("document")).unwrap();
+        fs::remove_dir_all(copy).unwrap();
+        conn.execute("DELETE FROM quarantine WHERE original_path = ?1", [path]).unwrap();
+
+        assert!(result.unwrap_err().contains(&quarantine_path));
+        assert_eq!(contents, b"original contents");
     }
 
     #[test]
