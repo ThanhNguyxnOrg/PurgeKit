@@ -178,7 +178,7 @@ Other autostart classes — Active Setup, Winlogon overrides, AppInit_DLLs and B
 The disk workspace mirrors WizTree's analysis views without its destructive defaults:
 
 * **Scans:** drive roots and folders, multi-root scans separated by semicolons, allocated/logical sizes, free-space accounting and `NTFS` fast path when elevated.
-* **Views:** nested treemap with labels, free-space and small-file grouping; largest files; file types; duplicate candidates (name + size, optionally modified date).
+* **Views:** nested treemap with labels, free-space and small-file grouping; largest files; file types; duplicate candidates (name + size, optionally modified date) with SHA-256 content verification before quarantine.
 * **MFT:** live `$MFT` reads through an aligned volume reader, `.pkmft` dumps, and read-only WizTree `.MFT` import (raw records plus the `VOLDATA2` volume footer).
 * **Export:** CSV/TSV with scope, folder totals, created/accessed dates, parent %, MFT record numbers and drive-size info; file-types CSV; PNG treemap and self-contained HTML report.
 * **Safety:** imported dumps are read-only; quarantine is disabled until a live rescan. MFT dumps and live scans require Administrator access.

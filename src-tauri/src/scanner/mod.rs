@@ -13,6 +13,7 @@ pub mod dev_rules;
 pub mod inventory;
 pub mod portable_apps;
 pub mod disk_scan;
+pub mod duplicate_verify;
 pub mod csv_scan;
 pub mod mft_scan;
 pub(crate) mod volume_reader;
