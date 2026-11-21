@@ -1126,6 +1126,27 @@ pub fn cancel_disk_scan(state: tauri::State<'_, scanner::DiskScanState>) {
 }
 
 #[tauri::command]
+pub async fn verify_duplicate_contents(
+    state: tauri::State<'_, scanner::duplicate_verify::DuplicateVerifyState>,
+    paths: Vec<String>,
+) -> Result<scanner::duplicate_verify::DuplicateVerification, String> {
+    state.0.store(false, Ordering::Relaxed);
+    let cancel = state.0.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        scanner::duplicate_verify::verify_duplicate_contents(&paths, &cancel)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn cancel_duplicate_verification(
+    state: tauri::State<'_, scanner::duplicate_verify::DuplicateVerifyState>,
+) {
+    state.0.store(true, Ordering::Relaxed);
+}
+
+#[tauri::command]
 pub fn list_disk_drives() -> Vec<crate::winutil::DriveInfo> {
     crate::winutil::list_ready_drives()
 }

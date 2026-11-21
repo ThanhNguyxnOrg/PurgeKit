@@ -38,7 +38,7 @@ Each scan reports:
 * **Treemap** — nested tiles weighted by allocated or logical size; labels, free-space tile, small-file grouping, click/double-click zoom and Up/breadcrumb navigation.
 * **Largest files** — sortable/searchable file list with extension, modified time, attributes, share %, allocated and logical sizes.
 * **File types** — allocated size and count per extension; export the complete type table as CSV.
-* **Duplicates** — candidate groups by name + size (optionally modified date). File contents are **not** hashed or compared.
+* **Duplicates** — candidate groups by name + size (optionally modified date). Before a copy is quarantined, or on **Verify contents**, the listed copies are compared by content: current size, SHA-256 of the first 64 KiB, then SHA-256 of the whole file. A copy is only removed when a byte-identical copy stays in place; links, junctions, cloud-only placeholders, empty and unreadable files are never treated as verified.
 
 Filters support name-only or full-path matching, extension, include/exclude substrings, folder scope and a maximum result count.
 

@@ -24,6 +24,7 @@ pub fn run() {
             std::sync::atomic::AtomicBool::new(false),
         )))
         .manage(scanner::disk_scan::DiskFileCache::default())
+        .manage(scanner::duplicate_verify::DuplicateVerifyState::default())
         .manage(scanner::project_sweeper::ProjectScanCache::default())
         .invoke_handler(tauri::generate_handler![
             commands::get_installed_apps,
@@ -48,6 +49,8 @@ pub fn run() {
             commands::scan_disk_space,
             commands::scan_disk_space_multi,
             commands::cancel_disk_scan,
+            commands::verify_duplicate_contents,
+            commands::cancel_duplicate_verification,
             commands::search_disk_files,
             commands::export_disk_files_csv,
             commands::export_disk_file_types_csv,
