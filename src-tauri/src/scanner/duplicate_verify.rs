@@ -48,8 +48,15 @@ pub struct DuplicateVerification {
 }
 
 type Digest256 = [u8; 32];
-/// Volume and file number: two paths with the same identity are one file on disk.
-type FileIdentity = (u64, u64);
+/// Two paths with the same key are one file on disk.
+#[derive(Hash, PartialEq, Eq)]
+enum FileKey {
+    /// Volume and file number.
+    Identity(u64, u64),
+    /// Volumes without file numbers (FAT, some network shares) compare by path,
+    /// ignoring case so one file spelled two ways never looks like two copies.
+    Path(String),
+}
 
 struct Candidate {
     path: String,
@@ -71,7 +78,7 @@ pub fn verify_duplicate_contents(
 
     let mut verification = DuplicateVerification::default();
     let mut listed = HashSet::new();
-    let mut identities: HashMap<FileIdentity, String> = HashMap::new();
+    let mut files: HashMap<FileKey, String> = HashMap::new();
     let mut by_len: BTreeMap<u64, Vec<Candidate>> = BTreeMap::new();
 
     for path in paths {
@@ -80,14 +87,13 @@ pub fn verify_duplicate_contents(
         }
         // Removing a second path to the same file (hard link, or the same file
         // spelled differently) frees nothing and must not count as a kept copy.
-        let inspected =
-            inspect(path).and_then(|(candidate, identity)| match identities.get(&identity) {
-                Some(first) => Err(format!("Same file on disk as {first}")),
-                None => {
-                    identities.insert(identity, candidate.path.clone());
-                    Ok(candidate)
-                }
-            });
+        let inspected = inspect(path).and_then(|(candidate, key)| match files.get(&key) {
+            Some(first) => Err(format!("Same file on disk as {first}")),
+            None => {
+                files.insert(key, candidate.path.clone());
+                Ok(candidate)
+            }
+        });
         match inspected {
             Ok(candidate) => by_len.entry(candidate.len).or_default().push(candidate),
             Err(reason) => verification.skipped.push(SkippedDuplicate {
@@ -202,7 +208,7 @@ fn digest_file(
     Ok(Some(hasher.finalize().into()))
 }
 
-fn inspect(path: &str) -> Result<(Candidate, FileIdentity), String> {
+fn inspect(path: &str) -> Result<(Candidate, FileKey), String> {
     let metadata =
         fs::symlink_metadata(path).map_err(|err| format!("Could not read file: {err}"))?;
     if !metadata.file_type().is_file() || is_reparse_point(&metadata) {
@@ -214,20 +220,22 @@ fn inspect(path: &str) -> Result<(Candidate, FileIdentity), String> {
     if metadata.len() == 0 {
         return Err("Empty file".into());
     }
-    let identity = file_identity(Path::new(path), &metadata)
-        .map_err(|err| format!("Could not read file: {err}"))?;
+    let key = file_identity(Path::new(path), &metadata)
+        .map_err(|err| format!("Could not read file: {err}"))?
+        .map(|(volume, file)| FileKey::Identity(volume, file))
+        .unwrap_or_else(|| FileKey::Path(path.replace('/', "\\").to_lowercase()));
     Ok((
         Candidate {
             path: path.to_string(),
             len: metadata.len(),
             modified: metadata.modified().ok(),
         },
-        identity,
+        key,
     ))
 }
 
 #[cfg(windows)]
-fn file_identity(path: &Path, _metadata: &Metadata) -> io::Result<FileIdentity> {
+fn file_identity(path: &Path, _metadata: &Metadata) -> io::Result<Option<(u64, u64)>> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{
         GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
@@ -238,16 +246,24 @@ fn file_identity(path: &Path, _metadata: &Metadata) -> io::Result<FileIdentity> 
     if unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut info) } == 0 {
         return Err(io::Error::last_os_error());
     }
-    Ok((
-        u64::from(info.dwVolumeSerialNumber),
-        (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
-    ))
+    Ok(file_number(info.nFileIndexHigh, info.nFileIndexLow)
+        .map(|file| (u64::from(info.dwVolumeSerialNumber), file)))
 }
 
 #[cfg(unix)]
-fn file_identity(_path: &Path, metadata: &Metadata) -> io::Result<FileIdentity> {
+fn file_identity(_path: &Path, metadata: &Metadata) -> io::Result<Option<(u64, u64)>> {
     use std::os::unix::fs::MetadataExt;
-    Ok((metadata.dev(), metadata.ino()))
+    Ok(Some((metadata.dev(), metadata.ino())))
+}
+
+/// A zero index means the volume reports no file numbers; using it as an
+/// identity would make every file on that volume look like the same file.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn file_number(high: u32, low: u32) -> Option<u64> {
+    match (u64::from(high) << 32) | u64::from(low) {
+        0 => None,
+        number => Some(number),
+    }
 }
 
 fn is_unchanged(candidate: &Candidate) -> bool {
@@ -428,6 +444,12 @@ mod tests {
         assert_eq!(result.unique, vec![a]);
         assert_eq!(result.skipped[0].path, link);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_zero_file_index_is_not_an_identity() {
+        assert_eq!(file_number(0, 0), None);
+        assert_eq!(file_number(1, 2), Some((1 << 32) | 2));
     }
 
     #[cfg(unix)]
