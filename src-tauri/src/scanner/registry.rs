@@ -117,6 +117,40 @@ fn deduplicate_apps(apps: &mut Vec<InstalledApp>) {
     *apps = unique_apps;
 }
 
+/// Hives under HKLM are writable only by administrators. Every other hive the
+/// scanner reads (HKCU, HKCU WOW6432Node and the VirtualStore redirections) is
+/// writable by any process running as the current user.
+pub fn is_machine_hive(hive: &str) -> bool {
+    matches!(hive, "HKLM" | "HKLM_WOW")
+}
+
+/// Returns true when `command` is registered verbatim as the UninstallString,
+/// QuietUninstallString or ModifyPath of an HKLM uninstall entry. Elevated
+/// callers use this to refuse commands that only exist in user-writable hives.
+pub fn is_machine_registered_command(command: &str) -> bool {
+    let target = command.trim();
+    if target.is_empty() {
+        return false;
+    }
+    let unsub = r"Microsoft\Windows\CurrentVersion\Uninstall";
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    [format!(r"SOFTWARE\{}", unsub), format!(r"SOFTWARE\Wow6432Node\{}", unsub)]
+        .iter()
+        .filter_map(|subpath| hklm.open_subkey_with_flags(subpath, KEY_READ).ok())
+        .any(|uninstall_key| {
+            uninstall_key
+                .enum_keys()
+                .filter_map(|name| name.ok())
+                .filter_map(|name| uninstall_key.open_subkey_with_flags(&name, KEY_READ).ok())
+                .any(|subkey| {
+                    ["UninstallString", "QuietUninstallString", "ModifyPath"]
+                        .iter()
+                        .filter_map(|value| subkey.get_value::<String, _>(value).ok())
+                        .any(|value| value.trim() == target)
+                })
+        })
+}
+
 fn scan_uninstall_key(
     hkey: winreg::HKEY,
     subpath: &str,

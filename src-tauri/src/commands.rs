@@ -1261,11 +1261,8 @@ pub async fn run_uninstall_command(uninstall_string: String) -> Result<(), Strin
         .map_err(|error| error.to_string())?;
     }
 
-    if let Err(e) = validate_uninstall_command_safety(&uninstall_string) {
-        return Err(e);
-    }
-    
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_elevated_command_origin(&uninstall_string)?;
         let status = run_parsed_uninstall_command(&uninstall_string, &secure_path)?;
         if !status.success() {
             return Err(format!("Uninstaller exited with failure code: {:?}", status.code()));
@@ -1593,7 +1590,127 @@ fn is_shell_executable(path: &str) -> bool {
         || lower == "pwsh"
 }
 
-fn parse_uninstall_command(cmd_str: &str) -> Result<(String, String), String> {
+/// Matches a Windows Installer product code such as
+/// `{12345678-1234-1234-1234-123456789ABC}`.
+fn is_msi_product_code(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() != 38 || bytes[0] != b'{' || bytes[37] != b'}' {
+        return false;
+    }
+    bytes[1..37].iter().enumerate().all(|(index, &byte)| match index {
+        8 | 13 | 18 | 23 => byte == b'-',
+        _ => byte.is_ascii_hexdigit(),
+    })
+}
+
+fn find_msi_product_code(text: &str) -> Option<String> {
+    text.match_indices('{')
+        .filter_map(|(start, _)| text.get(start..start + 38))
+        .find(|candidate| is_msi_product_code(candidate))
+        .map(str::to_string)
+}
+
+fn file_name_lower(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_name()
+        .map(|name| name.to_string_lossy().to_lowercase())
+        .unwrap_or_default()
+}
+
+fn is_msiexec(path: &str) -> bool {
+    file_name_lower(path) == "msiexec.exe"
+}
+
+/// msiexec may only remove or repair an installed product by its product code.
+/// Package paths (`/i \\host\share\x.msi`), transforms, logging and custom
+/// properties are rejected because they let the caller load arbitrary code.
+fn validate_msiexec_arguments(arguments: &str) -> Result<(), String> {
+    const ALLOWED_SWITCHES: &[&str] = &[
+        "q", "qn", "qn+", "qb", "qb+", "qb-", "qb!", "qb-!", "qb+!", "qr", "qf", "quiet",
+        "passive", "norestart", "promptrestart", "forcerestart",
+    ];
+    let reject = |token: &str| {
+        Err(format!(
+            "Execution blocked: msiexec argument '{}' is not allowed. Only /X or /I with a product code is permitted.",
+            token
+        ))
+    };
+
+    let tokens: Vec<&str> = arguments.split_whitespace().collect();
+    let mut actions = 0;
+    let mut index = 0;
+    while index < tokens.len() {
+        let token = tokens[index];
+        let lower = token.to_lowercase();
+        let switch = lower
+            .strip_prefix('/')
+            .or_else(|| lower.strip_prefix('-'))
+            .unwrap_or("");
+        let action_code = ["x", "i", "uninstall"].iter().find_map(|action| {
+            switch.strip_prefix(action).filter(|rest| rest.is_empty() || rest.starts_with('{'))
+        });
+
+        if let Some(code) = action_code {
+            actions += 1;
+            let code = if code.is_empty() {
+                index += 1;
+                tokens.get(index).copied().unwrap_or("")
+            } else {
+                token.get(token.len() - code.len()..).unwrap_or("")
+            };
+            if !is_msi_product_code(code) {
+                return reject(token);
+            }
+        } else if !ALLOWED_SWITCHES.contains(&switch) && !is_reboot_property(&lower) {
+            return reject(token);
+        }
+        index += 1;
+    }
+
+    if actions != 1 {
+        return Err(
+            "Execution blocked: msiexec uninstall commands must contain exactly one /X or /I product code."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn is_reboot_property(lower_token: &str) -> bool {
+    lower_token
+        .strip_prefix("reboot=")
+        .is_some_and(|value| !value.is_empty() && value.chars().all(|c| c.is_ascii_alphabetic()))
+}
+
+/// Bare executable names are resolved only inside the Windows directory so a
+/// planted binary elsewhere on PATH (or next to PurgeKit) is never picked up.
+fn resolve_bare_executable(name: &str) -> Result<String, String> {
+    let system_root = std::env::var("SystemRoot")
+        .or_else(|_| std::env::var("windir"))
+        .unwrap_or_else(|_| r"C:\Windows".to_string());
+    let file_name = if std::path::Path::new(name).extension().is_some() {
+        name.to_string()
+    } else {
+        format!("{}.exe", name)
+    };
+    [format!(r"{}\System32", system_root), system_root.clone()]
+        .iter()
+        .map(|dir| std::path::Path::new(dir).join(&file_name))
+        .find(|candidate| candidate.is_file())
+        .map(|candidate| candidate.to_string_lossy().to_string())
+        .ok_or_else(|| {
+            format!(
+                "Execution blocked: '{}' was not found in the Windows system directory.",
+                name
+            )
+        })
+}
+
+fn is_inside_system_root(path: &str) -> bool {
+    is_under_env_roots(path, &["SystemRoot"])
+}
+
+fn split_uninstall_command(cmd_str: &str) -> Result<(String, String), String> {
     let expanded = crate::winutil::expand_env_strings(cmd_str);
     let trimmed = expanded.trim();
     if trimmed.is_empty() {
@@ -1626,11 +1743,67 @@ fn parse_uninstall_command(cmd_str: &str) -> Result<(String, String), String> {
     Ok((executable, rest))
 }
 
+/// Parses a registry-provided command line and applies the execution policy.
+/// Returns the absolute executable path that must be spawned and its raw
+/// argument string.
+fn prepare_uninstall_command(cmd_str: &str, elevated: bool) -> Result<(String, String), String> {
+    let (executable, arguments) = split_uninstall_command(cmd_str)?;
+
+    let has_separator = executable.contains('\\') || executable.contains('/');
+    let executable = if has_separator {
+        executable
+    } else {
+        resolve_bare_executable(&executable)?
+    };
+
+    let path = std::path::Path::new(&executable);
+    if !path.is_file() {
+        return Err(format!("Uninstaller executable does not exist: {}", executable));
+    }
+    let ext = path
+        .extension()
+        .map(|extension| extension.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    if ext != "exe" {
+        return Err(format!(
+            "Execution blocked: Uninstaller uses a non-executable script/file ({}).",
+            ext
+        ));
+    }
+
+    if is_msiexec(&executable) {
+        validate_msiexec_arguments(&arguments)?;
+        return Ok((executable, arguments));
+    }
+
+    if elevated {
+        // Windows ships many signed binaries that proxy-execute arbitrary code
+        // (rundll32, mshta, regsvr32, ...). Signature and location checks do
+        // not help against them, so only msiexec is allowed from SystemRoot.
+        if is_inside_system_root(&executable) {
+            return Err(format!(
+                "Security Block: '{}' is a Windows system binary. Only msiexec with a product code may run elevated from the Windows directory.",
+                executable
+            ));
+        }
+        if !is_trusted_executable_location(&executable)
+            && !crate::winutil::verify_file_signature(&executable)
+        {
+            return Err(format!(
+                "Security Block: The elevated uninstaller '{}' is outside Program Files and is UNSIGNED. Running it elevated poses a Local Privilege Escalation risk.",
+                executable
+            ));
+        }
+    }
+
+    Ok((executable, arguments))
+}
+
 fn run_parsed_uninstall_command(
     cmd_str: &str,
     secure_path: &str,
 ) -> Result<std::process::ExitStatus, String> {
-    let (executable, arguments) = parse_uninstall_command(cmd_str)?;
+    let (executable, arguments) = prepare_uninstall_command(cmd_str, is_elevated::is_elevated())?;
     let mut command = Command::new(&executable);
     command
         .creation_flags(CREATE_NO_WINDOW)
@@ -1647,61 +1820,32 @@ fn run_parsed_uninstall_command(
 }
 
 fn validate_uninstall_command_safety(cmd_str: &str) -> Result<(), String> {
-    let expanded_cmd = crate::winutil::expand_env_strings(cmd_str);
-    let exe_path = crate::winutil::extract_executable_path(&expanded_cmd);
-    let exe_lower = exe_path.to_lowercase();
-    
-    let is_shell = exe_lower.ends_with("cmd.exe") || exe_lower == "cmd" 
-        || exe_lower.ends_with("powershell.exe") || exe_lower == "powershell"
-        || exe_lower.ends_with("pwsh.exe") || exe_lower == "pwsh";
+    prepare_uninstall_command(cmd_str, is_elevated::is_elevated()).map(|_| ())
+}
 
-    if is_shell {
-        let cmd_lower = expanded_cmd.to_lowercase();
-        if cmd_lower.contains("users\\") || cmd_lower.contains("appdata") || cmd_lower.contains("temp\\") {
-            return Err("Execution blocked: Uninstaller command uses a shell wrapper targeting user-writable folders. This could lead to privilege escalation.".to_string());
-        }
+/// An elevated PurgeKit must not run commands that a non-admin process could
+/// have planted in HKCU or VirtualStore; per-user apps are uninstalled from a
+/// non-elevated PurgeKit instead.
+fn ensure_elevated_command_origin(cmd_str: &str) -> Result<(), String> {
+    if is_elevated::is_elevated() && !scanner::registry::is_machine_registered_command(cmd_str) {
+        return Err(
+            "Security Block: This command is not registered by a machine-wide (HKLM) uninstall entry. Per-user entries can be written without admin rights, so PurgeKit will not run them elevated. Restart PurgeKit without administrator rights to uninstall this app."
+                .to_string(),
+        );
     }
-
-    // A bare executable name (for example MsiExec.exe) resolves through the
-    // secure system PATH; an absolute path must exist and be an executable.
-    let has_separator = exe_path.contains('\\') || exe_path.contains('/');
-    if has_separator {
-        let path = std::path::Path::new(&exe_path);
-        if !path.exists() {
-            return Err(format!("Uninstaller executable does not exist: {}", exe_path));
-        }
-
-        let ext = path
-            .extension()
-            .map(|extension| extension.to_string_lossy().to_lowercase())
-            .unwrap_or_default();
-        if ext != "exe" {
-            return Err(format!(
-                "Execution blocked: Uninstaller uses a non-executable script/file ({}) from an absolute path.",
-                ext
-            ));
-        }
-
-        if is_elevated::is_elevated()
-            && !is_trusted_executable_location(&exe_path)
-            && !crate::winutil::verify_file_signature(&exe_path)
-        {
-            return Err(format!(
-                "Security Block: The elevated uninstaller '{}' is outside Program Files/Windows and is UNSIGNED. Running it elevated poses a Local Privilege Escalation risk.",
-                exe_path
-            ));
-        }
-    }
-
     Ok(())
 }
 
 fn is_trusted_executable_location(path: &str) -> bool {
+    is_under_env_roots(path, &["ProgramFiles", "ProgramFiles(x86)"])
+}
+
+fn is_under_env_roots(path: &str, env_keys: &[&str]) -> bool {
     let target = crate::winutil::canonicalize_path_safety(path)
         .to_string_lossy()
         .to_lowercase();
-    ["SystemRoot", "ProgramFiles", "ProgramFiles(x86)"]
-        .into_iter()
+    env_keys
+        .iter()
         .filter_map(|key| std::env::var_os(key))
         .map(|value| {
             crate::winutil::canonicalize_path_safety(&value.to_string_lossy())
@@ -1983,17 +2127,11 @@ pub fn get_silent_uninstall_command(app: &InstalledApp) -> Option<String> {
     let uninst_lower = uninst.to_lowercase();
 
     // 1. MSI Installer
-    if uninst_lower.contains("msiexec.exe") || (app.id.starts_with('{') && app.id.ends_with('}')) {
-        let guid = if app.id.starts_with('{') && app.id.ends_with('}') {
+    if uninst_lower.contains("msiexec") || is_msi_product_code(&app.id) {
+        let guid = if is_msi_product_code(&app.id) {
             Some(app.id.clone())
-        } else if let Some(start) = uninst.find('{') {
-            if let Some(end) = uninst[start..].find('}') {
-                Some(uninst[start..=start + end].to_string())
-            } else {
-                None
-            }
         } else {
-            None
+            find_msi_product_code(uninst)
         };
 
         if let Some(g) = guid {
@@ -2102,6 +2240,13 @@ pub async fn run_bulk_silent_uninstall(
                 message: format!("Uninstalling {} silently...", app_name),
             });
 
+            // Per-user hives are writable without admin rights; an elevated
+            // PurgeKit must neither run their commands nor force-delete the
+            // install location they point to.
+            let blocked_by_origin = !target_app.is_uwp
+                && is_elevated::is_elevated()
+                && !scanner::registry::is_machine_hive(&target_app.hive);
+
             let secure_path = crate::winutil::get_secure_system_path();
             let mut uninstall_success = if target_app.is_uwp {
                 target_app
@@ -2112,6 +2257,8 @@ pub async fn run_bulk_silent_uninstall(
                         run_uwp_uninstall(&uwp.package_full, uwp.all_users, &secure_path).is_ok()
                     })
                     .unwrap_or(false)
+            } else if blocked_by_origin {
+                false
             } else if let Some(silent_cmd) = get_silent_uninstall_command(target_app) {
                 validate_uninstall_command_safety(&silent_cmd).is_ok()
                     && run_parsed_uninstall_command(&silent_cmd, &secure_path)
@@ -2121,7 +2268,11 @@ pub async fn run_bulk_silent_uninstall(
                 false
             };
 
-            if !uninstall_success && force_on_failure.unwrap_or(false) && !target_app.is_uwp {
+            if !uninstall_success
+                && !blocked_by_origin
+                && force_on_failure.unwrap_or(false)
+                && !target_app.is_uwp
+            {
                 match force_remove_app_sync(
                     Some(&target_app.display_name),
                     target_app.install_location.as_deref(),
@@ -2175,7 +2326,14 @@ pub async fn run_bulk_silent_uninstall(
                     phase: "error".into(),
                     current,
                     total,
-                    message: format!("Failed to run silent uninstaller for {}.", app_name),
+                    message: if blocked_by_origin {
+                        format!(
+                            "Skipped {}: it is registered per-user (HKCU/VirtualStore), which PurgeKit will not run elevated. Restart PurgeKit without administrator rights to uninstall it.",
+                            app_name
+                        )
+                    } else {
+                        format!("Failed to run silent uninstaller for {}.", app_name)
+                    },
                 });
             }
 
@@ -2578,21 +2736,91 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_uninstall_command() {
-        let (exe, args) = parse_uninstall_command(r#""C:\Program Files\App\uninst.exe" /S"#).unwrap();
+    fn test_split_uninstall_command() {
+        let (exe, args) = split_uninstall_command(r#""C:\Program Files\App\uninst.exe" /S"#).unwrap();
         assert_eq!(exe, r"C:\Program Files\App\uninst.exe");
         assert_eq!(args, "/S");
 
-        let (exe, args) = parse_uninstall_command(r#"MsiExec.exe /I{1234-5678}"#).unwrap();
+        let (exe, args) = split_uninstall_command(&format!("MsiExec.exe /I{}", GUID)).unwrap();
         assert_eq!(exe, "MsiExec.exe");
-        assert_eq!(args, "/I{1234-5678}");
+        assert_eq!(args, format!("/I{}", GUID));
 
-        let (exe, args) = parse_uninstall_command(r#"C:\Program Files\App\uninstall.exe"#).unwrap();
+        let (exe, args) = split_uninstall_command(r#"C:\Program Files\App\uninstall.exe"#).unwrap();
         assert_eq!(exe, r"C:\Program Files\App\uninstall.exe");
         assert!(args.is_empty());
 
-        assert!(parse_uninstall_command("cmd.exe /c calc").is_err());
-        assert!(parse_uninstall_command("powershell -Command Remove-Item C:\\").is_err());
+        assert!(split_uninstall_command("cmd.exe /c calc").is_err());
+        assert!(split_uninstall_command("powershell -Command Remove-Item C:\\").is_err());
+    }
+
+    const GUID: &str = "{12345678-ABCD-ef01-2345-6789ABCDEF01}";
+
+    #[test]
+    fn test_msi_product_code_format() {
+        assert!(is_msi_product_code(GUID));
+        assert!(!is_msi_product_code("{1234-5678}"));
+        assert!(!is_msi_product_code("{A /i C:\\x.msi}"));
+        assert!(!is_msi_product_code("{12345678-ABCD-ef01-2345-6789ABCDEF0G}"));
+        assert_eq!(
+            find_msi_product_code(&format!("MsiExec.exe /I {} /qn", GUID)),
+            Some(GUID.to_string())
+        );
+        assert_eq!(find_msi_product_code("MsiExec.exe /X{A /i C:\\x.msi}"), None);
+    }
+
+    #[test]
+    fn test_msiexec_arguments_allowlist() {
+        assert!(validate_msiexec_arguments(&format!("/X{}", GUID)).is_ok());
+        assert!(validate_msiexec_arguments(&format!("/I{}", GUID)).is_ok());
+        assert!(validate_msiexec_arguments(&format!("/i {} /qn /norestart", GUID)).is_ok());
+        assert!(validate_msiexec_arguments(&format!("/x{} /quiet REBOOT=ReallySuppress", GUID)).is_ok());
+
+        assert!(validate_msiexec_arguments("").is_err());
+        assert!(validate_msiexec_arguments("/i \\\\mallory-host\\share\\evil.msi /qn").is_err());
+        assert!(validate_msiexec_arguments("/X{A /i C:\\x.msi}").is_err());
+        assert!(validate_msiexec_arguments(&format!("/X{} /i C:\\x.msi", GUID)).is_err());
+        assert!(validate_msiexec_arguments(&format!("/X{} TRANSFORMS=C:\\x.mst", GUID)).is_err());
+        assert!(validate_msiexec_arguments(&format!("/X{} /L*v C:\\log.txt", GUID)).is_err());
+        assert!(validate_msiexec_arguments(&format!("/y {}", GUID)).is_err());
+    }
+
+    #[test]
+    fn test_elevated_policy_rejects_system_binaries_and_planted_msi() {
+        assert!(prepare_uninstall_command("rundll32.exe x.dll,Y", true).is_err());
+        assert!(prepare_uninstall_command("mshta.exe http://mallory/x.hta", true).is_err());
+        assert!(prepare_uninstall_command(r"C:\Windows\System32\regsvr32.exe /s /i:x scrobj.dll", true).is_err());
+        assert!(prepare_uninstall_command("msiexec.exe /i \\\\mallory-host\\share\\evil.msi /qn", true).is_err());
+        assert!(prepare_uninstall_command("MsiExec.exe /X{A /i C:\\x.msi}", true).is_err());
+        assert!(prepare_uninstall_command("planted_tool.exe /S", false).is_err());
+
+        let (exe, args) = prepare_uninstall_command(&format!("MsiExec.exe /X{} /qn", GUID), true).unwrap();
+        assert!(std::path::Path::new(&exe).is_absolute());
+        assert!(is_msiexec(&exe));
+        assert_eq!(args, format!("/X{} /qn", GUID));
+    }
+
+    #[test]
+    fn test_malicious_hkcu_entry_has_no_runnable_silent_command() {
+        let mut app = create_mock_app(
+            "FakeApp",
+            Some("MsiExec.exe /X{A /i C:\\x.msi}"),
+            Some("rundll32.exe x.dll,Y"),
+            false,
+        );
+        let quiet = get_silent_uninstall_command(&app).unwrap();
+        assert!(prepare_uninstall_command(&quiet, true).is_err());
+
+        app.quiet_uninstall_string = None;
+        let fallback = get_silent_uninstall_command(&app).unwrap();
+        assert!(!fallback.contains("/X{A"));
+        assert!(prepare_uninstall_command(&fallback, true).is_err());
+        assert!(prepare_uninstall_command(&fallback, false).is_err());
+
+        assert!(scanner::registry::is_machine_hive("HKLM"));
+        assert!(scanner::registry::is_machine_hive("HKLM_WOW"));
+        for hive in ["HKCU", "HKCU_WOW", "VirtualStore", "VirtualStore_WOW"] {
+            assert!(!scanner::registry::is_machine_hive(hive));
+        }
     }
 
     #[test]
@@ -2606,12 +2834,16 @@ mod tests {
         assert_eq!(get_silent_uninstall_command(&app), Some("powershell Remove-AppxPackage".to_string()));
 
         // 3. MSI App with GUID in ID
-        let app = create_mock_app("{1234-5678}", Some("msiexec.exe /I{1234-5678}"), None, false);
-        assert_eq!(get_silent_uninstall_command(&app), Some("MsiExec.exe /X{1234-5678} /qn /norestart".to_string()));
+        let app = create_mock_app(GUID, Some(&format!("msiexec.exe /I{}", GUID)), None, false);
+        assert_eq!(get_silent_uninstall_command(&app), Some(format!("MsiExec.exe /X{} /qn /norestart", GUID)));
 
         // 4. MSI App with msiexec.exe in uninst string but GUID is elsewhere
-        let app = create_mock_app("some-msi", Some("C:\\Windows\\System32\\msiexec.exe /I {ABC-DEF}"), None, false);
-        assert_eq!(get_silent_uninstall_command(&app), Some("MsiExec.exe /X{ABC-DEF} /qn /norestart".to_string()));
+        let app = create_mock_app("some-msi", Some(&format!("C:\\Windows\\System32\\msiexec.exe /I {}", GUID)), None, false);
+        assert_eq!(get_silent_uninstall_command(&app), Some(format!("MsiExec.exe /X{} /qn /norestart", GUID)));
+
+        // 4b. Malformed braces are never spliced into an msiexec command line
+        let app = create_mock_app("{A /i C:\\x.msi}", Some("MsiExec.exe /X{A /i C:\\x.msi}"), None, false);
+        assert_eq!(get_silent_uninstall_command(&app), Some("MsiExec.exe /X{A /i C:\\x.msi}".to_string()));
 
         // 5. Inno Setup
         let app = create_mock_app("inno", Some("\"C:\\Program Files\\App\\unins000.exe\""), None, false);
