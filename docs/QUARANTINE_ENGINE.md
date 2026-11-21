@@ -42,6 +42,7 @@ When you clean files, PurgeKit calls `quarantine_file_or_directory`:
 *   **Copy-and-Delete Fallback**: If renaming fails (e.g. crossing drive volumes from `D:\` to `C:\`), PurgeKit:
     *   Recursively copies all directory contents to the quarantine destination.
     *   Deletes the original files/folders once copying completes successfully.
+    *   If deleting a directory fails partway, the operation reports an error and keeps the quarantine copy. Move the remaining original folder aside before using **Restore**. If the database record could not be written, use the recovery path in the error instead.
 *   **Database Log**: Creates a record in the database.
 
 ---
