@@ -8,7 +8,7 @@
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{self, File, Metadata};
 use std::io::{self, Read};
 use std::path::Path;
@@ -48,6 +48,8 @@ pub struct DuplicateVerification {
 }
 
 type Digest256 = [u8; 32];
+/// Volume and file number: two paths with the same identity are one file on disk.
+type FileIdentity = (u64, u64);
 
 struct Candidate {
     path: String,
@@ -68,14 +70,25 @@ pub fn verify_duplicate_contents(
     }
 
     let mut verification = DuplicateVerification::default();
-    let mut seen = HashSet::new();
+    let mut listed = HashSet::new();
+    let mut identities: HashMap<FileIdentity, String> = HashMap::new();
     let mut by_len: BTreeMap<u64, Vec<Candidate>> = BTreeMap::new();
 
     for path in paths {
-        if !seen.insert(path.replace('/', "\\").to_lowercase()) {
+        if !listed.insert(path.as_str()) {
             continue;
         }
-        match inspect(path) {
+        // Removing a second path to the same file (hard link, or the same file
+        // spelled differently) frees nothing and must not count as a kept copy.
+        let inspected =
+            inspect(path).and_then(|(candidate, identity)| match identities.get(&identity) {
+                Some(first) => Err(format!("Same file on disk as {first}")),
+                None => {
+                    identities.insert(identity, candidate.path.clone());
+                    Ok(candidate)
+                }
+            });
+        match inspected {
             Ok(candidate) => by_len.entry(candidate.len).or_default().push(candidate),
             Err(reason) => verification.skipped.push(SkippedDuplicate {
                 path: path.clone(),
@@ -189,7 +202,7 @@ fn digest_file(
     Ok(Some(hasher.finalize().into()))
 }
 
-fn inspect(path: &str) -> Result<Candidate, String> {
+fn inspect(path: &str) -> Result<(Candidate, FileIdentity), String> {
     let metadata =
         fs::symlink_metadata(path).map_err(|err| format!("Could not read file: {err}"))?;
     if !metadata.file_type().is_file() || is_reparse_point(&metadata) {
@@ -201,11 +214,40 @@ fn inspect(path: &str) -> Result<Candidate, String> {
     if metadata.len() == 0 {
         return Err("Empty file".into());
     }
-    Ok(Candidate {
-        path: path.to_string(),
-        len: metadata.len(),
-        modified: metadata.modified().ok(),
-    })
+    let identity = file_identity(Path::new(path), &metadata)
+        .map_err(|err| format!("Could not read file: {err}"))?;
+    Ok((
+        Candidate {
+            path: path.to_string(),
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+        },
+        identity,
+    ))
+}
+
+#[cfg(windows)]
+fn file_identity(path: &Path, _metadata: &Metadata) -> io::Result<FileIdentity> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+
+    let file = File::open(path)?;
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut info) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok((
+        u64::from(info.dwVolumeSerialNumber),
+        (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+    ))
+}
+
+#[cfg(unix)]
+fn file_identity(_path: &Path, metadata: &Metadata) -> io::Result<FileIdentity> {
+    use std::os::unix::fs::MetadataExt;
+    Ok((metadata.dev(), metadata.ino()))
 }
 
 fn is_unchanged(candidate: &Candidate) -> bool {
@@ -368,6 +410,40 @@ mod tests {
         let result = verify(&[a.clone(), a.to_uppercase(), a.clone()]);
 
         assert!(result.identical.is_empty());
+        assert_eq!(result.unique, vec![a]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_hard_link_is_not_a_second_copy() {
+        let dir = test_dir("hardlink");
+        let a = write(&dir, "a.bin", &[1u8; 10]);
+        let link = dir.join("link.bin");
+        fs::hard_link(&a, &link).unwrap();
+        let link = link.to_string_lossy().to_string();
+
+        let result = verify(&[a.clone(), link.clone()]);
+
+        assert!(result.identical.is_empty());
+        assert_eq!(result.unique, vec![a]);
+        assert_eq!(result.skipped[0].path, link);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn names_differing_only_by_case_are_separate_files() {
+        let dir = test_dir("case");
+        let upper = write(&dir, "Same.bin", &[1u8; 10]);
+        let lower = write(&dir, "same.bin", &[1u8; 10]);
+
+        let result = verify(&[upper.clone(), lower.clone()]);
+
+        assert_eq!(result.identical.len(), 1);
+        assert_eq!(
+            sorted(result.identical[0].clone()),
+            sorted(vec![upper, lower])
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
