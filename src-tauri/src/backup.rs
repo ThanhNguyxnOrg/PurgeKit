@@ -214,6 +214,10 @@ mod tests {
     use super::*;
     use std::fs;
 
+    // Both quarantine tests share one SQLite file; creating it from two threads
+    // at once can fail with "database is locked".
+    static DB_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_restore_refuses_to_overwrite_an_existing_path() {
         let root = std::env::temp_dir().join("purgekit_restore_overwrite_test");
@@ -239,6 +243,7 @@ mod tests {
 
     #[test]
     fn test_quarantine_file() {
+        let _db = DB_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let temp_dir = std::env::temp_dir().join("purgekit_test_quarantine");
         let _ = fs::remove_dir_all(&temp_dir);
         fs::create_dir_all(&temp_dir).unwrap();
@@ -274,6 +279,7 @@ mod tests {
 
     #[test]
     fn test_directory_removal_failure_keeps_tracked_quarantine_copy() {
+        let _db = DB_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         use std::os::windows::fs::OpenOptionsExt;
         use windows_sys::Win32::Storage::FileSystem::{
             FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_READ, FILE_SHARE_WRITE,
