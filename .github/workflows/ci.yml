@@ -51,3 +51,30 @@ jobs:
 
       - name: Rust Compiler Check
         run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Build Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --no-run
+
+      # Quarantine, backup, database and settings code resolves its storage from
+      # APPDATA/LOCALAPPDATA and tests use the temp dir, so point all of them at
+      # a throwaway directory under the runner temp folder.
+      - name: Run Rust tests against temporary data
+        shell: pwsh
+        env:
+          APPDATA: ${{ runner.temp }}\purgekit-test\Roaming
+          LOCALAPPDATA: ${{ runner.temp }}\purgekit-test\Local
+          TEMP: ${{ runner.temp }}\purgekit-test\Temp
+          TMP: ${{ runner.temp }}\purgekit-test\Temp
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:APPDATA, $env:LOCALAPPDATA, $env:TEMP | Out-Null
+          cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Verify tests left the real profile untouched
+        shell: pwsh
+        run: |
+          $leaked = @("$env:APPDATA\PurgeKit", "$env:LOCALAPPDATA\PurgeKit") | Where-Object { Test-Path $_ }
+          if ($leaked) {
+            Write-Error "Tests wrote outside the temporary data directory: $($leaked -join ', ')"
+            exit 1
+          }
+          Get-ChildItem -Recurse -Force "$env:RUNNER_TEMP\purgekit-test" | Select-Object -ExpandProperty FullName
