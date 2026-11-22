@@ -96,18 +96,21 @@ The installers will be generated under `src-tauri/target/release/bundle/`.
 
 ## 🐚 CLI Usage
 
-PurgeKit includes a standalone CLI executable for script automation and CI/CD pipelines.
+PurgeKit includes a standalone CLI executable, `purgekit-cli.exe` (run as Administrator), for script automation and CI/CD pipelines. See [CLI.md](docs/CLI.md) for every command and flag.
 
 ```bash
-# Clean an application and its remnants silently
-purgekit.exe clean "AppName"
+# Preview the remnants an app clean would remove (nothing is deleted)
+purgekit-cli.exe clean "AppName" --dry-run
+
+# Clean an application and its remnants without a confirmation prompt
+purgekit-cli.exe clean "AppName" --yes
 
 # Clean developer tool caches
-purgekit.exe cache prune --all
-purgekit.exe cache prune npm cargo
+purgekit-cli.exe cache prune --all
+purgekit-cli.exe cache prune npm cargo
 
 # Compact a WSL2 distribution disk
-purgekit.exe wsl compact "Ubuntu"
+purgekit-cli.exe wsl compact "Ubuntu"
 ```
 
 ---

@@ -21,7 +21,7 @@ The PurgeKit CLI (`purgekit-cli.exe`) is designed for system administrators, Dev
 ## 📂 Command Structure
 
 ```bash
-purgekit [COMMAND] [ARGS] [FLAGS]
+purgekit-cli [COMMAND] [ARGS] [FLAGS]
 ```
 
 ### 📋 Global Flags
@@ -36,7 +36,7 @@ purgekit [COMMAND] [ARGS] [FLAGS]
 Deep-cleans an application: scans for leftover files, folders, shortcuts, services, tasks and registry entries matching the app, then purges the items you approve. It does **not** launch the app's official uninstaller — run that first (or use the UI preflight, which does both).
 
 ```bash
-purgekit clean [APP_NAME] [FLAGS]
+purgekit-cli clean [APP_NAME] [FLAGS]
 ```
 
 #### 📌 Arguments:
@@ -50,10 +50,10 @@ purgekit clean [APP_NAME] [FLAGS]
 #### 💡 Examples:
 ```bash
 # Preview everything that would be purged
-purgekit clean "Visual Studio Code" --dry-run
+purgekit-cli clean "Visual Studio Code" --dry-run
 
 # Scripted purge with a stricter confidence threshold
-purgekit clean "Spotify" --yes --min-score 70
+purgekit-cli clean "Spotify" --yes --min-score 70
 ```
 
 ---
@@ -62,7 +62,7 @@ purgekit clean "Spotify" --yes --min-score 70
 Manages and compacts Windows Subsystem for Linux (WSL2) virtual drive disks.
 
 ```bash
-purgekit wsl [SUBCOMMAND] [DISTRO_NAME]
+purgekit-cli wsl [SUBCOMMAND] [DISTRO_NAME]
 ```
 
 #### 📌 Subcommands:
@@ -73,13 +73,13 @@ purgekit wsl [SUBCOMMAND] [DISTRO_NAME]
 #### 💡 Examples:
 ```bash
 # List all distributions
-purgekit wsl list
+purgekit-cli wsl list
 
 # Compact Ubuntu's virtual disk (requires Administrator rights)
-purgekit wsl compact "Ubuntu"
+purgekit-cli wsl compact "Ubuntu"
 
 # Configure Ubuntu's virtual disk to run in sparse (auto-shrink) mode
-purgekit wsl sparse "Ubuntu"
+purgekit-cli wsl sparse "Ubuntu"
 ```
 
 ---
@@ -88,7 +88,7 @@ purgekit wsl sparse "Ubuntu"
 Cleans developer tool directories, build outputs, and package registries.
 
 ```bash
-purgekit cache prune [FLAGS] [TOOLS...]
+purgekit-cli cache prune [FLAGS] [TOOLS...]
 ```
 
 #### 📌 Arguments:
@@ -100,10 +100,10 @@ purgekit cache prune [FLAGS] [TOOLS...]
 #### 💡 Examples:
 ```bash
 # Prune Cargo and NPM package caches
-purgekit cache prune cargo npm
+purgekit-cli cache prune cargo npm
 
 # Prune caches for all tools on the system
-purgekit cache prune --all
+purgekit-cli cache prune --all
 ```
 
 ---
@@ -117,14 +117,14 @@ Save this script as `CleanDevEnv.ps1` to perform weekly scheduled maintenance on
 Write-Host "Starting PurgeKit Scheduled Maintenance..." -ForegroundColor Gold
 
 # 1. Clean dev caches to reclaim space
-& purgekit cache prune --all
+& purgekit-cli cache prune --all
 
 # 2. Compact active WSL virtual disks
-& purgekit wsl compact "Ubuntu"
+& purgekit-cli wsl compact "Ubuntu"
 
 # 3. Clean environment PATH variables
 # (removes dead paths automatically)
-& purgekit clean-path --prune-broken
+& purgekit-cli clean-path --prune-broken
 
 Write-Host "Maintenance completed successfully!" -ForegroundColor Green
 ```
