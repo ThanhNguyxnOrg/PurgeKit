@@ -2850,7 +2850,9 @@ mod tests {
 
         app.quiet_uninstall_string = None;
         let fallback = get_silent_uninstall_command(&app).unwrap();
-        assert!(!fallback.contains("/X{A"));
+        // The malformed msiexec string has no product code, so it passes through
+        // unchanged and must be refused by prepare_uninstall_command below.
+        assert_eq!(fallback, "MsiExec.exe /X{A /i C:\\x.msi}");
         assert!(prepare_uninstall_command(&fallback, true).is_err());
         assert!(prepare_uninstall_command(&fallback, false).is_err());
 
