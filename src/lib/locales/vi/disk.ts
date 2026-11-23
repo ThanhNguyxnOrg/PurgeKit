@@ -24,6 +24,8 @@ const disk: Record<string, string> = {
   "No other listed copy has the same contents.":
     "Không có bản sao nào được liệt kê có cùng nội dung.",
   "Content verification failed: {message}": "Kiểm tra nội dung thất bại: {message}",
+  "Duplicate contents changed. No copies were removed.":
+    "Nội dung tệp trùng đã thay đổi. Không có bản sao nào bị gỡ.",
   "Deselected {count} copies: no kept copy with identical contents.":
     "Đã bỏ chọn {count} bản sao: không có bản giữ lại nào giống hệt nội dung.",
   "Contents were compared (SHA-256); every selected copy has a byte-identical copy that stays in place.":

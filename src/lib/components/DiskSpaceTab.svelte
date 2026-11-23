@@ -185,6 +185,8 @@
   let duplicateSelection = $state<Record<string, boolean>>({});
   let duplicateContent = $state<Record<string, DuplicateContentStatus>>({});
   let isVerifyingDuplicates = $state(false);
+  let duplicateVerificationCancelled = false;
+  let duplicateCancellationRequest: Promise<void> | undefined;
 
   let scanTargets = $derived(
     pathInput
@@ -1499,22 +1501,31 @@ ${duplicateRows ? `<h2>Duplicate groups (top 50)</h2><table><thead><tr><th>Name<
   async function verifyDuplicateGroups(groups: DuplicateGroup[]): Promise<boolean> {
     if (isVerifyingDuplicates) return false;
     isVerifyingDuplicates = true;
+    duplicateVerificationCancelled = false;
     try {
-      for (const group of groups) await verifyDuplicateGroup(group);
-      return true;
+      for (const group of groups) {
+        if (duplicateVerificationCancelled) return false;
+        await verifyDuplicateGroup(group);
+      }
+      return !duplicateVerificationCancelled;
     } catch (error) {
+      if (duplicateVerificationCancelled) return false;
       toast.show(
         t("Content verification failed: {message}", { message: String(error) }),
         "error"
       );
       return false;
     } finally {
+      await duplicateCancellationRequest;
+      duplicateCancellationRequest = undefined;
       isVerifyingDuplicates = false;
     }
   }
 
   function cancelDuplicateVerification() {
-    void invoke("cancel_duplicate_verification");
+    if (!isVerifyingDuplicates || duplicateVerificationCancelled) return;
+    duplicateVerificationCancelled = true;
+    duplicateCancellationRequest = invoke<void>("cancel_duplicate_verification").catch(() => {});
   }
 
   function hasIdenticalKeptCopy(group: DuplicateGroup, file: DiskFile): boolean {
@@ -1553,82 +1564,94 @@ ${duplicateRows ? `<h2>Duplicate groups (top 50)</h2><table><thead><tr><th>Name<
       return;
     }
 
-    const groups = result.duplicate_groups.filter(
-      (group) => duplicatesSelectedInGroup(group) > 0
-    );
-    if (!(await verifyDuplicateGroups(groups))) return;
-
-    const selected: DiskFile[] = [];
-    const unverified: DiskFile[] = [];
-    for (const group of groups) {
-      for (const file of group.files) {
-        if (!duplicateSelection[file.path]) continue;
-        (hasIdenticalKeptCopy(group, file) ? selected : unverified).push(file);
-      }
-    }
-    if (unverified.length > 0) {
-      for (const file of unverified) delete duplicateSelection[file.path];
-      toast.show(
-        t("Deselected {count} copies: no kept copy with identical contents.", {
-          count: unverified.length,
-        }),
-        "warning"
-      );
-    }
-    if (selected.length === 0) return;
-    const bytes = selected.reduce(
-      (sum, file) => sum + Math.max(file.allocated_bytes, file.size_bytes),
-      0
-    );
-    const confirmed = confirm(
-      t("Quarantine {count} duplicate copies ({size} reclaimable)?", {
-        count: selected.length,
-        size: formatBytes(bytes),
-      }) +
-      "\n\n" +
-      t("Contents were compared (SHA-256); every selected copy has a byte-identical copy that stays in place.") +
-      "\n\n" +
-      t("Copies are moved to PurgeKit quarantine when backup is enabled; otherwise they are deleted permanently. At least one copy of each group stays in place. The scan will refresh afterwards.")
-    );
-    if (!confirmed) return;
-
+    const scan = result;
     isQuarantining = true;
-    let failed = 0;
-    for (const file of selected) {
-      try {
-        const response = await invoke<{ success: number; fail: number; errors?: string[] }>(
-          "force_remove_app",
-          {
-            installLocation: file.path,
-            registryPath: null,
-            hive: null,
-          }
-        );
-        if (response.fail > 0) failed += 1;
-      } catch {
-        failed += 1;
+    try {
+      const groups = scan.duplicate_groups.filter(
+        (group) => duplicatesSelectedInGroup(group) > 0
+      );
+      if (!(await verifyDuplicateGroups(groups)) || result !== scan) return;
+
+      const selected: { group: DuplicateGroup; file: DiskFile }[] = [];
+      const unverified: DiskFile[] = [];
+      for (const group of groups) {
+        for (const file of group.files) {
+          if (!duplicateSelection[file.path]) continue;
+          if (hasIdenticalKeptCopy(group, file)) selected.push({ group, file });
+          else unverified.push(file);
+        }
       }
+      if (unverified.length > 0) {
+        for (const file of unverified) delete duplicateSelection[file.path];
+        toast.show(
+          t("Deselected {count} copies: no kept copy with identical contents.", {
+            count: unverified.length,
+          }),
+          "warning"
+        );
+      }
+      if (selected.length === 0) return;
+      const bytes = selected.reduce(
+        (sum, { file }) => sum + Math.max(file.allocated_bytes, file.size_bytes),
+        0
+      );
+      const confirmed = confirm(
+        t("Quarantine {count} duplicate copies ({size} reclaimable)?", {
+          count: selected.length,
+          size: formatBytes(bytes),
+        }) +
+        "\n\n" +
+        t("Contents were compared (SHA-256); every selected copy has a byte-identical copy that stays in place.") +
+        "\n\n" +
+        t("Copies are moved to PurgeKit quarantine when backup is enabled; otherwise they are deleted permanently. At least one copy of each group stays in place. The scan will refresh afterwards.")
+      );
+      if (!confirmed) return;
+
+      const confirmedGroups = [...new Set(selected.map(({ group }) => group))];
+      if (!(await verifyDuplicateGroups(confirmedGroups)) || result !== scan) return;
+      if (selected.some(({ group, file }) => !hasIdenticalKeptCopy(group, file))) {
+        toast.show(t("Duplicate contents changed. No copies were removed."), "warning");
+        return;
+      }
+
+      let failed = 0;
+      for (const { file } of selected) {
+        try {
+          const response = await invoke<{ success: number; fail: number; errors?: string[] }>(
+            "force_remove_app",
+            {
+              installLocation: file.path,
+              registryPath: null,
+              hive: null,
+            }
+          );
+          if (response.fail > 0) failed += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+
+      duplicateSelection = {};
+      toast.show(
+        failed > 0
+          ? t("Quarantined {ok} copies; {failed} failed. Refreshing scan…", {
+              ok: selected.length - failed,
+              failed,
+            })
+          : t("Quarantined {count} copies. Refreshing scan…", { count: selected.length }),
+        failed > 0 ? "warning" : "success"
+      );
+
+      await scanDisk();
+      if (duplicateMode !== "off" && result) activeView = "duplicates";
+    } finally {
+      isQuarantining = false;
     }
-
-    duplicateSelection = {};
-    isQuarantining = false;
-    toast.show(
-      failed > 0
-        ? t("Quarantined {ok} copies; {failed} failed. Refreshing scan…", {
-            ok: selected.length - failed,
-            failed,
-          })
-        : t("Quarantined {count} copies. Refreshing scan…", { count: selected.length }),
-      failed > 0 ? "warning" : "success"
-    );
-
-    await scanDisk();
-    if (duplicateMode !== "off" && result) activeView = "duplicates";
   }
 
   async function quarantineSelected() {
     const node = selectedNode;
-    if (!node || !result) return;
+    if (!node || !result || isQuarantining || isVerifyingDuplicates) return;
     if (isSnapshotView) {
       toast.show(t("Snapshots are read-only. Rescan the drive to clean files."), "warning");
       return;
@@ -2317,7 +2340,7 @@ ${duplicateRows ? `<h2>Duplicate groups (top 50)</h2><table><thead><tr><th>Name<
               </span>
               <button
                 onclick={quarantineSelected}
-                disabled={isQuarantining || isSnapshotView}
+                disabled={isQuarantining || isSnapshotView || isVerifyingDuplicates}
                 title={isSnapshotView ? t("Snapshots are read-only") : t("Move this item to quarantine")}
                 class="px-2.5 py-1.5 rounded-md bg-danger/10 hover:bg-danger-strong text-danger hover:text-white border border-danger/20 text-[11px] font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
@@ -2706,7 +2729,7 @@ ${duplicateRows ? `<h2>Duplicate groups (top 50)</h2><table><thead><tr><th>Name<
                     {#if group.files.length > 1}
                       <button
                         onclick={() => selectAllButFirst(group)}
-                        disabled={isQuarantining || isSnapshotView}
+                        disabled={isQuarantining || isSnapshotView || isVerifyingDuplicates}
                         class="text-[10px] font-mono text-text-muted hover:text-accent disabled:opacity-40 transition-colors"
                         title={t("Select every listed copy except the first")}
                       >

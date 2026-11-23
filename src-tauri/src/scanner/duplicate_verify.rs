@@ -52,9 +52,8 @@ type Digest256 = [u8; 32];
 #[derive(Hash, PartialEq, Eq)]
 enum FileKey {
     /// Volume and file number.
-    Identity(u64, u64),
-    /// Volumes without file numbers (FAT, some network shares) compare by path,
-    /// ignoring case so one file spelled two ways never looks like two copies.
+    Identity(u64, u128),
+    /// When an identity is unavailable, compare canonical paths without case.
     Path(String),
 }
 
@@ -82,6 +81,9 @@ pub fn verify_duplicate_contents(
     let mut by_len: BTreeMap<u64, Vec<Candidate>> = BTreeMap::new();
 
     for path in paths {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(CANCELLED.into());
+        }
         if !listed.insert(path.as_str()) {
             continue;
         }
@@ -155,6 +157,9 @@ pub fn verify_duplicate_contents(
         }
     }
 
+    if cancel.load(Ordering::Relaxed) {
+        return Err(CANCELLED.into());
+    }
     Ok(verification)
 }
 
@@ -220,10 +225,10 @@ fn inspect(path: &str) -> Result<(Candidate, FileKey), String> {
     if metadata.len() == 0 {
         return Err("Empty file".into());
     }
-    let key = file_identity(Path::new(path), &metadata)
-        .map_err(|err| format!("Could not read file: {err}"))?
-        .map(|(volume, file)| FileKey::Identity(volume, file))
-        .unwrap_or_else(|| FileKey::Path(path.replace('/', "\\").to_lowercase()));
+    let file_path = Path::new(path);
+    let key = file_identity(file_path, &metadata)
+        .and_then(|identity| file_key(file_path, identity))
+        .map_err(|err| format!("Could not read file: {err}"))?;
     Ok((
         Candidate {
             path: path.to_string(),
@@ -234,33 +239,62 @@ fn inspect(path: &str) -> Result<(Candidate, FileKey), String> {
     ))
 }
 
+fn file_key(path: &Path, identity: Option<(u64, u128)>) -> io::Result<FileKey> {
+    match identity {
+        Some((volume, file)) => Ok(FileKey::Identity(volume, file)),
+        None => {
+            fs::canonicalize(path).map(|path| FileKey::Path(path.to_string_lossy().to_lowercase()))
+        }
+    }
+}
+
 #[cfg(windows)]
-fn file_identity(path: &Path, _metadata: &Metadata) -> io::Result<Option<(u64, u64)>> {
+fn file_identity(path: &Path, _metadata: &Metadata) -> io::Result<Option<(u64, u128)>> {
+    use std::mem::size_of_val;
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{
-        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+        FileIdInfo, GetFileInformationByHandle, GetFileInformationByHandleEx,
+        BY_HANDLE_FILE_INFORMATION, FILE_ID_INFO,
     };
 
     let file = File::open(path)?;
-    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
-    if unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut info) } == 0 {
+    let handle = file.as_raw_handle() as _;
+    let mut info = FILE_ID_INFO::default();
+    if unsafe {
+        GetFileInformationByHandleEx(
+            handle,
+            FileIdInfo,
+            (&mut info as *mut FILE_ID_INFO).cast(),
+            size_of_val(&info) as u32,
+        )
+    } != 0
+    {
+        if let Some(id) = file_number(info.FileId.Identifier) {
+            return Ok(Some((info.VolumeSerialNumber, id)));
+        }
+    }
+
+    let mut legacy = BY_HANDLE_FILE_INFORMATION::default();
+    if unsafe { GetFileInformationByHandle(handle, &mut legacy) } == 0 {
         return Err(io::Error::last_os_error());
     }
-    Ok(file_number(info.nFileIndexHigh, info.nFileIndexLow)
-        .map(|file| (u64::from(info.dwVolumeSerialNumber), file)))
+    if legacy.nNumberOfLinks != 1 {
+        return Err(io::Error::other("Could not identify a single-link file"));
+    }
+    Ok(None)
 }
 
 #[cfg(unix)]
-fn file_identity(_path: &Path, metadata: &Metadata) -> io::Result<Option<(u64, u64)>> {
+fn file_identity(_path: &Path, metadata: &Metadata) -> io::Result<Option<(u64, u128)>> {
     use std::os::unix::fs::MetadataExt;
-    Ok(Some((metadata.dev(), metadata.ino())))
+    Ok(Some((metadata.dev(), u128::from(metadata.ino()))))
 }
 
 /// A zero index means the volume reports no file numbers; using it as an
 /// identity would make every file on that volume look like the same file.
 #[cfg_attr(not(windows), allow(dead_code))]
-fn file_number(high: u32, low: u32) -> Option<u64> {
-    match (u64::from(high) << 32) | u64::from(low) {
+fn file_number(id: [u8; 16]) -> Option<u128> {
+    match u128::from_le_bytes(id) {
         0 => None,
         number => Some(number),
     }
@@ -447,9 +481,27 @@ mod tests {
     }
 
     #[test]
-    fn a_zero_file_index_is_not_an_identity() {
-        assert_eq!(file_number(0, 0), None);
-        assert_eq!(file_number(1, 2), Some((1 << 32) | 2));
+    fn file_numbers_preserve_all_128_bits_and_reject_zero() {
+        assert_eq!(file_number([0; 16]), None);
+        let id = (1_u128 << 127) | 2;
+        assert_eq!(file_number(id.to_le_bytes()), Some(id));
+        assert_ne!(
+            file_number(id.to_le_bytes()),
+            file_number(2_u128.to_le_bytes())
+        );
+    }
+
+    #[test]
+    fn missing_file_identity_uses_the_same_key_for_path_aliases() {
+        let dir = test_dir("path-alias");
+        let file = write(&dir, "a.bin", &[1u8]);
+        let alias_dir = dir.join("nested");
+        fs::create_dir(&alias_dir).unwrap();
+        let alias = alias_dir.join("..").join("a.bin");
+        let key = file_key(Path::new(&file), None).unwrap();
+        let mut seen = HashSet::from([key]);
+        assert!(!seen.insert(file_key(&alias, None).unwrap()));
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[cfg(unix)]
@@ -478,6 +530,17 @@ mod tests {
         let result = verify_duplicate_contents(&[a, b], &AtomicBool::new(true));
 
         assert_eq!(result, Err(CANCELLED.to_string()));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stops_when_cancelled_without_hashing() {
+        let dir = test_dir("cancel-single");
+        let a = write(&dir, "a.bin", &[1u8; 10]);
+        assert_eq!(
+            verify_duplicate_contents(&[a], &AtomicBool::new(true)),
+            Err(CANCELLED.to_string())
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
