@@ -11,8 +11,25 @@ const disk: Record<string, string> = {
   "Small files": "Tệp nhỏ",
   "Export HTML": "Xuất HTML",
   "Exported disk report as HTML.": "Đã xuất báo cáo dung lượng dưới dạng HTML.",
-  "Groups match by file name and size (plus modified date if enabled). File contents are not compared; verify the files before purging.":
-    "Các nhóm được ghép theo tên tệp và dung lượng (kèm ngày sửa đổi nếu bật). Nội dung tệp không được so sánh; hãy kiểm tra kỹ trước khi dọn.",
+  "Groups match by file name and size (plus modified date if enabled). Contents are compared (SHA-256) before anything is quarantined; a copy is only removed when a byte-identical copy stays in place.":
+    "Các nhóm được ghép theo tên tệp và dung lượng (kèm ngày sửa đổi nếu bật). Nội dung được so sánh (SHA-256) trước khi cách ly; một bản sao chỉ bị gỡ khi vẫn còn một bản giống hệt từng byte được giữ lại.",
+  "Verify contents": "Kiểm tra nội dung",
+  "Compare the contents of the listed copies": "So sánh nội dung của các bản sao được liệt kê",
+  "Verifying contents…": "Đang kiểm tra nội dung…",
+  "Identical {set}": "Giống hệt {set}",
+  "Different content": "Nội dung khác",
+  "Not verified": "Chưa kiểm tra được",
+  "Byte-identical to the other copies with the same letter (SHA-256).":
+    "Giống hệt từng byte với các bản sao có cùng chữ cái (SHA-256).",
+  "No other listed copy has the same contents.":
+    "Không có bản sao nào được liệt kê có cùng nội dung.",
+  "Content verification failed: {message}": "Kiểm tra nội dung thất bại: {message}",
+  "Duplicate contents changed. No copies were removed.":
+    "Nội dung tệp trùng đã thay đổi. Không có bản sao nào bị gỡ.",
+  "Deselected {count} copies: no kept copy with identical contents.":
+    "Đã bỏ chọn {count} bản sao: không có bản giữ lại nào giống hệt nội dung.",
+  "Contents were compared (SHA-256); every selected copy has a byte-identical copy that stays in place.":
+    "Nội dung đã được so sánh (SHA-256); mỗi bản sao được chọn đều có một bản giống hệt từng byte được giữ lại.",
   "Disk Space": "Dung lượng ổ đĩa",
   "Fast folder scan with allocated size, tree map, largest files and file types.":
     "Quét thư mục nhanh với dung lượng đã cấp phát, bản đồ cây, tệp lớn nhất và loại tệp.",

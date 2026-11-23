@@ -38,6 +38,7 @@ csv = "1"
 flate2 = "1.1.10"
 image = { version = "0.25", default-features = false, features = ["png"] }
 rayon = "1"
+sha2 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 ntfs = "0.4"
