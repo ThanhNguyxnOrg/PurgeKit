@@ -218,3 +218,14 @@ PurgeKit is specifically designed to go beyond typical Windows uninstallers, ens
 - keep the quarantine copy when directory removal fails (#60) ([11e2e04](https://github.com/ThanhNguyxnOrg/PurgeKit/commit/11e2e04b17ee2ac4cf5a376f3b78daf2d0c058c9))
 - refuse per-user uninstall commands when elevated and allowlist msiexec (#62) ([3e9fec3](https://github.com/ThanhNguyxnOrg/PurgeKit/commit/3e9fec3dda8b66193da86e406f28f9c408afc5a0))
 
+## [1.5.0] - 2026-11-23
+
+### Features
+
+- verify duplicate contents before quarantine (#61) ([3ca38d8](https://github.com/ThanhNguyxnOrg/PurgeKit/commit/3ca38d8101b86fca552aeb212c1edd00234723aa))
+
+### Other changes
+
+- ci: run Rust safety tests on Windows against temporary data (#63) ([ec17974](https://github.com/ThanhNguyxnOrg/PurgeKit/commit/ec17974acceb838c6763d287b6861589d422dbf0))
+- docs: use real purgekit-cli binary name and lead CLI section with --dry-run (#64) ([4c30505](https://github.com/ThanhNguyxnOrg/PurgeKit/commit/4c30505913045784cb61d821185cca1dd295c3ea))
+
